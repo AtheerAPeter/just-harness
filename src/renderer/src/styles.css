@@ -644,6 +644,23 @@ pre {
   color: var(--danger);
 }
 
+.status-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.msg-tool.pending .status-dot,
+.msg-tool.in_progress .status-dot {
+  background: var(--warn);
+}
+
+.msg-tool.failed .status-dot {
+  background: var(--danger);
+}
+
 .msg-plan {
   padding: 10px 14px;
   border-radius: 10px;

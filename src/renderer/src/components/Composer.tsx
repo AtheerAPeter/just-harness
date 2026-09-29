@@ -105,7 +105,7 @@ export function Composer({
       all = [
         ...commands.map((c) => ({ ...c, kind: 'command' as const })),
         ...skills
-          .filter((s) => s.agents.includes(chat.agent) && !commandNames.has(s.name))
+          .filter((s) => !commandNames.has(s.name))
           .map((s) => ({ name: s.name, description: s.description, kind: 'skill' as const }))
       ]
     }
@@ -113,7 +113,7 @@ export function Composer({
     return all
       .filter((item) => item.name.toLowerCase().includes(q))
       .sort((a, b) => Number(!a.name.startsWith(q)) - Number(!b.name.startsWith(q)))
-  }, [trigger, files, commands, skills, chat.agent])
+  }, [trigger, files, commands, skills])
 
   const menuOpen = trigger !== undefined && menuDismissed !== `${caret}:${text}`
 

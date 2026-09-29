@@ -646,6 +646,8 @@ export class AgentManager {
   /**
    * Neither CLI exposes skills as slash commands, so `/skill-name rest` becomes an
    * explicit request to use that skill. Agent commands are passed through as typed.
+   * Any skill on the machine can be used; ones the agent does not discover itself
+   * (e.g. ~/.claude/skills for cline) are passed by file path.
    */
   private expandSkill(chatId: string, text: string): string {
     const match = text.match(/^\/([a-z0-9-]+)(?:\s+([\s\S]*))?$/)
@@ -654,10 +656,14 @@ export class AgentManager {
     const chat = store.getChat(chatId)
     if (this.processes[chat.agent].getCommands(chatId).some((c) => c.name === name)) return text
     const project = store.getProject(chat.projectId)
-    if (!listSkills(project.path).some((s) => s.name === name && s.agents.includes(chat.agent))) {
-      return text
+    const skill = listSkills(project.path).find((s) => s.name === name)
+    if (!skill) return text
+    const task = rest ? `\n\n${rest}` : ''
+    // Skills in another agent's folder are not discovered by this agent, so point at the file.
+    if (!skill.agents.includes(chat.agent)) {
+      return `Use the "${name}" skill: read ${skill.path} and follow its instructions.${task}`
     }
-    return `Use the "${name}" skill.${rest ? `\n\n${rest}` : ''}`
+    return `Use the "${name}" skill.${task}`
   }
 
   /**

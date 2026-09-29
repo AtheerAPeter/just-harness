@@ -271,6 +271,7 @@ function ToolKindIcon({ kind }: { kind?: string }): React.JSX.Element {
 function ToolRow({ tool }: { tool: ToolItem }): React.JSX.Element {
   return (
     <div className={`msg-tool ${tool.status}`}>
+      <span className="status-dot" />
       <ToolKindIcon kind={tool.toolKind} />
       <span className="tool-name">{toolLabel(tool.title)}</span>
     </div>
