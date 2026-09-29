@@ -508,6 +508,7 @@ pre {
   white-space: pre-wrap;
   word-wrap: break-word;
   margin-top: 8px;
+  font-size: 15px;
 }
 
 .msg-error {
@@ -520,8 +521,8 @@ pre {
 }
 
 .markdown {
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: 15px;
+  line-height: 1.65;
   word-wrap: break-word;
 }
 
@@ -544,7 +545,7 @@ pre {
 .markdown h2,
 .markdown h3 {
   margin: 16px 0 8px;
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .markdown a {
@@ -752,7 +753,7 @@ pre {
   outline: none;
   resize: none;
   background: transparent;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 /* One row: pickers truncate, and labels give way to icons when narrow. */

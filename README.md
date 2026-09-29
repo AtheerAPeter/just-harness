@@ -18,7 +18,7 @@ Just Harness has no model providers and no API keys of its own. It starts the CL
 
 - **Projects and chats.** Add a folder, start chats in it. Each chat runs OpenCode or Cline in that folder and resumes where it left off after a restart.
 - **Model pickers from the agent itself.** Provider, model and reasoning effort come live from the agent's session, so switching Cline's provider reloads its model list.
-- **A built-in browser.** A panel on the right that keeps your logins across restarts. Agents control it through the `harness_browser` tools (navigate, snapshot, click, type, screenshot, …) and you watch it happen. Tag a message with `@browser` to point the agent at it. Opencode's own tool for driving your desktop browser is turned off, so agents stay in the panel.
+- **A built-in browser.** A panel on the right that keeps your logins across restarts. Agents control it through the `harness_browser` tools (navigate, snapshot, click, type, keyboard shortcuts, screenshot, …) and you watch it happen. They can also attach files to upload buttons, paste images, and download files to `~/Downloads`. Tag a message with `@browser` to point the agent at it. Opencode's own tool for driving your desktop browser is turned off, so agents stay in the panel.
 - **Skills.** Browse, create and edit `SKILL.md` skills for both agents. Type `/` in the composer to run a skill or an agent command.
 - **`@` mentions.** Tag project files (respects `.gitignore`); they're attached to the prompt as file references.
 - **Bypass permissions** per chat, approving tool requests automatically (allow once).

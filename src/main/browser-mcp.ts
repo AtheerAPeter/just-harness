@@ -1,9 +1,10 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
+import { homedir } from 'node:os'
 import type { AddressInfo } from 'node:net'
-import { app } from 'electron'
+import { app, clipboard, ClipboardItem, nativeImage } from 'electron'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { McpServer as AcpMcpServer } from '@agentclientprotocol/sdk'
@@ -103,6 +104,68 @@ async function settle(browser: BuiltinBrowser): Promise<void> {
   }
 }
 
+/**
+ * Put files into a page's upload control without the native file picker, which
+ * an agent cannot operate. While the agent clicks the upload button, the page's
+ * file-chooser request is intercepted over the DevTools protocol and answered
+ * with the files; interception is switched off again right after, so the user's
+ * own clicks still open the normal macOS picker.
+ */
+async function uploadFiles(browser: BuiltinBrowser, ref: number, paths: string[]): Promise<void> {
+  const files = paths.map((path) => resolve(path.replace(/^~(?=\/|$)/, homedir())))
+  const missing = files.filter((file) => !existsSync(file))
+  if (missing.length) throw new Error(`File not found: ${missing.join(', ')}`)
+
+  const cdp = browser.contents.debugger
+  const attachedHere = !cdp.isAttached()
+  if (attachedHere) cdp.attach('1.3')
+  try {
+    await cdp.sendCommand('Page.enable')
+    await cdp.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true })
+    const chooser = new Promise<number | undefined>((done) => {
+      const timer = setTimeout(() => {
+        cdp.off('message', onMessage)
+        done(undefined)
+      }, 3000)
+      function onMessage(
+        _event: unknown,
+        method: string,
+        params: { backendNodeId?: number }
+      ): void {
+        if (method !== 'Page.fileChooserOpened') return
+        clearTimeout(timer)
+        cdp.off('message', onMessage)
+        done(params.backendNodeId)
+      }
+      cdp.on('message', onMessage)
+    })
+    await clickRef(browser, ref)
+    let backendNodeId = await chooser
+    if (backendNodeId === undefined) {
+      // No chooser opened: the ref may be the <input type=file> itself or sit next to one.
+      const { root } = (await cdp.sendCommand('DOM.getDocument', { depth: 0 })) as {
+        root: { nodeId: number }
+      }
+      const { nodeId } = (await cdp.sendCommand('DOM.querySelector', {
+        nodeId: root.nodeId,
+        selector: `[data-harness-ref="${ref}"] input[type=file], input[type=file][data-harness-ref="${ref}"], input[type=file]`
+      })) as { nodeId: number }
+      if (!nodeId) throw new Error("No file upload control found. Click the upload button's ref.")
+      ;({
+        node: { backendNodeId }
+      } = (await cdp.sendCommand('DOM.describeNode', { nodeId })) as {
+        node: { backendNodeId: number }
+      })
+    }
+    await cdp.sendCommand('DOM.setFileInputFiles', { files, backendNodeId })
+  } finally {
+    await cdp
+      .sendCommand('Page.setInterceptFileChooserDialog', { enabled: false })
+      .catch(() => undefined)
+    if (attachedHere) cdp.detach()
+  }
+}
+
 async function clickRef(browser: BuiltinBrowser, ref: number): Promise<void> {
   const point = (await browser.contents.executeJavaScript(locateScript(ref))) as {
     x: number
@@ -120,12 +183,60 @@ async function clickRef(browser: BuiltinBrowser, ref: number): Promise<void> {
   browser.contents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
 }
 
-function pressKey(browser: BuiltinBrowser, key: string): void {
-  browser.contents.sendInputEvent({ type: 'keyDown', keyCode: key })
-  if (key.length === 1 || key === 'Enter') {
-    browser.contents.sendInputEvent({ type: 'char', keyCode: key === 'Enter' ? '\r' : key })
+type Modifier = 'cmd' | 'shift' | 'alt' | 'ctrl'
+const MODIFIERS: Record<Modifier, 'meta' | 'shift' | 'alt' | 'control'> = {
+  cmd: 'meta',
+  shift: 'shift',
+  alt: 'alt',
+  ctrl: 'control'
+}
+
+function pressKey(browser: BuiltinBrowser, key: string, modifiers: Modifier[] = []): void {
+  const contents = browser.contents
+  // Editing shortcuts are menu commands on macOS; synthetic key events never reach
+  // the menu, so run the command itself.
+  if (modifiers.length === 1 && modifiers[0] === 'cmd' && key.length === 1) {
+    const command = { a: 'selectAll', c: 'copy', v: 'paste', x: 'cut', z: 'undo' }[
+      key.toLowerCase()
+    ]
+    if (command) {
+      contents[command as 'selectAll' | 'copy' | 'paste' | 'cut' | 'undo']()
+      return
+    }
   }
-  browser.contents.sendInputEvent({ type: 'keyUp', keyCode: key })
+  const mods = modifiers.map((m) => MODIFIERS[m])
+  contents.sendInputEvent({ type: 'keyDown', keyCode: key, modifiers: mods })
+  if (mods.length === 0 && (key.length === 1 || key === 'Enter')) {
+    contents.sendInputEvent({ type: 'char', keyCode: key === 'Enter' ? '\r' : key })
+  }
+  contents.sendInputEvent({ type: 'keyUp', keyCode: key, modifiers: mods })
+}
+
+/**
+ * Paste an image into the focused element, the way a user would with ⌘V. The
+ * user's clipboard is put back afterwards.
+ */
+async function pasteImage(browser: BuiltinBrowser, path: string): Promise<void> {
+  const file = resolve(path.replace(/^~(?=\/|$)/, homedir()))
+  const image = nativeImage.createFromPath(file)
+  if (image.isEmpty()) throw new Error(`Not an image file, or not found: ${file}`)
+  // Copy the user's clipboard out; Electron only writes newly built items.
+  const previous = await Promise.all(
+    (await clipboard.read()).map(
+      async (item) =>
+        new ClipboardItem(
+          Object.fromEntries(
+            await Promise.all(item.types.map(async (type) => [type, await item.getType(type)]))
+          )
+        )
+    )
+  )
+  const png = new Blob([new Uint8Array(image.toPNG())], { type: 'image/png' })
+  await clipboard.write([new ClipboardItem({ 'image/png': png })])
+  browser.contents.paste()
+  // Let the page read the clipboard before restoring it.
+  await new Promise((done) => setTimeout(done, 1000))
+  await clipboard.write(previous)
 }
 
 function buildServer(browser: BuiltinBrowser): McpServer {
@@ -208,14 +319,32 @@ function buildServer(browser: BuiltinBrowser): McpServer {
     'press_key',
     {
       description:
-        'Press a key in the focused element, e.g. Enter, Escape, Tab, Backspace, ArrowDown.',
-      inputSchema: { key: z.string() }
+        'Press a key or shortcut in the focused element, e.g. Enter, Escape, Tab, ArrowDown, or "a" with modifiers ["cmd"] for select all. ⌘A/C/V/X/Z run the real edit commands.',
+      inputSchema: {
+        key: z.string(),
+        modifiers: z.array(z.enum(['cmd', 'shift', 'alt', 'ctrl'])).optional()
+      }
     },
-    async ({ key }) => {
+    async ({ key, modifiers }) => {
       await browser.ensureVisible()
-      pressKey(browser, key)
+      pressKey(browser, key, modifiers)
       await settle(browser)
-      return text(`Pressed ${key}.`)
+      return text(`Pressed ${[...(modifiers ?? []), key].join('+')}.`)
+    }
+  )
+
+  server.registerTool(
+    'paste_image',
+    {
+      description:
+        'Paste a local image into the focused element, like copying it and pressing ⌘V. Click the target field first. For other file types use upload.',
+      inputSchema: { path: z.string().describe('Absolute path of the image') }
+    },
+    async ({ path }) => {
+      await browser.ensureVisible()
+      await pasteImage(browser, path)
+      await settle(browser)
+      return text('Pasted the image. Take a snapshot to confirm it was attached.')
     }
   )
 
@@ -237,6 +366,51 @@ function buildServer(browser: BuiltinBrowser): McpServer {
     await settle(browser)
     return text(`Now at ${browser.contents.getURL()}.`)
   })
+
+  server.registerTool(
+    'upload',
+    {
+      description:
+        'Attach local files to the page: pass the ref of the upload button or file field (e.g. "Upload", "Files", "Attach") and absolute file paths. Use this instead of asking the user to pick files.',
+      inputSchema: {
+        ref: z.number().int().describe('Ref of the upload button or file input from snapshot'),
+        paths: z.array(z.string()).min(1).describe('Absolute paths of the files to attach')
+      }
+    },
+    async ({ ref, paths }) => {
+      await browser.ensureVisible()
+      await uploadFiles(browser, ref, paths)
+      await settle(browser)
+      return text(`Attached ${paths.length} file(s) via [${ref}]. Take a snapshot to confirm.`)
+    }
+  )
+
+  server.registerTool(
+    'download',
+    {
+      description:
+        "Download a file from a URL using the browser's logins. It is saved to ~/Downloads and the saved path is returned, so you can read or upload it.",
+      inputSchema: { url: z.string().describe('URL of the file') }
+    },
+    async ({ url }) => {
+      await browser.ensureVisible()
+      const download = await browser.download(url)
+      if (download.state !== 'completed') throw new Error(`Download ${download.state}: ${url}`)
+      return text(`Saved to ${download.path}`)
+    }
+  )
+
+  server.registerTool(
+    'downloads',
+    {
+      description:
+        'List recent downloads from the browser (including ones started by clicking links), newest first, with where each file was saved.'
+    },
+    async () => {
+      if (browser.downloads.length === 0) return text('No downloads yet.')
+      return text(browser.downloads.map((d) => `${d.state}\t${d.path}\t${d.url}`).join('\n'))
+    }
+  )
 
   server.registerTool(
     'screenshot',

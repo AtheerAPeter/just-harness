@@ -1,4 +1,6 @@
-import { BrowserWindow, WebContentsView, session, type WebContents } from 'electron'
+import { app, BrowserWindow, WebContentsView, session, type WebContents } from 'electron'
+import { existsSync } from 'node:fs'
+import { extname, basename, join } from 'node:path'
 import type { BrowserState, Rect } from '../shared/types'
 
 /**
@@ -19,7 +21,26 @@ const EMPTY_STATE: BrowserState = {
   canGoForward: false
 }
 
+export interface Download {
+  url: string
+  path: string
+  state: 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+}
+
+/** A free file name in the folder: "name.ext", then "name (1).ext", ... */
+function uniquePath(folder: string, fileName: string): string {
+  const ext = extname(fileName)
+  const stem = basename(fileName, ext) || 'download'
+  let path = join(folder, `${stem}${ext}`)
+  for (let n = 1; existsSync(path); n++) path = join(folder, `${stem} (${n})${ext}`)
+  return path
+}
+
 export class BuiltinBrowser {
+  /** Most recent first; agents read paths from here to use downloaded files. */
+  readonly downloads: Download[] = []
+  private downloadWaiters: ((download: Download) => void)[] = []
+
   private view?: WebContentsView
   private lastUrl = 'about:blank'
   private waitingForBounds: (() => void)[] = []
@@ -30,6 +51,22 @@ export class BuiltinBrowser {
     private readonly requestShow: () => void
   ) {
     const browserSession = session.fromPartition(PARTITION)
+    // Save straight to ~/Downloads instead of showing a Save dialog, which an
+    // agent cannot answer, and record where each file went.
+    browserSession.on('will-download', (_event, item) => {
+      const download: Download = {
+        url: item.getURL(),
+        path: uniquePath(app.getPath('downloads'), item.getFilename()),
+        state: 'progressing'
+      }
+      item.setSavePath(download.path)
+      this.downloads.unshift(download)
+      this.downloads.splice(50)
+      item.once('done', (_e, state) => {
+        download.state = state
+        for (const notify of this.downloadWaiters.splice(0)) notify(download)
+      })
+    })
     // Some sign-in pages (Google in particular) reject user agents that mention Electron.
     browserSession.setUserAgent(
       browserSession
@@ -90,11 +127,14 @@ export class BuiltinBrowser {
     const isNew = !this.view
     const view = this.ensureView()
     if (isNew) this.window.contentView.addChildView(view)
+    // The renderer measures in CSS pixels, which change with the app's zoom level;
+    // the native view is placed in window points.
+    const zoom = this.window.webContents.getZoomFactor()
     view.setBounds({
-      x: Math.round(rect.x),
-      y: Math.round(rect.y),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height)
+      x: Math.round(rect.x * zoom),
+      y: Math.round(rect.y * zoom),
+      width: Math.round(rect.width * zoom),
+      height: Math.round(rect.height * zoom)
     })
     for (const resolve of this.waitingForBounds.splice(0)) resolve()
     this.emitState()
@@ -118,6 +158,22 @@ export class BuiltinBrowser {
     await Promise.race([shown, new Promise((resolve) => setTimeout(resolve, 3000))])
     // If the window could not show the panel (e.g. it is minimized), work off-screen.
     this.ensureView()
+  }
+
+  /** Download a URL with the browser's logins and wait until the file is saved. */
+  download(url: string): Promise<Download> {
+    const finished = new Promise<Download>((done, fail) => {
+      const timer = setTimeout(
+        () => fail(new Error('Download did not finish within 5 minutes')),
+        300_000
+      )
+      this.downloadWaiters.push((download) => {
+        clearTimeout(timer)
+        done(download)
+      })
+    })
+    this.contents.downloadURL(url)
+    return finished
   }
 
   /** Show the panel and open a URL in it. */
