@@ -709,6 +709,16 @@ pre {
   word-break: break-word;
 }
 
+.permission-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -4px 0 10px;
+  color: var(--warn);
+  font-size: 12px;
+  word-break: break-all;
+}
+
 .permission-actions {
   display: flex;
   flex-wrap: wrap;

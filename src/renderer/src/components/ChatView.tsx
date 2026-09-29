@@ -194,17 +194,6 @@ const Item = memo(function Item({
       )
     case 'permission':
       // Bypass mode approved it; nothing to show.
-      if (item.blocked) {
-        return (
-          <div className="msg-tool failed">
-            <span className="status-dot" />
-            <LockIcon width={13} height={13} />
-            <span className="tool-name">
-              Blocked {toolLabel(item.title)} (outside project: {item.blocked})
-            </span>
-          </div>
-        )
-      }
       if (item.auto) return <></>
       if (item.resolved) {
         const choice = item.options.find((o) => o.optionId === item.resolved)
@@ -219,6 +208,11 @@ const Item = memo(function Item({
       return (
         <div className="msg-permission">
           <div className="permission-title">Allow {toolLabel(item.title)}?</div>
+          {item.outside && (
+            <div className="permission-note">
+              <LockIcon width={12} height={12} /> Outside the project: {item.outside}
+            </div>
+          )}
           <div className="permission-actions">
             {item.options.map((option) => (
               <button

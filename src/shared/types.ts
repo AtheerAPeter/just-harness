@@ -94,8 +94,8 @@ export type ChatItem =
       resolved?: string
       /** Approved by bypass-permissions mode rather than by the user. */
       auto?: boolean
-      /** Refused by project-only mode; holds the outside path that was touched. */
-      blocked?: string
+      /** Project-only mode: the path outside the project this request touches. */
+      outside?: string
     }
   | { kind: 'error'; id: string; text: string }
 

@@ -238,8 +238,8 @@ export function Composer({
           aria-pressed={Boolean(chat.projectOnly)}
           title={
             chat.projectOnly
-              ? 'Project only is on: requests that touch files outside this project are refused. Click to allow.'
-              : 'Project only: refuse requests that touch files outside this project'
+              ? 'Project only is on: anything outside this project asks you first, even with Bypass on. Click to turn off.'
+              : 'Project only: ask before the agent touches files outside this project'
           }
           onClick={() => window.api.setProjectOnly(chat.id, !chat.projectOnly)}
         >

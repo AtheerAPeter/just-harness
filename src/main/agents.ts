@@ -408,15 +408,13 @@ class AgentProcess {
       options: params.options.map((o) => ({ optionId: o.optionId, name: o.name, kind: o.kind }))
     }
     const chat = store.getChat(chatId)
-    if (chat.projectOnly) {
-      const outside = outsidePath(store.getProject(chat.projectId).path, params.toolCall)
-      const reject = item.options.find((o) => o.kind.startsWith('reject'))
-      if (outside && reject) {
-        this.emit(chatId, { ...item, resolved: reject.optionId, blocked: outside })
-        return Promise.resolve({ outcome: { outcome: 'selected', optionId: reject.optionId } })
-      }
-    }
-    const autoOption = chat.bypassPermissions ? bypassOption(item.options) : undefined
+    // Project-only mode: anything outside the project always goes to the user,
+    // bypass or not, with the agent's own options (including "always").
+    const outside = chat.projectOnly
+      ? outsidePath(store.getProject(chat.projectId).path, params.toolCall)
+      : undefined
+    if (outside) item.outside = outside
+    const autoOption = chat.bypassPermissions && !outside ? bypassOption(item.options) : undefined
     if (autoOption) {
       this.emit(chatId, { ...item, resolved: autoOption, auto: true })
       return Promise.resolve({ outcome: { outcome: 'selected', optionId: autoOption } })
