@@ -1,0 +1,92 @@
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import type {
+  AgentCommand,
+  AgentOption,
+  OpenChatResult,
+  AgentStatus,
+  AgentId,
+  AppState,
+  BrowserState,
+  Chat,
+  ChatItem,
+  Project,
+  Rect,
+  Skill,
+  SkillScope
+} from '../shared/types'
+
+function on<Args extends unknown[]>(
+  channel: string,
+  listener: (...args: Args) => void
+): () => void {
+  const handler = (_event: IpcRendererEvent, ...args: unknown[]): void =>
+    listener(...(args as Args))
+  ipcRenderer.on(channel, handler)
+  return () => ipcRenderer.off(channel, handler)
+}
+
+const api = {
+  getState: (): Promise<AppState> => ipcRenderer.invoke('state:get'),
+  onState: (listener: (state: AppState) => void) => on('state:changed', listener),
+
+  addProject: (): Promise<Project | null> => ipcRenderer.invoke('project:add'),
+  removeProject: (projectId: string): Promise<void> =>
+    ipcRenderer.invoke('project:remove', projectId),
+
+  createChat: (
+    projectId: string,
+    agent: AgentId,
+    settings: Record<string, string>
+  ): Promise<Chat> => ipcRenderer.invoke('chat:create', projectId, agent, settings),
+  deleteChat: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:delete', chatId),
+  getMessages: (chatId: string): Promise<ChatItem[]> => ipcRenderer.invoke('chat:messages', chatId),
+  setAgent: (chatId: string, agent: AgentId, settings: Record<string, string>): Promise<void> =>
+    ipcRenderer.invoke('chat:setAgent', chatId, agent, settings),
+  send: (chatId: string, text: string): Promise<void> =>
+    ipcRenderer.invoke('chat:send', chatId, text),
+  cancel: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:cancel', chatId),
+  setBypassPermissions: (chatId: string, enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke('chat:setBypass', chatId, enabled),
+  setOption: (chatId: string, optionId: string, value: string): Promise<void> =>
+    ipcRenderer.invoke('chat:setOption', chatId, optionId, value),
+  resolvePermission: (chatId: string, permissionId: string, optionId: string): Promise<void> =>
+    ipcRenderer.invoke('chat:permission', chatId, permissionId, optionId),
+  onItem: (listener: (chatId: string, item: ChatItem) => void) => on('chat:item', listener),
+
+  openChat: (chatId: string): Promise<OpenChatResult> => ipcRenderer.invoke('chat:open', chatId),
+  onCommands: (listener: (chatId: string, commands: AgentCommand[]) => void) =>
+    on('chat:commands', listener),
+  onOptions: (listener: (chatId: string, options: AgentOption[]) => void) =>
+    on('chat:options', listener),
+  agentStatus: (agent: AgentId): Promise<AgentStatus> => ipcRenderer.invoke('agents:status', agent),
+
+  browser: {
+    setBounds: (rect: Rect | null): void => ipcRenderer.send('browser:setBounds', rect),
+    navigate: (url: string): Promise<void> => ipcRenderer.invoke('browser:navigate', url),
+    back: (): Promise<void> => ipcRenderer.invoke('browser:back'),
+    forward: (): Promise<void> => ipcRenderer.invoke('browser:forward'),
+    reload: (): Promise<void> => ipcRenderer.invoke('browser:reload'),
+    clearData: (): Promise<void> => ipcRenderer.invoke('browser:clearData'),
+    getState: (): Promise<BrowserState> => ipcRenderer.invoke('browser:state'),
+    onState: (listener: (state: BrowserState) => void) => on('browser:state', listener),
+    onShowRequest: (listener: () => void) => on('browser:show', listener)
+  },
+
+  skills: {
+    list: (projectPath?: string): Promise<Skill[]> =>
+      ipcRenderer.invoke('skills:list', projectPath),
+    read: (path: string, projectPath?: string): Promise<string> =>
+      ipcRenderer.invoke('skills:read', path, projectPath),
+    create: (name: string, scope: SkillScope, projectPath?: string): Promise<string> =>
+      ipcRenderer.invoke('skills:create', name, scope, projectPath),
+    save: (path: string, content: string, projectPath?: string): Promise<void> =>
+      ipcRenderer.invoke('skills:save', path, content, projectPath),
+    remove: (path: string, projectPath?: string): Promise<void> =>
+      ipcRenderer.invoke('skills:delete', path, projectPath),
+    reveal: (path: string): Promise<void> => ipcRenderer.invoke('skills:reveal', path)
+  }
+}
+
+export type Api = typeof api
+
+contextBridge.exposeInMainWorld('api', api)

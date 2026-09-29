@@ -1,0 +1,670 @@
+import { spawn, execFile, type ChildProcess } from 'node:child_process'
+import { homedir } from 'node:os'
+import { Readable, Writable } from 'node:stream'
+import * as acp from '@agentclientprotocol/sdk'
+import type {
+  BrowserState,
+  OpenChatResult,
+  AgentCommand,
+  AgentId,
+  AgentOption,
+  AgentStatus,
+  ChatItem,
+  ToolStatus
+} from '../shared/types'
+import * as store from './store'
+import { browserMcpServer, SERVER_NAME as BROWSER_SERVER } from './browser-mcp'
+import { listSkills } from './skills'
+
+const COMMANDS: Record<AgentId, { command: string; args: string[] }> = {
+  opencode: { command: 'opencode', args: ['acp'] },
+  cline: { command: 'cline', args: ['--acp'] }
+}
+
+/** Chats always run in the agent's build mode; plan mode is not offered. */
+const BUILD_MODE: Record<AgentId, string> = { opencode: 'build', cline: 'act' }
+
+interface PendingPermission {
+  chatId: string
+  resolve: (response: acp.RequestPermissionResponse) => void
+}
+
+export interface AgentEvents {
+  item(chatId: string, item: ChatItem): void
+  options(chatId: string, options: AgentOption[]): void
+  commands(chatId: string, commands: AgentCommand[]): void
+  stateChanged(): void
+}
+
+class AgentProcess {
+  private child?: ChildProcess
+  private connection?: acp.ClientConnection
+  private starting?: Promise<acp.ClientConnection>
+  private initResult?: acp.InitializeResponse
+  /** ACP session id -> chat id, for routing session/update notifications. */
+  private sessionChats = new Map<string, string>()
+  /** Sessions whose history is being replayed by session/load; updates are dropped. */
+  private loadingSessions = new Set<string>()
+  /** Sessions opened by this process instance. After a restart they must be loaded again. */
+  private liveSessions = new Set<string>()
+  /** In-flight session opens per chat, so concurrent callers share one. */
+  private opening = new Map<string, Promise<string>>()
+  /** The live session options (model, mode, ...) per chat, as the agent last reported them. */
+  private options = new Map<string, AgentOption[]>()
+  /**
+   * Slash commands per ACP session id. Keyed by session because agents announce
+   * them before the session/new response tells us which chat the session is for.
+   */
+  private commands = new Map<string, AgentCommand[]>()
+
+  constructor(
+    readonly agent: AgentId,
+    private readonly events: AgentEvents,
+    private readonly permissions: Map<string, PendingPermission>
+  ) {}
+
+  async connect(): Promise<acp.ClientConnection> {
+    if (this.connection) return this.connection
+    this.starting ??= this.start().finally(() => (this.starting = undefined))
+    return this.starting
+  }
+
+  private async start(): Promise<acp.ClientConnection> {
+    const { command, args } = COMMANDS[this.agent]
+    const child = spawn(command, args, {
+      cwd: homedir(),
+      env: process.env,
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', resolve)
+      child.once('error', reject)
+    })
+    child.stderr!.on('data', (data) => console.error(`[${this.agent}] ${String(data).trimEnd()}`))
+
+    const stream = acp.ndJsonStream(
+      Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>,
+      Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>
+    )
+    const connection = acp
+      .client({ name: 'just-harness' })
+      .onNotification(acp.methods.client.session.update, (ctx) => this.onUpdate(ctx.params))
+      .onRequest(acp.methods.client.session.requestPermission, (ctx) =>
+        this.onPermission(ctx.params)
+      )
+      .connect(stream)
+
+    child.once('exit', (code, signal) => {
+      console.error(`[${this.agent}] exited (${signal ?? code})`)
+      connection.close(new Error(`${this.agent} exited`))
+      this.onExit()
+    })
+
+    this.child = child
+    this.initResult = await connection.agent.request(acp.methods.agent.initialize, {
+      protocolVersion: acp.PROTOCOL_VERSION,
+      clientCapabilities: {},
+      clientInfo: { name: 'just-harness', version: '1.0.0' }
+    })
+    this.connection = connection
+    return connection
+  }
+
+  private onExit(): void {
+    this.child = undefined
+    this.connection = undefined
+    this.liveSessions.clear()
+    this.loadingSessions.clear()
+    for (const [id, pending] of this.permissions) {
+      if (store.getChat(pending.chatId).agent === this.agent) {
+        this.permissions.delete(id)
+        this.resolvePermissionItem(pending.chatId, id, 'cancelled')
+      }
+    }
+    for (const chatId of this.sessionChats.values()) {
+      if (store.getState().chats.some((c) => c.id === chatId && c.running)) {
+        store.updateChat(chatId, { running: false })
+        this.emit(chatId, {
+          kind: 'error',
+          id: crypto.randomUUID(),
+          text: `${this.agent} stopped unexpectedly.`
+        })
+      }
+    }
+    this.events.stateChanged()
+  }
+
+  stop(): void {
+    this.child?.kill()
+  }
+
+  getOptions(chatId: string): AgentOption[] | undefined {
+    return this.options.get(chatId)
+  }
+
+  getCommands(chatId: string): AgentCommand[] {
+    const sessionId = store.getChat(chatId).sessionId
+    return (sessionId && this.commands.get(sessionId)) || []
+  }
+
+  private setOptions(
+    chatId: string,
+    configOptions: acp.SessionConfigOption[] | null | undefined
+  ): void {
+    if (!configOptions) return
+    const options = normalizeOptions(configOptions)
+    this.options.set(chatId, options)
+    // Remember what is selected so a reloaded or recreated session starts the same way.
+    store.updateChat(chatId, {
+      settings: Object.fromEntries(options.map((o) => [o.id, o.currentValue]))
+    })
+    this.events.options(chatId, options)
+  }
+
+  /** Make sure the chat has a live ACP session in this process, creating or loading it. */
+  ensureSession(chatId: string): Promise<string> {
+    const sessionId = store.getChat(chatId).sessionId
+    if (this.isLive(sessionId)) return Promise.resolve(sessionId)
+    let pending = this.opening.get(chatId)
+    if (!pending) {
+      pending = this.openSession(chatId).finally(() => this.opening.delete(chatId))
+      this.opening.set(chatId, pending)
+    }
+    return pending
+  }
+
+  private async openSession(chatId: string): Promise<string> {
+    const connection = await this.connect()
+    const chat = store.getChat(chatId)
+    const cwd = store.getProject(chat.projectId).path
+    const mcpServers = [browserMcpServer()]
+
+    let sessionId: string
+    let configOptions: acp.SessionConfigOption[] | null | undefined
+    if (chat.sessionId && this.initResult?.agentCapabilities?.loadSession) {
+      sessionId = chat.sessionId
+      this.sessionChats.set(sessionId, chatId)
+      this.loadingSessions.add(sessionId)
+      try {
+        const loaded = await connection.agent.request(acp.methods.agent.session.load, {
+          sessionId,
+          cwd,
+          mcpServers
+        })
+        configOptions = loaded.configOptions
+      } finally {
+        this.loadingSessions.delete(sessionId)
+      }
+    } else {
+      const created = await connection.agent.request(acp.methods.agent.session.new, {
+        cwd,
+        mcpServers
+      })
+      sessionId = created.sessionId
+      configOptions = created.configOptions
+      store.updateChat(chatId, { sessionId })
+    }
+    this.sessionChats.set(sessionId, chatId)
+    this.liveSessions.add(sessionId)
+
+    // Re-apply the saved selection. Options can depend on each other (cline's model
+    // list depends on its provider), so apply them in the agent's order and
+    // re-read the list after every change. The mode is always build, whatever was
+    // saved or restored with the session.
+    const wanted = { ...chat.settings }
+    for (const option of normalizeOptions(configOptions ?? [])) {
+      if (option.category === 'mode') wanted[option.id] = BUILD_MODE[this.agent]
+    }
+    let options = normalizeOptions(configOptions ?? [])
+    for (let i = 0; i < options.length; i++) {
+      const option = options[i]
+      const value = wanted[option.id]
+      if (!value || value === option.currentValue) continue
+      if (!option.values.some((v) => v.value === value)) continue
+      const response = await connection.agent.request(acp.methods.agent.session.setConfigOption, {
+        sessionId,
+        configId: option.id,
+        value
+      })
+      configOptions = response.configOptions
+      options = normalizeOptions(configOptions)
+    }
+    this.setOptions(chatId, configOptions)
+    return sessionId
+  }
+
+  async applyOption(chatId: string, optionId: string, value: string): Promise<void> {
+    const sessionId = await this.ensureSession(chatId)
+    const connection = await this.connect()
+    const response = await connection.agent.request(acp.methods.agent.session.setConfigOption, {
+      sessionId,
+      configId: optionId,
+      value
+    })
+    this.setOptions(chatId, response.configOptions)
+  }
+
+  /**
+   * Let go of a chat's session. A session with no messages is deleted so it does not
+   * clutter the agent's own history; otherwise it is only closed.
+   */
+  async release(chatId: string): Promise<void> {
+    const chat = store.getChat(chatId)
+    this.options.delete(chatId)
+    if (!chat.sessionId || !this.connection) return
+    const sessionId = chat.sessionId
+    const caps = this.initResult?.agentCapabilities?.sessionCapabilities
+    const empty = !store.getMessages(chatId).some((i) => i.kind === 'user')
+    const wasLive = this.isLive(sessionId)
+    this.liveSessions.delete(sessionId)
+    this.sessionChats.delete(sessionId)
+    this.commands.delete(sessionId)
+    if (empty && caps?.delete) {
+      await this.connection.agent.request(acp.methods.agent.session.delete, { sessionId })
+    } else if (wasLive && caps?.close) {
+      await this.connection.agent.request(acp.methods.agent.session.close, { sessionId })
+    }
+  }
+
+  isLive(sessionId: string | undefined): sessionId is string {
+    return !!sessionId && this.liveSessions.has(sessionId)
+  }
+
+  async prompt(chatId: string, text: string): Promise<acp.PromptResponse> {
+    const sessionId = await this.ensureSession(chatId)
+    const connection = await this.connect()
+    return connection.agent.request(acp.methods.agent.session.prompt, {
+      sessionId,
+      prompt: [{ type: 'text', text }]
+    })
+  }
+
+  async cancel(chatId: string): Promise<void> {
+    const sessionId = store.getChat(chatId).sessionId
+    if (!this.connection || !this.isLive(sessionId)) return
+    for (const [id, pending] of this.permissions) {
+      if (pending.chatId === chatId) {
+        pending.resolve({ outcome: { outcome: 'cancelled' } })
+        this.permissions.delete(id)
+        this.resolvePermissionItem(chatId, id, 'cancelled')
+      }
+    }
+    await this.connection.agent.notify(acp.methods.agent.session.cancel, { sessionId })
+  }
+
+  private emit(chatId: string, item: ChatItem): void {
+    this.events.item(chatId, store.upsertItem(chatId, item))
+  }
+
+  resolvePermissionItem(chatId: string, id: string, resolved: string, auto = false): void {
+    const item = store.findItem(chatId, id)
+    if (item?.kind === 'permission') this.emit(chatId, { ...item, resolved, auto })
+  }
+
+  private onPermission(
+    params: acp.RequestPermissionRequest
+  ): Promise<acp.RequestPermissionResponse> {
+    const chatId = this.sessionChats.get(params.sessionId)
+    if (!chatId) return Promise.resolve({ outcome: { outcome: 'cancelled' } })
+    const id = crypto.randomUUID()
+    const item: Extract<ChatItem, { kind: 'permission' }> = {
+      kind: 'permission',
+      id,
+      title: params.toolCall.title ?? 'Tool call',
+      options: params.options.map((o) => ({ optionId: o.optionId, name: o.name, kind: o.kind }))
+    }
+    const autoOption = store.getChat(chatId).bypassPermissions
+      ? bypassOption(item.options)
+      : undefined
+    if (autoOption) {
+      this.emit(chatId, { ...item, resolved: autoOption, auto: true })
+      return Promise.resolve({ outcome: { outcome: 'selected', optionId: autoOption } })
+    }
+    this.emit(chatId, item)
+    return new Promise((resolve) => this.permissions.set(id, { chatId, resolve }))
+  }
+
+  private onUpdate(params: acp.SessionNotification): void {
+    if (params.update.sessionUpdate === 'available_commands_update') {
+      const commands = params.update.availableCommands.map((c) => ({
+        name: c.name,
+        description: c.description
+      }))
+      this.commands.set(params.sessionId, commands)
+      const target = this.sessionChats.get(params.sessionId)
+      if (target) this.events.commands(target, commands)
+      return
+    }
+    if (this.loadingSessions.has(params.sessionId)) return
+    const chatId = this.sessionChats.get(params.sessionId)
+    if (!chatId) return
+    const update = params.update
+
+    switch (update.sessionUpdate) {
+      case 'agent_message_chunk':
+      case 'agent_thought_chunk': {
+        if (update.content.type !== 'text') return
+        const kind = update.sessionUpdate === 'agent_message_chunk' ? 'text' : 'thought'
+        const last = store.lastItem(chatId)
+        // Consecutive chunks of the same kind form one block.
+        if (last?.kind === kind)
+          this.emit(chatId, { ...last, text: last.text + update.content.text })
+        else this.emit(chatId, { kind, id: crypto.randomUUID(), text: update.content.text })
+        return
+      }
+      case 'tool_call':
+      case 'tool_call_update': {
+        const existing = store.findItem(chatId, update.toolCallId)
+        const base: Extract<ChatItem, { kind: 'tool' }> =
+          existing?.kind === 'tool'
+            ? existing
+            : { kind: 'tool', id: update.toolCallId, title: 'Tool call', status: 'pending' }
+        const output = formatToolContent(update.content) ?? formatRaw(update.rawOutput)
+        this.emit(chatId, {
+          ...base,
+          title: update.title ?? base.title,
+          toolKind: update.kind ?? base.toolKind,
+          status: (update.status as ToolStatus | undefined) ?? base.status,
+          input: formatRaw(update.rawInput) ?? base.input,
+          output: output ?? base.output
+        })
+        return
+      }
+      case 'plan': {
+        const existing = store.getMessages(chatId).findLast((i) => i.kind === 'plan')
+        this.emit(chatId, {
+          kind: 'plan',
+          id: existing?.id ?? crypto.randomUUID(),
+          entries: update.entries.map((e) => ({ content: e.content, status: e.status }))
+        })
+        return
+      }
+      case 'config_option_update': {
+        this.setOptions(chatId, update.configOptions)
+        return
+      }
+      case 'session_info_update': {
+        if (update.title) {
+          store.updateChat(chatId, { title: update.title })
+          this.events.stateChanged()
+        }
+        return
+      }
+      default:
+        return
+    }
+  }
+}
+
+/**
+ * The option bypass mode picks: allow once, so no lasting rule is written into
+ * the agent's own config. Falls back to allow always when that is all there is.
+ */
+function bypassOption(options: { optionId: string; kind: string }[]): string | undefined {
+  return (
+    options.find((o) => o.kind === 'allow_once')?.optionId ??
+    options.find((o) => o.kind === 'allow_always')?.optionId
+  )
+}
+
+function formatToolContent(content: acp.ToolCallContent[] | null | undefined): string | undefined {
+  if (!content?.length) return undefined
+  const parts = content.map((c) => {
+    if (c.type === 'content')
+      return c.content.type === 'text' ? c.content.text : `[${c.content.type}]`
+    if (c.type === 'diff') return `--- ${c.path}\n${diffLines(c.oldText ?? '', c.newText)}`
+    return '[terminal output]'
+  })
+  return parts.join('\n')
+}
+
+/** A minimal line diff: drop the common prefix/suffix and show what changed. */
+function diffLines(oldText: string, newText: string): string {
+  const a = oldText.split('\n')
+  const b = newText.split('\n')
+  let start = 0
+  while (start < a.length && start < b.length && a[start] === b[start]) start++
+  let endA = a.length
+  let endB = b.length
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--
+    endB--
+  }
+  return [
+    ...a.slice(start, endA).map((l) => `- ${l}`),
+    ...b.slice(start, endB).map((l) => `+ ${l}`)
+  ].join('\n')
+}
+
+function formatRaw(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value === 'string') return value
+  return JSON.stringify(value, null, 2)
+}
+
+function normalizeOptions(configOptions: acp.SessionConfigOption[]): AgentOption[] {
+  return configOptions.flatMap((option): AgentOption[] => {
+    if (option.type !== 'select') return []
+    const values = option.options.flatMap((entry) => ('group' in entry ? entry.options : [entry]))
+    return [
+      {
+        id: option.id,
+        name: option.name,
+        category: option.category ?? option.id,
+        currentValue: option.currentValue,
+        values: values.map((v) => ({
+          value: v.value,
+          name: v.name,
+          description: v.description ?? undefined
+        }))
+      }
+    ]
+  })
+}
+
+function cliVersion(agent: AgentId): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile(COMMANDS[agent].command, ['--version'], { timeout: 10_000 }, (error, stdout) =>
+      resolve(error ? undefined : stdout.trim().split('\n').pop())
+    )
+  })
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof acp.RequestError) {
+    const data = error.data as { message?: string } | undefined
+    return data?.message ? `${error.message}: ${data.message}` : error.message
+  }
+  return error instanceof Error ? error.message : String(error)
+}
+
+export class AgentManager {
+  private readonly permissions = new Map<string, PendingPermission>()
+  private readonly processes: Record<AgentId, AgentProcess>
+  private readonly statuses = new Map<AgentId, Promise<AgentStatus>>()
+
+  constructor(
+    private readonly events: AgentEvents,
+    /** The page open in the built-in browser, for `@browser` messages. */
+    private readonly browserPage: () => BrowserState | undefined
+  ) {
+    this.processes = {
+      opencode: new AgentProcess('opencode', events, this.permissions),
+      cline: new AgentProcess('cline', events, this.permissions)
+    }
+  }
+
+  /** Whether the CLI is installed, and its version. */
+  status(agent: AgentId): Promise<AgentStatus> {
+    let cached = this.statuses.get(agent)
+    if (!cached) {
+      cached = cliVersion(agent).then((version) =>
+        version
+          ? { agent, available: true, version }
+          : {
+              agent,
+              available: false,
+              error: `\`${COMMANDS[agent].command}\` was not found on your PATH.`
+            }
+      )
+      this.statuses.set(agent, cached)
+    }
+    return cached
+  }
+
+  /** Open the chat's session (starting the agent if needed) and return its options. */
+  async open(chatId: string): Promise<OpenChatResult> {
+    const agentProcess = this.processes[store.getChat(chatId).agent]
+    try {
+      await agentProcess.ensureSession(chatId)
+      return {
+        options: agentProcess.getOptions(chatId) ?? [],
+        commands: agentProcess.getCommands(chatId)
+      }
+    } catch (error) {
+      return { options: [], commands: [], error: errorMessage(error) }
+    }
+  }
+
+  /** Switch a chat that has not started yet to another agent. */
+  async changeAgent(
+    chatId: string,
+    agent: AgentId,
+    settings: Record<string, string>
+  ): Promise<void> {
+    const chat = store.getChat(chatId)
+    if (store.getMessages(chatId).some((i) => i.kind === 'user')) {
+      throw new Error('The agent cannot change after the chat has started.')
+    }
+    await this.processes[chat.agent].release(chatId)
+    store.updateChat(chatId, { agent, settings, sessionId: undefined })
+    this.events.stateChanged()
+  }
+
+  async deleteChat(chatId: string): Promise<void> {
+    const chat = store.getChat(chatId)
+    if (chat.running) await this.cancel(chatId)
+    await this.processes[chat.agent].release(chatId)
+    store.removeChat(chatId)
+    this.events.stateChanged()
+  }
+
+  /**
+   * Neither CLI exposes skills as slash commands, so `/skill-name rest` becomes an
+   * explicit request to use that skill. Agent commands are passed through as typed.
+   */
+  private expandSkill(chatId: string, text: string): string {
+    const match = text.match(/^\/([a-z0-9-]+)(?:\s+([\s\S]*))?$/)
+    if (!match) return text
+    const [, name, rest] = match
+    const chat = store.getChat(chatId)
+    if (this.processes[chat.agent].getCommands(chatId).some((c) => c.name === name)) return text
+    const project = store.getProject(chat.projectId)
+    if (!listSkills(project.path).some((s) => s.name === name && s.agents.includes(chat.agent))) {
+      return text
+    }
+    return `Use the "${name}" skill.${rest ? `\n\n${rest}` : ''}`
+  }
+
+  /**
+   * `@browser` asks the agent to work in the built-in browser panel. The agent
+   * sees the tag as plain text, so spell out which tools that means and what
+   * page is open.
+   */
+  private expandBrowserTag(text: string): string {
+    if (!/(^|\s)@browser\b/.test(text)) return text
+    const page = this.browserPage()
+    const where = page?.url
+      ? ` It currently shows ${page.url}${page.title ? ` ("${page.title}")` : ''}.`
+      : ''
+    return (
+      `${text}\n\n@browser means: use the ${BROWSER_SERVER} tools, which control the browser panel ` +
+      `in the user's app. It is signed in to the user's accounts.${where}`
+    )
+  }
+
+  async send(chatId: string, text: string): Promise<void> {
+    const chat = store.getChat(chatId)
+    if (chat.running) throw new Error('This chat is already running.')
+    const isFirst = !store.getMessages(chatId).some((i) => i.kind === 'user')
+    store.updateChat(chatId, {
+      running: true,
+      updatedAt: Date.now(),
+      ...(isFirst ? { title: text.split('\n')[0].slice(0, 60) } : {})
+    })
+    this.events.item(
+      chatId,
+      store.upsertItem(chatId, { kind: 'user', id: crypto.randomUUID(), text })
+    )
+    this.events.stateChanged()
+
+    try {
+      const response = await this.processes[chat.agent].prompt(
+        chatId,
+        this.expandBrowserTag(this.expandSkill(chatId, text))
+      )
+      if (response.stopReason === 'refusal' || response.stopReason === 'max_tokens') {
+        this.events.item(
+          chatId,
+          store.upsertItem(chatId, {
+            kind: 'error',
+            id: crypto.randomUUID(),
+            text: `Stopped: ${response.stopReason.replace('_', ' ')}.`
+          })
+        )
+      }
+    } catch (error) {
+      this.events.item(
+        chatId,
+        store.upsertItem(chatId, {
+          kind: 'error',
+          id: crypto.randomUUID(),
+          text: errorMessage(error)
+        })
+      )
+    } finally {
+      if (store.getState().chats.some((c) => c.id === chatId)) {
+        store.updateChat(chatId, { running: false, updatedAt: Date.now() })
+        this.events.stateChanged()
+      }
+    }
+  }
+
+  cancel(chatId: string): Promise<void> {
+    return this.processes[store.getChat(chatId).agent].cancel(chatId)
+  }
+
+  setOption(chatId: string, optionId: string, value: string): Promise<void> {
+    return this.processes[store.getChat(chatId).agent].applyOption(chatId, optionId, value)
+  }
+
+  resolvePermission(chatId: string, permissionId: string, optionId: string, auto = false): void {
+    const pending = this.permissions.get(permissionId)
+    if (!pending) return
+    this.permissions.delete(permissionId)
+    pending.resolve({ outcome: { outcome: 'selected', optionId } })
+    this.processes[store.getChat(chatId).agent].resolvePermissionItem(
+      chatId,
+      permissionId,
+      optionId,
+      auto
+    )
+  }
+
+  /** Turn bypass mode on or off. Turning it on also approves requests already waiting. */
+  setBypassPermissions(chatId: string, enabled: boolean): void {
+    store.updateChat(chatId, { bypassPermissions: enabled })
+    this.events.stateChanged()
+    if (!enabled) return
+    for (const [permissionId, pending] of this.permissions) {
+      if (pending.chatId !== chatId) continue
+      const item = store.findItem(chatId, permissionId)
+      const optionId = item?.kind === 'permission' ? bypassOption(item.options) : undefined
+      if (optionId) this.resolvePermission(chatId, permissionId, optionId, true)
+    }
+  }
+
+  stopAll(): void {
+    for (const agentProcess of Object.values(this.processes)) agentProcess.stop()
+  }
+}
