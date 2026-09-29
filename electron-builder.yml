@@ -19,6 +19,11 @@ nsis:
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
+  # Ad-hoc sign the whole bundle. Without a valid signature, macOS reports a
+  # downloaded app as "damaged"; with one it shows the normal unidentified-developer
+  # prompt. A Developer ID and notarization would remove that prompt too.
+  identity: '-'
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.

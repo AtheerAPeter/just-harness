@@ -39,7 +39,8 @@ Just Harness has no model providers and no API keys of its own. It starts the CL
 ## Install
 
 1. Download the `.dmg` from [Releases](https://github.com/AtheerAPeter/just-harness/releases/latest) and drag Just Harness to Applications.
-2. The build is not signed with an Apple Developer ID, so the first time, right-click the app and choose **Open**.
+2. The app isn't notarized by Apple (that needs a paid Developer ID), so the first launch is blocked with "Apple could not verify…". Click **Done**, then open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to Just Harness. You only do this once.
+   - If macOS instead says the app "is damaged", you have a build from before 1.0.3's signing fix. Download the current release, or run `xattr -cr "/Applications/Just Harness.app"` once.
 3. Install and sign in to at least one agent:
    - opencode: `curl -fsSL https://opencode.ai/install | bash`, then `opencode auth login`
    - Cline: `npm i -g cline`, then `cline auth`
@@ -69,7 +70,7 @@ Chats, settings and the browser profile are stored in `~/Library/Application Sup
 
 - Cline's ACP mode currently ignores reasoning effort (`--thinking`), so there's no effort picker for Cline.
 - Cline starts a background "hub" process of its own that keeps running after the app quits.
-- Apple Silicon only for now, and unsigned (see Install).
+- Apple Silicon only for now, and not notarized (see Install).
 
 ## License
 
