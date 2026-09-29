@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import type { AppState, Chat, ChatItem, Project } from '../shared/types'
+import type { AppState, Chat, ChatItem, Project, Theme } from '../shared/types'
 
 const dataDir = join(app.getPath('userData'), 'data')
 const chatsDir = join(dataDir, 'chats')
@@ -46,6 +46,11 @@ export function flush(): void {
 
 export function getState(): AppState {
   return state
+}
+
+export function setTheme(theme: Theme): void {
+  state.theme = theme
+  scheduleFlush()
 }
 
 export function addProject(project: Project): void {

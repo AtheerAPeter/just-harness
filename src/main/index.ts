@@ -1,6 +1,15 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
+import {
+  app,
+  shell,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  nativeTheme,
+  systemPreferences
+} from 'electron'
 import { basename, join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import appIcon from '../../resources/icon.png?asset'
 import type {
   AgentCommand,
   AgentId,
@@ -8,14 +17,18 @@ import type {
   Chat,
   ChatItem,
   Rect,
-  SkillScope
+  SkillScope,
+  Theme
 } from '../shared/types'
 import * as store from './store'
 import { AgentManager } from './agents'
 import { BuiltinBrowser } from './browser'
 import { startBrowserMcp } from './browser-mcp'
+import { registerBrowserWithCline } from './cline-mcp'
+import { installMenu } from './menu'
 import { loadShellPath } from './shell-env'
 import * as skills from './skills'
+import { listProjectFiles } from './files'
 
 let mainWindow: BrowserWindow
 let browser: BuiltinBrowser | undefined
@@ -38,11 +51,12 @@ function createWindow(): BuiltinBrowser {
   mainWindow = new BrowserWindow({
     width: 1320,
     height: 840,
-    minWidth: 900,
+    minWidth: 1024,
     minHeight: 560,
     show: false,
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 16 },
+    // Centred on the 52px toolbar row.
+    trafficLightPosition: { x: 20, y: 19 },
     vibrancy: 'sidebar',
     visualEffectState: 'followWindow',
     backgroundColor: '#00000000',
@@ -54,26 +68,48 @@ function createWindow(): BuiltinBrowser {
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
-    return { action: 'deny' }
-  })
-
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
     mainWindow.loadFile(join(import.meta.dirname, '../renderer/index.html'))
   }
 
-  return new BuiltinBrowser(
+  systemPreferences.on('accent-color-changed', (_event, color) =>
+    send('system:accent', `#${color}`)
+  )
+
+  const browser = new BuiltinBrowser(
     mainWindow,
     (state) => send('browser:state', state),
     () => send('browser:show')
   )
+
+  // Links in chat messages open in the built-in browser, not the system one.
+  // Other schemes (mailto: and the like) still go to their macOS handler.
+  mainWindow.webContents.setWindowOpenHandler((details) => {
+    if (/^https?:/i.test(details.url)) browser.open(details.url).catch(() => undefined)
+    else shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+
+  return browser
+}
+
+/**
+ * nativeTheme drives prefers-color-scheme in the app and in browser pages, and
+ * the native window material, so one setting switches everything.
+ */
+function setTheme(theme: Theme): void {
+  nativeTheme.themeSource = theme
+  store.setTheme(theme)
+  installMenu((command) => send('menu', command), theme, setTheme)
+  send('state:changed', store.getState())
 }
 
 function registerIpc(browser: BuiltinBrowser): void {
+  ipcMain.handle('theme:set', (_e, theme: Theme) => setTheme(theme))
   ipcMain.handle('state:get', () => store.getState())
+  ipcMain.handle('system:accent', () => `#${systemPreferences.getAccentColor()}`)
 
   ipcMain.handle('project:add', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -116,6 +152,12 @@ function registerIpc(browser: BuiltinBrowser): void {
 
   ipcMain.handle('chat:delete', (_e, chatId: string) => agents.deleteChat(chatId))
 
+  ipcMain.handle('chat:rename', (_e, chatId: string, title: string) => {
+    const trimmed = title.trim()
+    if (!trimmed) return
+    store.updateChat(chatId, { title: trimmed, renamed: true })
+    send('state:changed', store.getState())
+  })
   ipcMain.handle('chat:messages', (_e, chatId: string) => store.getMessages(chatId))
 
   ipcMain.handle(
@@ -152,6 +194,7 @@ function registerIpc(browser: BuiltinBrowser): void {
   ipcMain.handle('browser:clearData', () => browser.clearData())
   ipcMain.handle('browser:state', () => browser.state())
 
+  ipcMain.handle('files:list', (_e, projectPath: string) => listProjectFiles(projectPath))
   ipcMain.handle('skills:list', (_e, projectPath?: string) => skills.listSkills(projectPath))
   ipcMain.handle('skills:read', (_e, path: string, projectPath?: string) =>
     skills.readSkill(path, projectPath)
@@ -175,14 +218,29 @@ app.on('second-instance', () => {
   mainWindow.focus()
 })
 
+app.setName('Just Harness')
+
 app.whenReady().then(async () => {
+  // A packaged build takes its icon from the bundle; in development the Electron
+  // binary's own icon would show, so set it here.
+  if (!app.isPackaged) app.dock?.setIcon(appIcon)
   electronApp.setAppUserModelId('dev.justharness.app')
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
   await loadShellPath()
+  // Set before the window exists so it opens in the right appearance.
+  nativeTheme.themeSource = store.getState().theme ?? 'system'
+  installMenu((command) => send('menu', command), nativeTheme.themeSource, setTheme)
   browser = createWindow()
   registerIpc(browser)
-  await startBrowserMcp(browser)
+  const endpoint = await startBrowserMcp(browser)
+  // Only when cline is installed; failures are logged and the app works without it.
+  agents.status('cline').then(({ available }) => {
+    if (!available) return
+    registerBrowserWithCline(endpoint).catch((error) =>
+      console.error('Could not register the browser tools with cline:', error.message)
+    )
+  })
 })
 
 let quitting = false

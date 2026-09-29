@@ -10,7 +10,15 @@ import type {
 } from '../../../shared/types'
 import { renderMarkdown } from '../lib/markdown'
 import { Composer } from './Composer'
-import { ChevronIcon } from './icons'
+import {
+  ChevronIcon,
+  FileIcon,
+  GlobeIcon,
+  PencilIcon,
+  SearchIcon,
+  TerminalIcon,
+  ToolIcon
+} from './icons'
 
 interface ChatViewProps {
   chat: Chat
@@ -112,9 +120,17 @@ export function ChatView({
               <p>Pick an agent and model below. The agent works inside this project’s folder.</p>
             </div>
           )}
-          {items.map((item) => (
-            <Item key={item.id} item={item} chatId={chat.id} />
-          ))}
+          {groupTools(items).map((block) =>
+            Array.isArray(block) ? (
+              <div className="tool-group" key={block[0].id}>
+                {block.map((tool) => (
+                  <ToolRow key={tool.id} tool={tool} />
+                ))}
+              </div>
+            ) : (
+              <Item key={block.id} item={block} chatId={chat.id} />
+            )
+          )}
           {chat.running && <div className="working">Working…</div>}
         </div>
       </div>
@@ -127,6 +143,7 @@ export function ChatView({
           commands={commands}
           skills={skills}
           started={items.some((i) => i.kind === 'user')}
+          projectPath={projectPath}
           onAgentChange={onAgentChange}
           onOptionChange={onOptionChange}
         />
@@ -162,34 +179,7 @@ const Item = memo(function Item({
         </Collapsible>
       )
     case 'tool':
-      return (
-        <Collapsible
-          className="msg-tool"
-          summary={
-            <>
-              <span className={`status-dot ${item.status}`} />
-              <span className="tool-title">{item.title}</span>
-              {item.toolKind && item.toolKind !== 'other' && (
-                <span className="tool-kind">{item.toolKind}</span>
-              )}
-            </>
-          }
-        >
-          {item.input && (
-            <>
-              <div className="tool-label">Input</div>
-              <pre>{item.input}</pre>
-            </>
-          )}
-          {item.output && (
-            <>
-              <div className="tool-label">Output</div>
-              <pre>{item.output}</pre>
-            </>
-          )}
-          {!item.input && !item.output && <div className="tool-label">No details</div>}
-        </Collapsible>
-      )
+      return <ToolRow tool={item} />
     case 'plan':
       return (
         <div className="msg-plan">
@@ -202,37 +192,90 @@ const Item = memo(function Item({
         </div>
       )
     case 'permission':
+      // Bypass mode approved it; nothing to show.
+      if (item.auto) return <></>
+      if (item.resolved) {
+        const choice = item.options.find((o) => o.optionId === item.resolved)
+        const allowed = choice?.kind.startsWith('allow')
+        return (
+          <div className="msg-tool">
+            {item.resolved === 'cancelled' ? 'Cancelled' : allowed ? 'Allowed' : 'Denied'}{' '}
+            {toolLabel(item.title)}
+          </div>
+        )
+      }
       return (
         <div className="msg-permission">
-          <div className="permission-title">
-            Allow <strong>{item.title}</strong>?
+          <div className="permission-title">Allow {toolLabel(item.title)}?</div>
+          <div className="permission-actions">
+            {item.options.map((option) => (
+              <button
+                key={option.optionId}
+                className={option.kind.startsWith('allow') ? 'btn primary' : 'btn'}
+                onClick={() => window.api.resolvePermission(chatId, item.id, option.optionId)}
+              >
+                {option.name}
+              </button>
+            ))}
           </div>
-          {item.resolved ? (
-            <div className="permission-result">
-              {item.resolved === 'cancelled'
-                ? 'Cancelled'
-                : item.options.find((o) => o.optionId === item.resolved)?.name}
-              {item.auto && ' (auto)'}
-            </div>
-          ) : (
-            <div className="permission-actions">
-              {item.options.map((option) => (
-                <button
-                  key={option.optionId}
-                  className={option.kind.startsWith('allow') ? 'btn primary' : 'btn'}
-                  onClick={() => window.api.resolvePermission(chatId, item.id, option.optionId)}
-                >
-                  {option.name}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       )
     case 'error':
       return <div className="msg-error">{item.text}</div>
   }
 })
+
+/**
+ * A short name for a tool call: drops arguments (agents put them after ":") and
+ * MCP server prefixes, e.g. "harness_browser__click: {...}" -> "browser · click".
+ */
+function toolLabel(title: string): string {
+  const name = title.split(':')[0].trim()
+  const mcp = name.match(/^harness_(\w+?)_{1,2}(\w+)$/)
+  const label = mcp ? `${humanize(mcp[1])} · ${humanize(mcp[2])}` : humanize(name)
+  return label.length > 60 ? `${label.slice(0, 59)}…` : label
+}
+
+/** "fetch_web_content" -> "Fetch web content" */
+function humanize(name: string): string {
+  const words = name.replace(/[_.]+/g, ' ').trim()
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+type ToolItem = Extract<ChatItem, { kind: 'tool' }>
+
+/** Runs of consecutive tool calls become one compact block. */
+function groupTools(items: ChatItem[]): (ChatItem | ToolItem[])[] {
+  const blocks: (ChatItem | ToolItem[])[] = []
+  for (const item of items) {
+    // Auto-approved permissions render nothing, so they must not split a run.
+    if (item.kind === 'permission' && item.auto) continue
+    const last = blocks[blocks.length - 1]
+    if (item.kind === 'tool' && Array.isArray(last)) last.push(item)
+    else blocks.push(item.kind === 'tool' ? [item] : item)
+  }
+  return blocks
+}
+
+/** Icon for an ACP tool kind (read, edit, search, execute, fetch, ...). */
+function ToolKindIcon({ kind }: { kind?: string }): React.JSX.Element {
+  const size = { width: 13, height: 13 }
+  if (kind === 'search') return <SearchIcon {...size} />
+  if (kind === 'fetch') return <GlobeIcon {...size} />
+  if (kind === 'execute') return <TerminalIcon {...size} />
+  if (kind === 'read') return <FileIcon {...size} />
+  if (kind === 'edit' || kind === 'delete' || kind === 'move') return <PencilIcon {...size} />
+  return <ToolIcon {...size} />
+}
+
+function ToolRow({ tool }: { tool: ToolItem }): React.JSX.Element {
+  return (
+    <div className={`msg-tool ${tool.status}`}>
+      <ToolKindIcon kind={tool.toolKind} />
+      <span className="tool-name">{toolLabel(tool.title)}</span>
+    </div>
+  )
+}
 
 function Collapsible({
   className,

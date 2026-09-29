@@ -3,8 +3,8 @@ import { useEffect, useRef } from 'react'
 export interface CompletionItem {
   name: string
   description: string
-  /** Commands and skills are typed as /name, tags as @name. */
-  kind: 'command' | 'skill' | 'tag'
+  /** Commands and skills are typed as /name; tags and files as @name. */
+  kind: 'command' | 'skill' | 'tag' | 'file'
 }
 
 interface CompletionMenuProps {
@@ -43,7 +43,7 @@ export function CompletionMenu({
           onClick={() => onChoose(item)}
         >
           <span className="slash-name">
-            {item.kind === 'tag' ? '@' : '/'}
+            {item.kind === 'tag' || item.kind === 'file' ? '@' : '/'}
             {item.name}
           </span>
           <span className="slash-kind">{item.kind}</span>

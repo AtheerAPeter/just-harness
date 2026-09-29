@@ -12,8 +12,10 @@ import type {
   Project,
   Rect,
   Skill,
-  SkillScope
+  SkillScope,
+  Theme
 } from '../shared/types'
+import type { MenuCommand } from '../main/menu'
 
 function on<Args extends unknown[]>(
   channel: string,
@@ -27,7 +29,12 @@ function on<Args extends unknown[]>(
 
 const api = {
   getState: (): Promise<AppState> => ipcRenderer.invoke('state:get'),
+  /** The macOS accent color as #rrggbbaa. */
+  getAccentColor: (): Promise<string> => ipcRenderer.invoke('system:accent'),
+  onAccentColor: (listener: (color: string) => void) => on('system:accent', listener),
   onState: (listener: (state: AppState) => void) => on('state:changed', listener),
+  onMenu: (listener: (command: MenuCommand) => void) => on('menu', listener),
+  setTheme: (theme: Theme): Promise<void> => ipcRenderer.invoke('theme:set', theme),
 
   addProject: (): Promise<Project | null> => ipcRenderer.invoke('project:add'),
   removeProject: (projectId: string): Promise<void> =>
@@ -39,6 +46,8 @@ const api = {
     settings: Record<string, string>
   ): Promise<Chat> => ipcRenderer.invoke('chat:create', projectId, agent, settings),
   deleteChat: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:delete', chatId),
+  renameChat: (chatId: string, title: string): Promise<void> =>
+    ipcRenderer.invoke('chat:rename', chatId, title),
   getMessages: (chatId: string): Promise<ChatItem[]> => ipcRenderer.invoke('chat:messages', chatId),
   setAgent: (chatId: string, agent: AgentId, settings: Record<string, string>): Promise<void> =>
     ipcRenderer.invoke('chat:setAgent', chatId, agent, settings),
@@ -71,6 +80,9 @@ const api = {
     onState: (listener: (state: BrowserState) => void) => on('browser:state', listener),
     onShowRequest: (listener: () => void) => on('browser:show', listener)
   },
+
+  listFiles: (projectPath: string): Promise<string[]> =>
+    ipcRenderer.invoke('files:list', projectPath),
 
   skills: {
     list: (projectPath?: string): Promise<Skill[]> =>

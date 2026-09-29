@@ -22,6 +22,7 @@ interface ComposerProps {
   skills: Skill[]
   /** True once the first message is sent; the agent is fixed from then on. */
   started: boolean
+  projectPath: string
   onAgentChange: (agent: AgentId) => void
   onOptionChange: (optionId: string, value: string) => void
 }
@@ -45,6 +46,7 @@ export function Composer({
   commands,
   skills,
   started,
+  projectPath,
   onAgentChange,
   onOptionChange
 }: ComposerProps): React.JSX.Element {
@@ -61,17 +63,43 @@ export function Composer({
     const before = text.slice(0, caret)
     const slash = before.match(/^\/(\S*)$/)
     if (slash) return { kind: 'slash' as const, query: slash[1], start: 0 }
-    const mention = before.match(/(?:^|\s)@(\w*)$/)
+    const mention = before.match(/(?:^|\s)@([^\s@]*)$/)
     if (mention)
       return { kind: 'mention' as const, query: mention[1], start: caret - mention[1].length - 1 }
     return undefined
   }, [text, caret])
 
+  // Project files for @, re-read each time the @ menu opens so new files show up.
+  const [files, setFiles] = useState<string[]>([])
+  const mentioning = trigger?.kind === 'mention'
+  useEffect(() => {
+    if (!mentioning) return
+    let cancelled = false
+    window.api.listFiles(projectPath).then((list) => {
+      if (!cancelled) setFiles(list)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [mentioning, projectPath])
+
   const menuItems = useMemo((): CompletionItem[] => {
     if (!trigger) return []
     let all: CompletionItem[]
     if (trigger.kind === 'mention') {
-      all = TAGS
+      const q = trigger.query.toLowerCase()
+      const baseName = (path: string): string => path.slice(path.lastIndexOf('/') + 1).toLowerCase()
+      const matches = files
+        .filter((path) => path.toLowerCase().includes(q))
+        // File names that start with the query first, then shorter paths.
+        .sort(
+          (a, b) =>
+            Number(!baseName(a).startsWith(q)) - Number(!baseName(b).startsWith(q)) ||
+            a.length - b.length
+        )
+        .slice(0, 50)
+        .map((path) => ({ name: path, description: '', kind: 'file' as const }))
+      return [...TAGS.filter((t) => t.name.includes(q)), ...matches]
     } else {
       const commandNames = new Set(commands.map((c) => c.name))
       all = [
@@ -85,13 +113,13 @@ export function Composer({
     return all
       .filter((item) => item.name.toLowerCase().includes(q))
       .sort((a, b) => Number(!a.name.startsWith(q)) - Number(!b.name.startsWith(q)))
-  }, [trigger, commands, skills, chat.agent])
+  }, [trigger, files, commands, skills, chat.agent])
 
   const menuOpen = trigger !== undefined && menuDismissed !== `${caret}:${text}`
 
   function choose(item: CompletionItem): void {
     if (!trigger) return
-    const inserted = `${item.kind === 'tag' ? '@' : '/'}${item.name} `
+    const inserted = `${item.kind === 'tag' || item.kind === 'file' ? '@' : '/'}${item.name} `
     const next = text.slice(0, trigger.start) + inserted + text.slice(caret)
     const position = trigger.start + inserted.length
     setText(next)
@@ -216,7 +244,7 @@ export function Composer({
           onClick={() => window.api.setBypassPermissions(chat.id, !chat.bypassPermissions)}
         >
           <ShieldIcon width={14} height={14} />
-          {chat.bypassPermissions ? 'Bypass on' : 'Ask'}
+          <span className="bypass-label">{chat.bypassPermissions ? 'Bypass on' : 'Ask'}</span>
         </button>
         <div className="spacer" />
         {chat.running ? (

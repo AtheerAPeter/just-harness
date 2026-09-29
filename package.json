@@ -55,5 +55,6 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AtheerAPeter/just-harness.git"
-  }
+  },
+  "license": "MIT"
 }

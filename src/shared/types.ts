@@ -16,6 +16,8 @@ export interface Chat {
   id: string
   projectId: string
   title: string
+  /** Set once the user renames the chat; automatic titles no longer replace it. */
+  renamed?: boolean
   agent: AgentId
   /** ACP session id, set once the first prompt has been sent. */
   sessionId?: string
@@ -28,9 +30,13 @@ export interface Chat {
   updatedAt: number
 }
 
+export type Theme = 'system' | 'light' | 'dark'
+
 export interface AppState {
   projects: Project[]
   chats: Chat[]
+  /** Appearance; 'system' follows macOS. Missing in state saved by older versions. */
+  theme?: Theme
 }
 
 /** A session option exposed by the agent (model, mode, reasoning effort, ...). */

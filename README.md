@@ -1,36 +1,75 @@
-# just-harness
+<p align="center">
+  <img src="build/icon.png" width="128" alt="Just Harness icon">
+</p>
 
-A small macOS desktop app for running the [opencode](https://opencode.ai) and [Cline](https://cline.bot) CLIs. It has no model providers of its own: it starts the CLIs you already have installed, talks to them over the [Agent Client Protocol](https://agentclientprotocol.com) (`opencode acp`, `cline --acp`), and shows the models they report.
+<h1 align="center">Just Harness</h1>
 
-## Features
+<p align="center"><b>The basics are all you need.</b></p>
 
-- Projects (folders on disk) with chats inside them. Each chat runs one agent in its project folder.
-- Model, provider and effort pickers filled from the agent's live session.
-- Built-in browser panel on the right. Logins persist across restarts, and agents can drive it through the `harness_browser` MCP tools. Tag a message with `@browser` to point the agent at it.
-- Skills: browse, create and edit `SKILL.md` skills. Type `/` in the composer to pick a skill or an agent command.
-- Per-chat bypass-permissions toggle that approves tool requests automatically (allow once).
+<p align="center">A small macOS app for the <a href="https://opencode.ai">opencode</a> and <a href="https://cline.bot">Cline</a> coding agents: projects, chats, skills, and a built-in browser they can drive. Nothing else.</p>
 
-## Requirements
+<p align="center"><a href="https://github.com/AtheerAPeter/just-harness/releases/latest"><b>Download for macOS (Apple Silicon)</b></a></p>
 
-- macOS
-- Node.js 22+
-- `opencode` and/or `cline` installed and signed in (`opencode auth login`, `cline auth`)
+---
 
-## Run
+Just Harness has no model providers and no API keys of its own. It starts the CLIs you already have installed, talks to them over the [Agent Client Protocol](https://agentclientprotocol.com) (`opencode acp`, `cline --acp`), and shows whatever models they report. If a model works in your terminal, it works here.
+
+## What's in it
+
+- **Projects and chats.** Add a folder, start chats in it. Each chat runs OpenCode or Cline in that folder and resumes where it left off after a restart.
+- **Model pickers from the agent itself.** Provider, model and reasoning effort come live from the agent's session, so switching Cline's provider reloads its model list.
+- **A built-in browser.** A panel on the right that keeps your logins across restarts. Agents control it through the `harness_browser` tools (navigate, snapshot, click, type, screenshot, …) and you watch it happen. Tag a message with `@browser` to point the agent at it. Opencode's own tool for driving your desktop browser is turned off, so agents stay in the panel.
+- **Skills.** Browse, create and edit `SKILL.md` skills for both agents. Type `/` in the composer to run a skill or an agent command.
+- **`@` mentions.** Tag project files (respects `.gitignore`); they're attached to the prompt as file references.
+- **Bypass permissions** per chat, approving tool requests automatically (allow once).
+- **Light and dark mode**, a macOS 27 style layout, and your system accent color.
+- **Light on resources.** Agents that sit idle for 5 minutes are stopped and reconnect when you come back; closing the browser panel frees the page.
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| ⌘N | New chat |
+| ⌘O | Open project folder |
+| ⌃⌘S | Show or hide the sidebar |
+| ⌘B | Show or hide the browser |
+| Enter / Shift+Enter | Send / new line |
+
+## Install
+
+1. Download the `.dmg` from [Releases](https://github.com/AtheerAPeter/just-harness/releases/latest) and drag Just Harness to Applications.
+2. The build is not signed with an Apple Developer ID, so the first time, right-click the app and choose **Open**.
+3. Install and sign in to at least one agent:
+   - opencode: `curl -fsSL https://opencode.ai/install | bash`, then `opencode auth login`
+   - Cline: `npm i -g cline`, then `cline auth`
+
+The app finds the CLIs through your login shell's `PATH`, the same way your terminal does.
+
+## Build from source
+
+Requires macOS, Node.js 22+ and npm.
 
 ```bash
 npm install
-npm run dev
+npm run dev                                     # run in development
+npx electron-vite build && npx electron-builder --mac dmg   # build the .app and .dmg into dist/
 ```
 
-## Build a .app
+## How it works
 
-```bash
-npm run build:mac
-```
+- `src/main/agents.ts` runs one ACP connection per agent CLI, maps chats to ACP sessions, and turns session updates into chat items.
+- `src/main/browser.ts` owns the browser panel, a `WebContentsView` on a persistent session partition, so cookies and logins are stored on disk.
+- `src/main/browser-mcp.ts` is an MCP server on `127.0.0.1` (bearer-token protected) that exposes the panel to agents. Opencode receives it through ACP; Cline's ACP mode ignores MCP servers sent by clients, so the app registers it with `cline mcp add`.
+- `src/main/skills.ts` reads skills from `.claude/skills`, `.opencode/skills`, `.agents/skills`, `.cline/skills` and their global equivalents.
 
-The `.dmg` ends up in `dist/`. The build is unsigned, so on first launch right-click the app and choose Open.
+Chats, settings and the browser profile are stored in `~/Library/Application Support/Just Harness`. The agent sessions themselves are stored by each CLI.
 
-## Where data lives
+## Known limitations
 
-Chats, settings and the browser profile are stored in `~/Library/Application Support/Just Harness`. Agent sessions themselves are stored by each CLI.
+- Cline's ACP mode currently ignores reasoning effort (`--thinking`), so there's no effort picker for Cline.
+- Cline starts a background "hub" process of its own that keeps running after the app quits.
+- Apple Silicon only for now, and unsigned (see Install).
+
+## License
+
+[MIT](LICENSE)

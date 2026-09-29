@@ -1,17 +1,19 @@
-import { createServer, type IncomingMessage } from 'node:http'
+import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
+import { app } from 'electron'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import type { McpServerStdio } from '@agentclientprotocol/sdk'
+import type { McpServer as AcpMcpServer } from '@agentclientprotocol/sdk'
 import { z } from 'zod'
-import bridgeScript from '../../resources/mcp-stdio-bridge.mjs?asset&asarUnpack'
 import type { BuiltinBrowser } from './browser'
 
 /**
- * An MCP server that drives the built-in browser. It listens on loopback HTTP
- * guarded by a random token; agents reach it through a small stdio bridge
- * (cline only supports stdio MCP servers over ACP).
+ * An MCP server that drives the built-in browser, on loopback HTTP guarded by a
+ * bearer token. The port and token are kept between launches so agents that
+ * register it in their own config (cline) keep a working address.
  */
 
 /**
@@ -19,8 +21,40 @@ import type { BuiltinBrowser } from './browser'
  * name, and agents confuse the two.
  */
 export const SERVER_NAME = 'harness_browser'
-const token = randomBytes(24).toString('hex')
-let endpoint: string | undefined
+/**
+ * Sent to the model with the tool list. Agents also ship their own browser
+ * tools (opencode has one named `browser`), so say plainly which one to use.
+ */
+export const BROWSER_GUIDANCE =
+  "These tools control the browser panel inside the user's Just Harness app. The user can watch it, " +
+  'and it is signed in to their accounts. For any web browsing or browser automation, use these tools ' +
+  'instead of any other browser tool (built-in browser tools, Playwright, Puppeteer, computer use, or ' +
+  'opening the system browser), unless the user explicitly asks for a different browser. Start with ' +
+  'navigate or snapshot, then use the element refs from the snapshot for click and type.'
+
+const endpointFile = join(app.getPath('userData'), 'browser-mcp.json')
+
+export interface BrowserMcpEndpoint {
+  url: string
+  token: string
+}
+
+let endpoint: BrowserMcpEndpoint | undefined
+
+function readSaved(): { port: number; token: string } | undefined {
+  if (!existsSync(endpointFile)) return undefined
+  return JSON.parse(readFileSync(endpointFile, 'utf8'))
+}
+
+function listen(http: Server, port: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    http.once('error', reject)
+    http.listen(port, '127.0.0.1', () => {
+      http.off('error', reject)
+      resolve((http.address() as AddressInfo).port)
+    })
+  })
+}
 
 /** Injected into the page: tags visible interactive elements with refs and returns an outline. */
 const SNAPSHOT_SCRIPT = `(() => {
@@ -95,13 +129,16 @@ function pressKey(browser: BuiltinBrowser, key: string): void {
 }
 
 function buildServer(browser: BuiltinBrowser): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: '1.0.0' })
+  const server = new McpServer(
+    { name: SERVER_NAME, version: '1.0.0' },
+    { instructions: BROWSER_GUIDANCE }
+  )
 
   server.registerTool(
     'navigate',
     {
       description:
-        "Open a URL in the browser panel of the Just Harness app, which the user can watch. It keeps the user's logins, so authenticated pages work.",
+        "Open a URL in the user's Just Harness browser panel (signed in to their accounts). Prefer this over any other browser tool unless the user asks for a different browser.",
       inputSchema: { url: z.string().describe('URL to open') }
     },
     async ({ url }) => {
@@ -235,7 +272,9 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-export function startBrowserMcp(browser: BuiltinBrowser): Promise<void> {
+export async function startBrowserMcp(browser: BuiltinBrowser): Promise<BrowserMcpEndpoint> {
+  const saved = readSaved()
+  const token = saved?.token ?? randomBytes(24).toString('hex')
   const http = createServer(async (req, res) => {
     if (req.headers.authorization !== `Bearer ${token}`) {
       res.writeHead(401).end()
@@ -263,26 +302,30 @@ export function startBrowserMcp(browser: BuiltinBrowser): Promise<void> {
       if (!res.headersSent) res.writeHead(500).end()
     }
   })
-  return new Promise((resolve) => {
-    http.listen(0, '127.0.0.1', () => {
-      endpoint = `http://127.0.0.1:${(http.address() as AddressInfo).port}/mcp`
-      resolve()
-    })
-  })
+  let port: number
+  try {
+    port = await listen(http, saved?.port ?? 0)
+  } catch (error) {
+    // The saved port is taken by something else; pick a new one.
+    if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error
+    port = await listen(http, 0)
+  }
+  if (port !== saved?.port || token !== saved?.token) {
+    // The token controls the signed-in browser, so only the user may read it.
+    writeFileSync(endpointFile, JSON.stringify({ port, token }), { mode: 0o600 })
+    chmodSync(endpointFile, 0o600)
+  }
+  endpoint = { url: `http://127.0.0.1:${port}/mcp`, token }
+  return endpoint
 }
 
-/** The MCP server entry passed to every ACP session. */
-export function browserMcpServer(): McpServerStdio {
+/** The MCP server entry passed in ACP session requests. */
+export function browserMcpServer(): AcpMcpServer {
   if (!endpoint) throw new Error('Browser MCP server has not started')
   return {
+    type: 'http',
     name: SERVER_NAME,
-    // Electron's own binary doubles as a Node runtime, so no separate Node install is needed.
-    command: process.execPath,
-    args: [bridgeScript],
-    env: [
-      { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
-      { name: 'HARNESS_MCP_URL', value: endpoint },
-      { name: 'HARNESS_MCP_TOKEN', value: token }
-    ]
+    url: endpoint.url,
+    headers: [{ name: 'Authorization', value: `Bearer ${endpoint.token}` }]
   }
 }

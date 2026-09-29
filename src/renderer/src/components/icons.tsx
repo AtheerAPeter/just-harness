@@ -94,6 +94,50 @@ export const ShieldIcon = (p: IconProps): React.JSX.Element => (
     <path d="m9 12 2 2 4-4" />
   </Icon>
 )
+export const SidebarIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="3" />
+    <path d="M9 4v16" />
+  </Icon>
+)
+export const SunIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+  </Icon>
+)
+export const MoonIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" />
+  </Icon>
+)
+export const PencilIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <path d="M4 20h4L19 9l-4-4L4 16z" />
+  </Icon>
+)
+export const SearchIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <circle cx="11" cy="11" r="6.5" />
+    <path d="m20 20-4.2-4.2" />
+  </Icon>
+)
+export const TerminalIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <path d="m5 7 5 5-5 5M12 18h7" />
+  </Icon>
+)
+export const FileIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4" />
+  </Icon>
+)
+export const ToolIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L4 16.8V20h3.2l5.3-5.3a4 4 0 0 0 5.2-5.4l-2.5 2.5-2.3-.6-.6-2.3z" />
+  </Icon>
+)
 export const ChatIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
     <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />

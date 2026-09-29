@@ -1,5 +1,7 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
+import { basename } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 import type {
@@ -13,13 +15,40 @@ import type {
   ToolStatus
 } from '../shared/types'
 import * as store from './store'
-import { browserMcpServer, SERVER_NAME as BROWSER_SERVER } from './browser-mcp'
+import { browserMcpServer, BROWSER_GUIDANCE, SERVER_NAME as BROWSER_SERVER } from './browser-mcp'
 import { listSkills } from './skills'
+import { resolveProjectFile } from './files'
 
 const COMMANDS: Record<AgentId, { command: string; args: string[] }> = {
   opencode: { command: 'opencode', args: ['acp'] },
   cline: { command: 'cline', args: ['--acp'] }
 }
+
+/**
+ * An agent process with no prompt running is stopped after this long. Agents
+ * hold 200+ MB each; chats reconnect with session/load when used again.
+ */
+const IDLE_STOP_MS = 5 * 60_000
+
+/**
+ * Opencode ships a built-in `browser` tool that drives the user's own desktop
+ * browser, and models sometimes pick it over the built-in panel. Deny it for the
+ * opencode this app starts; OPENCODE_CONFIG_CONTENT is applied on top of the
+ * user's config, so their own settings stay in effect.
+ */
+function agentEnv(agent: AgentId): NodeJS.ProcessEnv {
+  if (agent !== 'opencode') return process.env
+  const inline = process.env.OPENCODE_CONFIG_CONTENT
+  const config = inline ? (JSON.parse(inline) as Record<string, unknown>) : {}
+  const permission = {
+    ...(config.permission as Record<string, unknown> | undefined),
+    browser: 'deny'
+  }
+  return { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, permission }) }
+}
+
+/** ACP's error code for an unknown session (RequestError.resourceNotFound). */
+const RESOURCE_NOT_FOUND = -32002
 
 /** Chats always run in the agent's build mode; plan mode is not offered. */
 const BUILD_MODE: Record<AgentId, string> = { opencode: 'build', cline: 'act' }
@@ -56,6 +85,8 @@ class AgentProcess {
    * them before the session/new response tells us which chat the session is for.
    */
   private commands = new Map<string, AgentCommand[]>()
+  private activePrompts = 0
+  private idleTimer?: NodeJS.Timeout
 
   constructor(
     readonly agent: AgentId,
@@ -73,7 +104,7 @@ class AgentProcess {
     const { command, args } = COMMANDS[this.agent]
     const child = spawn(command, args, {
       cwd: homedir(),
-      env: process.env,
+      env: agentEnv(this.agent),
       stdio: ['pipe', 'pipe', 'pipe']
     })
     await new Promise<void>((resolve, reject) => {
@@ -107,14 +138,26 @@ class AgentProcess {
       clientInfo: { name: 'just-harness', version: '1.0.0' }
     })
     this.connection = connection
+    this.scheduleIdleStop()
     return connection
   }
 
+  /** Restart the idle countdown; the process is stopped once nothing has used it for a while. */
+  private scheduleIdleStop(): void {
+    clearTimeout(this.idleTimer)
+    if (this.activePrompts > 0 || this.opening.size > 0) return
+    this.idleTimer = setTimeout(() => {
+      if (this.activePrompts === 0 && this.opening.size === 0) this.stop()
+    }, IDLE_STOP_MS)
+  }
+
   private onExit(): void {
+    clearTimeout(this.idleTimer)
     this.child = undefined
     this.connection = undefined
     this.liveSessions.clear()
     this.loadingSessions.clear()
+    this.commands.clear()
     for (const [id, pending] of this.permissions) {
       if (store.getChat(pending.chatId).agent === this.agent) {
         this.permissions.delete(id)
@@ -167,7 +210,10 @@ class AgentProcess {
     if (this.isLive(sessionId)) return Promise.resolve(sessionId)
     let pending = this.opening.get(chatId)
     if (!pending) {
-      pending = this.openSession(chatId).finally(() => this.opening.delete(chatId))
+      pending = this.openSession(chatId).finally(() => {
+        this.opening.delete(chatId)
+        this.scheduleIdleStop()
+      })
       this.opening.set(chatId, pending)
     }
     return pending
@@ -177,24 +223,21 @@ class AgentProcess {
     const connection = await this.connect()
     const chat = store.getChat(chatId)
     const cwd = store.getProject(chat.projectId).path
-    const mcpServers = [browserMcpServer()]
+    // Agents that take HTTP MCP servers over ACP get the browser tools here. Cline's
+    // ACP mode ignores session MCP servers; it is registered in cline's own config
+    // instead (see cline-mcp.ts).
+    const mcpServers = this.initResult?.agentCapabilities?.mcpCapabilities?.http
+      ? [browserMcpServer()]
+      : []
 
     let sessionId: string
     let configOptions: acp.SessionConfigOption[] | null | undefined
-    if (chat.sessionId && this.initResult?.agentCapabilities?.loadSession) {
+    const loaded = chat.sessionId
+      ? await this.loadSession(chatId, chat.sessionId, cwd, mcpServers)
+      : undefined
+    if (chat.sessionId && loaded) {
       sessionId = chat.sessionId
-      this.sessionChats.set(sessionId, chatId)
-      this.loadingSessions.add(sessionId)
-      try {
-        const loaded = await connection.agent.request(acp.methods.agent.session.load, {
-          sessionId,
-          cwd,
-          mcpServers
-        })
-        configOptions = loaded.configOptions
-      } finally {
-        this.loadingSessions.delete(sessionId)
-      }
+      configOptions = loaded.configOptions
     } else {
       const created = await connection.agent.request(acp.methods.agent.session.new, {
         cwd,
@@ -203,6 +246,13 @@ class AgentProcess {
       sessionId = created.sessionId
       configOptions = created.configOptions
       store.updateChat(chatId, { sessionId })
+      if (chat.sessionId && store.getMessages(chatId).some((i) => i.kind === 'user')) {
+        this.emit(chatId, {
+          kind: 'error',
+          id: crypto.randomUUID(),
+          text: `${this.agent} no longer has this conversation, so it continues in a new session without the earlier context.`
+        })
+      }
     }
     this.sessionChats.set(sessionId, chatId)
     this.liveSessions.add(sessionId)
@@ -233,6 +283,38 @@ class AgentProcess {
     return sessionId
   }
 
+  /**
+   * Reopen a saved session. Returns undefined when the agent cannot restore it:
+   * it does not support loading, or it never stored the session (cline only saves
+   * a session once it has a message).
+   */
+  private async loadSession(
+    chatId: string,
+    sessionId: string,
+    cwd: string,
+    mcpServers: acp.McpServer[]
+  ): Promise<acp.LoadSessionResponse | undefined> {
+    if (!this.initResult?.agentCapabilities?.loadSession) return undefined
+    const connection = await this.connect()
+    this.sessionChats.set(sessionId, chatId)
+    this.loadingSessions.add(sessionId)
+    try {
+      return await connection.agent.request(acp.methods.agent.session.load, {
+        sessionId,
+        cwd,
+        mcpServers
+      })
+    } catch (error) {
+      if (error instanceof acp.RequestError && error.code === RESOURCE_NOT_FOUND) {
+        this.sessionChats.delete(sessionId)
+        return undefined
+      }
+      throw error
+    } finally {
+      this.loadingSessions.delete(sessionId)
+    }
+  }
+
   async applyOption(chatId: string, optionId: string, value: string): Promise<void> {
     const sessionId = await this.ensureSession(chatId)
     const connection = await this.connect()
@@ -242,6 +324,7 @@ class AgentProcess {
       value
     })
     this.setOptions(chatId, response.configOptions)
+    this.scheduleIdleStop()
   }
 
   /**
@@ -270,13 +353,24 @@ class AgentProcess {
     return !!sessionId && this.liveSessions.has(sessionId)
   }
 
-  async prompt(chatId: string, text: string): Promise<acp.PromptResponse> {
-    const sessionId = await this.ensureSession(chatId)
-    const connection = await this.connect()
-    return connection.agent.request(acp.methods.agent.session.prompt, {
-      sessionId,
-      prompt: [{ type: 'text', text }]
-    })
+  async prompt(
+    chatId: string,
+    text: string,
+    attachments: acp.ContentBlock[] = []
+  ): Promise<acp.PromptResponse> {
+    this.activePrompts++
+    clearTimeout(this.idleTimer)
+    try {
+      const sessionId = await this.ensureSession(chatId)
+      const connection = await this.connect()
+      return await connection.agent.request(acp.methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: 'text', text }, ...attachments]
+      })
+    } finally {
+      this.activePrompts--
+      this.scheduleIdleStop()
+    }
   }
 
   async cancel(chatId: string): Promise<void> {
@@ -384,7 +478,7 @@ class AgentProcess {
         return
       }
       case 'session_info_update': {
-        if (update.title) {
+        if (update.title && !store.getChat(chatId).renamed) {
           store.updateChat(chatId, { title: update.title })
           this.events.stateChanged()
         }
@@ -577,10 +671,24 @@ export class AgentManager {
     const where = page?.url
       ? ` It currently shows ${page.url}${page.title ? ` ("${page.title}")` : ''}.`
       : ''
-    return (
-      `${text}\n\n@browser means: use the ${BROWSER_SERVER} tools, which control the browser panel ` +
-      `in the user's app. It is signed in to the user's accounts.${where}`
-    )
+    return `${text}\n\n@browser: use the ${BROWSER_SERVER} tools for this.${where} ${BROWSER_GUIDANCE}`
+  }
+
+  /** `@path` mentions of project files become ACP resource links next to the text. */
+  private fileLinks(chatId: string, text: string): acp.ContentBlock[] {
+    const project = store.getProject(store.getChat(chatId).projectId)
+    const links = new Map<string, acp.ContentBlock>()
+    for (const [, mention] of text.matchAll(/(?:^|\s)@([^\s@]+)/g)) {
+      const path = resolveProjectFile(project.path, mention)
+      if (path && !links.has(path)) {
+        links.set(path, {
+          type: 'resource_link',
+          uri: pathToFileURL(path).href,
+          name: basename(path)
+        })
+      }
+    }
+    return [...links.values()]
   }
 
   async send(chatId: string, text: string): Promise<void> {
@@ -590,7 +698,7 @@ export class AgentManager {
     store.updateChat(chatId, {
       running: true,
       updatedAt: Date.now(),
-      ...(isFirst ? { title: text.split('\n')[0].slice(0, 60) } : {})
+      ...(isFirst && !chat.renamed ? { title: text.split('\n')[0].slice(0, 60) } : {})
     })
     this.events.item(
       chatId,
@@ -601,7 +709,8 @@ export class AgentManager {
     try {
       const response = await this.processes[chat.agent].prompt(
         chatId,
-        this.expandBrowserTag(this.expandSkill(chatId, text))
+        this.expandBrowserTag(this.expandSkill(chatId, text)),
+        this.fileLinks(chatId, text)
       )
       if (response.stopReason === 'refusal' || response.stopReason === 'max_tokens') {
         this.events.item(
