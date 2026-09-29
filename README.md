@@ -22,6 +22,7 @@ Just Harness has no model providers and no API keys of its own. It starts the CL
 - **Skills.** Browse, create and edit `SKILL.md` skills for both agents. Type `/` in the composer to run a skill or an agent command.
 - **`@` mentions.** Tag project files (respects `.gitignore`); they're attached to the prompt as file references.
 - **Bypass permissions** per chat, approving tool requests automatically (allow once).
+- **Project only** per chat: tool requests that touch paths outside the project folder are refused, even with bypass on. It checks the paths in each request, including shell commands, so it's a guard rail rather than an OS sandbox.
 - **Light and dark mode**, a macOS 27 style layout, and your system accent color.
 - **Light on resources.** Agents that sit idle for 5 minutes are stopped and reconnect when you come back; closing the browser panel frees the page.
 

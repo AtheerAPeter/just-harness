@@ -54,6 +54,8 @@ const api = {
   send: (chatId: string, text: string): Promise<void> =>
     ipcRenderer.invoke('chat:send', chatId, text),
   cancel: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:cancel', chatId),
+  setProjectOnly: (chatId: string, enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke('chat:setProjectOnly', chatId, enabled),
   setBypassPermissions: (chatId: string, enabled: boolean): Promise<void> =>
     ipcRenderer.invoke('chat:setBypass', chatId, enabled),
   setOption: (chatId: string, optionId: string, value: string): Promise<void> =>

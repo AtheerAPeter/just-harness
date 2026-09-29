@@ -138,6 +138,12 @@ export const ToolIcon = (p: IconProps): React.JSX.Element => (
     <path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L4 16.8V20h3.2l5.3-5.3a4 4 0 0 0 5.2-5.4l-2.5 2.5-2.3-.6-.6-2.3z" />
   </Icon>
 )
+export const LockIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <rect x="5" y="11" width="14" height="9" rx="2" />
+    <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+  </Icon>
+)
 export const ChatIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
     <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />

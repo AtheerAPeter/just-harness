@@ -26,6 +26,8 @@ export interface Chat {
   running: boolean
   /** Approve every permission request automatically (allow once). */
   bypassPermissions?: boolean
+  /** Refuse any tool request that touches a path outside the project folder. */
+  projectOnly?: boolean
   createdAt: number
   updatedAt: number
 }
@@ -92,6 +94,8 @@ export type ChatItem =
       resolved?: string
       /** Approved by bypass-permissions mode rather than by the user. */
       auto?: boolean
+      /** Refused by project-only mode; holds the outside path that was touched. */
+      blocked?: string
     }
   | { kind: 'error'; id: string; text: string }
 

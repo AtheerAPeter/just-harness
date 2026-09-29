@@ -10,7 +10,7 @@ import {
 } from '../../../shared/types'
 import { Picker } from './Picker'
 import { CompletionMenu, type CompletionItem } from './CompletionMenu'
-import { SendIcon, ShieldIcon, StopIcon } from './icons'
+import { LockIcon, SendIcon, ShieldIcon, StopIcon } from './icons'
 
 interface ComposerProps {
   chat: Chat
@@ -232,6 +232,20 @@ export function Composer({
             {error}
           </span>
         )}
+        <button
+          type="button"
+          className={`bypass-toggle${chat.projectOnly ? ' on' : ''}`}
+          aria-pressed={Boolean(chat.projectOnly)}
+          title={
+            chat.projectOnly
+              ? 'Project only is on: requests that touch files outside this project are refused. Click to allow.'
+              : 'Project only: refuse requests that touch files outside this project'
+          }
+          onClick={() => window.api.setProjectOnly(chat.id, !chat.projectOnly)}
+        >
+          <LockIcon width={14} height={14} />
+          <span className="bypass-label">Project only</span>
+        </button>
         <button
           type="button"
           className={`bypass-toggle${chat.bypassPermissions ? ' on' : ''}`}

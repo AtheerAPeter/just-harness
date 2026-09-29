@@ -1,6 +1,6 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
-import { basename } from 'node:path'
+import { basename, isAbsolute, relative, resolve as resolvePath } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
@@ -407,9 +407,16 @@ class AgentProcess {
       title: params.toolCall.title ?? 'Tool call',
       options: params.options.map((o) => ({ optionId: o.optionId, name: o.name, kind: o.kind }))
     }
-    const autoOption = store.getChat(chatId).bypassPermissions
-      ? bypassOption(item.options)
-      : undefined
+    const chat = store.getChat(chatId)
+    if (chat.projectOnly) {
+      const outside = outsidePath(store.getProject(chat.projectId).path, params.toolCall)
+      const reject = item.options.find((o) => o.kind.startsWith('reject'))
+      if (outside && reject) {
+        this.emit(chatId, { ...item, resolved: reject.optionId, blocked: outside })
+        return Promise.resolve({ outcome: { outcome: 'selected', optionId: reject.optionId } })
+      }
+    }
+    const autoOption = chat.bypassPermissions ? bypassOption(item.options) : undefined
     if (autoOption) {
       this.emit(chatId, { ...item, resolved: autoOption, auto: true })
       return Promise.resolve({ outcome: { outcome: 'selected', optionId: autoOption } })
@@ -488,6 +495,36 @@ class AgentProcess {
         return
     }
   }
+}
+
+/** Paths that are never "outside": shell plumbing like 2>/dev/null. */
+const HARMLESS_PATHS = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/stdin'])
+
+/**
+ * For project-only mode: the first path a tool request touches outside the
+ * project, if any. Looks at the locations the agent declares and at absolute or
+ * ~ paths anywhere in the tool's arguments, including shell commands. URLs are
+ * not paths (the "/" there follows ":"), so they are ignored.
+ */
+function outsidePath(projectPath: string, toolCall: acp.ToolCallUpdate): string | undefined {
+  const candidates = (toolCall.locations ?? []).map((l) => l.path)
+  const scan = (value: unknown): void => {
+    if (typeof value === 'string') {
+      for (const [, path] of value.matchAll(/(?:^|[\s"'=(])((?:~|\/)[^\s"'`;|&<>()]*)/g)) {
+        candidates.push(path)
+      }
+    } else if (value && typeof value === 'object') {
+      for (const inner of Object.values(value)) scan(inner)
+    }
+  }
+  scan(toolCall.rawInput)
+  for (const candidate of candidates) {
+    if (HARMLESS_PATHS.has(candidate)) continue
+    const absolute = resolvePath(projectPath, candidate.replace(/^~(?=\/|$)/, homedir()))
+    const rel = relative(projectPath, absolute)
+    if (rel.startsWith('..') || isAbsolute(rel)) return candidate
+  }
+  return undefined
 }
 
 /**

@@ -174,6 +174,10 @@ function registerIpc(browser: BuiltinBrowser): void {
   ipcMain.handle('chat:setBypass', (_e, chatId: string, enabled: boolean) =>
     agents.setBypassPermissions(chatId, enabled)
   )
+  ipcMain.handle('chat:setProjectOnly', (_e, chatId: string, enabled: boolean) => {
+    store.updateChat(chatId, { projectOnly: enabled })
+    send('state:changed', store.getState())
+  })
   ipcMain.handle('chat:cancel', (_e, chatId: string) => agents.cancel(chatId))
   ipcMain.handle('chat:setOption', (_e, chatId: string, optionId: string, value: string) =>
     agents.setOption(chatId, optionId, value)
