@@ -39,12 +39,19 @@ Just Harness has no model providers and no API keys of its own. It starts the CL
 
 ## Install
 
-1. Download the `.dmg` from [Releases](https://github.com/AtheerAPeter/just-harness/releases/latest) and drag Just Harness to Applications.
-2. The app isn't notarized by Apple (that needs a paid Developer ID), so the first launch is blocked with "Apple could not verify…". Click **Done**, then open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to Just Harness. You only do this once.
-   - If macOS instead says the app "is damaged", you have a build from before 1.0.3's signing fix. Download the current release, or run `xattr -cr "/Applications/Just Harness.app"` once.
-3. Install and sign in to at least one agent:
-   - opencode: `curl -fsSL https://opencode.ai/install | bash`, then `opencode auth login`
-   - Cline: `npm i -g cline`, then `cline auth`
+Open Terminal and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AtheerAPeter/just-harness/main/install.sh | bash
+```
+
+It downloads the latest release, installs Just Harness in Applications and opens it. Run it again any time to update. Installing this way skips macOS's "Apple could not verify…" prompt, because only browser downloads get flagged.
+
+Or download the `.dmg` from [Releases](https://github.com/AtheerAPeter/just-harness/releases/latest) and drag Just Harness to Applications. The app isn't notarized by Apple, so the first launch from a browser download is blocked: click **Done**, then **System Settings → Privacy & Security → Open Anyway** (once).
+
+Apple Silicon only. You also need at least one agent installed and signed in:
+- opencode: `curl -fsSL https://opencode.ai/install | bash`, then `opencode auth login`
+- Cline: `npm i -g cline`, then `cline auth`
 
 The app finds the CLIs through your login shell's `PATH`, the same way your terminal does.
 
