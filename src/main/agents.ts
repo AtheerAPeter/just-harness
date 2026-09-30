@@ -263,9 +263,8 @@ class AgentProcess {
   }
 
   /**
-   * Whether this agent takes HTTP MCP servers per session. If so, each chat gets
-   * its own browser address; if not (cline), chats share one address and the
-   * agent is told its browser ID instead.
+   * Whether this agent takes HTTP MCP servers in session/new (opencode). Cline
+   * does not, so the browser tools are registered in its own config instead.
    */
   takesHttpMcp(): boolean {
     return this.initResult?.agentCapabilities?.mcpCapabilities?.http === true
@@ -316,7 +315,10 @@ class AgentProcess {
     // Agents that take HTTP MCP servers over ACP get the browser tools here. Cline's
     // ACP mode ignores session MCP servers; it is registered in cline's own config
     // instead (see cline-mcp.ts).
-    const mcpServers = this.takesHttpMcp() ? [browserMcpServer(chatId)] : []
+    // One shared address for every chat: opencode keeps MCP servers by name for
+    // all its sessions, so a per-chat address would be taken over by whichever
+    // chat opened last. Chats are told their browser ID instead.
+    const mcpServers = this.takesHttpMcp() ? [browserMcpServer()] : []
 
     let sessionId: string
     let configOptions: acp.SessionConfigOption[] | null | undefined
@@ -824,27 +826,20 @@ export class AgentManager {
   private recentChats: string[] = []
 
   /**
-   * For browser requests that name no chat. Only agents that share one browser
-   * address (cline) send those, so it must be one of their chats: the running
-   * one, or the most recent if none runs. With several running it is ambiguous,
-   * so no chat is returned and the tool asks for the browser ID instead of
-   * guessing and driving another chat's browser.
+   * For browser requests that name no chat: the running chat, or the most recent
+   * if none runs. With several running it is ambiguous, so no chat is returned
+   * and the tool asks for the browser ID instead of guessing and driving
+   * another chat's browser.
    */
   latestActiveChat(): string | undefined {
-    const shared = store.getState().chats.filter((c) => !this.processes[c.agent].takesHttpMcp())
-    const running = shared.filter((c) => c.running)
+    const running = store.getState().chats.filter((c) => c.running)
     if (running.length === 1) return running[0].id
     if (running.length > 1) return undefined
-    const ids = new Set(shared.map((c) => c.id))
-    return [...this.recentChats].reverse().find((id) => ids.has(id))
+    return this.recentChats.at(-1)
   }
 
-  /**
-   * Agents that share one browser address (cline) are told which browser is
-   * theirs, so parallel chats each drive their own page.
-   */
+  /** Every chat is told which browser is its own, so parallel chats never share a page. */
   private withBrowserId(chatId: string, text: string): string {
-    if (this.processes[store.getChat(chatId).agent].takesHttpMcp()) return text
     return `${text}\n\n(Your ${BROWSER_SERVER} browser ID is "${browserId(chatId)}". Pass it as the "browser" argument in every ${BROWSER_SERVER} tool call.)`
   }
 

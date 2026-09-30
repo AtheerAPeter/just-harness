@@ -116,26 +116,10 @@ export const PencilIcon = (p: IconProps): React.JSX.Element => (
     <path d="M4 20h4L19 9l-4-4L4 16z" />
   </Icon>
 )
-export const SearchIcon = (p: IconProps): React.JSX.Element => (
-  <Icon {...p}>
-    <circle cx="11" cy="11" r="6.5" />
-    <path d="m20 20-4.2-4.2" />
-  </Icon>
-)
-export const TerminalIcon = (p: IconProps): React.JSX.Element => (
-  <Icon {...p}>
-    <path d="m5 7 5 5-5 5M12 18h7" />
-  </Icon>
-)
 export const FileIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
     <path d="M6 3h8l4 4v14H6z" />
     <path d="M14 3v4h4" />
-  </Icon>
-)
-export const ToolIcon = (p: IconProps): React.JSX.Element => (
-  <Icon {...p}>
-    <path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L4 16.8V20h3.2l5.3-5.3a4 4 0 0 0 5.2-5.4l-2.5 2.5-2.3-.6-.6-2.3z" />
   </Icon>
 )
 export const LockIcon = (p: IconProps): React.JSX.Element => (
@@ -147,6 +131,12 @@ export const LockIcon = (p: IconProps): React.JSX.Element => (
 export const PaperclipIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
     <path d="m20 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8" />
+  </Icon>
+)
+export const SearchIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <circle cx="11" cy="11" r="6.5" />
+    <path d="m20 20-4.2-4.2" />
   </Icon>
 )
 export const ChatIcon = (p: IconProps): React.JSX.Element => (

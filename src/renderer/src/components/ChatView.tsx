@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type {
   AgentCommand,
   AgentId,
@@ -10,16 +10,7 @@ import type {
 } from '../../../shared/types'
 import { renderMarkdown } from '../lib/markdown'
 import { Composer } from './Composer'
-import {
-  ChevronIcon,
-  FileIcon,
-  LockIcon,
-  GlobeIcon,
-  PencilIcon,
-  SearchIcon,
-  TerminalIcon,
-  ToolIcon
-} from './icons'
+import { ChevronIcon, FileIcon, LockIcon } from './icons'
 
 interface ChatViewProps {
   chat: Chat
@@ -123,11 +114,7 @@ export function ChatView({
           )}
           {groupTools(items).map((block) =>
             Array.isArray(block) ? (
-              <div className="tool-group" key={block[0].id}>
-                {block.map((tool) => (
-                  <ToolRow key={tool.id} tool={tool} />
-                ))}
-              </div>
+              <ToolRun key={block[0].id} tools={block} />
             ) : (
               <Item key={block.id} item={block} chatId={chat.id} />
             )
@@ -199,7 +186,7 @@ const Item = memo(function Item({
         </Collapsible>
       )
     case 'tool':
-      return <ToolRow tool={item} />
+      return <ToolRun tools={[item]} />
     case 'plan':
       return (
         <div className="msg-plan">
@@ -285,23 +272,67 @@ function groupTools(items: ChatItem[]): (ChatItem | ToolItem[])[] {
   return blocks
 }
 
-/** Icon for an ACP tool kind (read, edit, search, execute, fetch, ...). */
-function ToolKindIcon({ kind }: { kind?: string }): React.JSX.Element {
-  const size = { width: 13, height: 13 }
-  if (kind === 'search') return <SearchIcon {...size} />
-  if (kind === 'fetch') return <GlobeIcon {...size} />
-  if (kind === 'execute') return <TerminalIcon {...size} />
-  if (kind === 'read') return <FileIcon {...size} />
-  if (kind === 'edit' || kind === 'delete' || kind === 'move') return <PencilIcon {...size} />
-  return <ToolIcon {...size} />
+/** Runs up to this long show every step; longer ones fold the middle. */
+const RUN_FULL = 5
+
+/** A short detail for a step: the URL, path, command or query it acted on. */
+function toolDetail(tool: ToolItem): string | undefined {
+  if (!tool.input) return undefined
+  let input: unknown
+  try {
+    input = JSON.parse(tool.input)
+  } catch {
+    return undefined
+  }
+  if (!input || typeof input !== 'object') return undefined
+  const fields = input as Record<string, unknown>
+  for (const key of ['url', 'path', 'filePath', 'command', 'commands', 'query', 'pattern']) {
+    const value = fields[key]
+    const first = Array.isArray(value) ? value[0] : value
+    if (typeof first === 'string' && first) {
+      // Absolute paths keep their informative end: ".../05-buying-clothes/story.js".
+      const parts = first.split('/')
+      const text =
+        first.startsWith('/') && parts.length > 3 ? `…/${parts.slice(-2).join('/')}` : first
+      return text.length > 60 ? `${text.slice(0, 59)}…` : text
+    }
+  }
+  return undefined
 }
 
-function ToolRow({ tool }: { tool: ToolItem }): React.JSX.Element {
+/**
+ * A run of back-to-back tool calls as a timeline: short runs show every step,
+ * longer ones show the first steps, a "+ N more steps" fold, and the latest step.
+ */
+function ToolRun({ tools }: { tools: ToolItem[] }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const foldable = tools.length > RUN_FULL
+  const shown = foldable && !open ? [...tools.slice(0, 3), tools[tools.length - 1]] : tools
   return (
-    <div className={`msg-tool ${tool.status}`}>
-      <span className="status-dot" />
-      <ToolKindIcon kind={tool.toolKind} />
-      <span className="tool-name">{toolLabel(tool.title)}</span>
+    <div className="tool-rail">
+      {shown.map((tool, index) => (
+        <Fragment key={tool.id}>
+          {/* The fold toggle stays where it was clicked, in both states. */}
+          {foldable && index === 3 && (
+            <button className="tool-step more" onClick={() => setOpen((o) => !o)}>
+              {open ? 'Show fewer steps' : `+ ${tools.length - 4} more steps`}
+            </button>
+          )}
+          <ToolStep tool={tool} />
+        </Fragment>
+      ))}
+    </div>
+  )
+}
+
+function ToolStep({ tool }: { tool: ToolItem }): React.JSX.Element {
+  const detail = toolDetail(tool)
+  return (
+    <div className={`tool-step ${tool.status}`}>
+      <span className="tool-name">
+        {toolLabel(tool.title)}
+        {detail && <span className="tool-detail"> {detail}</span>}
+      </span>
     </div>
   )
 }

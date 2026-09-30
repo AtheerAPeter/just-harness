@@ -74,7 +74,13 @@ export default function App(): React.JSX.Element {
 
   const newChat = useCallback(async (projectId: string) => {
     const agent = readPref<AgentId>('lastAgent', 'opencode')
-    const created = await window.api.createChat(projectId, agent, readPref(`settings:${agent}`, {}))
+    const created = await window.api.createChat(
+      projectId,
+      agent,
+      readPref(`settings:${agent}`, {}),
+      // New chats start in the permission mode picked last.
+      readPref('permissions', {})
+    )
     setSelectedChatId(created.id)
     setView('chat')
   }, [])

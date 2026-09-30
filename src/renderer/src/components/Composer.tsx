@@ -11,15 +11,7 @@ import {
 } from '../../../shared/types'
 import { Picker } from './Picker'
 import { CompletionMenu, type CompletionItem } from './CompletionMenu'
-import {
-  CloseIcon,
-  FileIcon,
-  LockIcon,
-  PaperclipIcon,
-  SendIcon,
-  ShieldIcon,
-  StopIcon
-} from './icons'
+import { CloseIcon, FileIcon, PaperclipIcon, SendIcon, StopIcon } from './icons'
 
 interface ComposerProps {
   chat: Chat
@@ -41,6 +33,22 @@ interface ComposerProps {
  * ignored, including mode: chats always run in build mode.
  */
 const SHOWN_CATEGORIES = ['model', 'thought_level']
+
+/** How much the agent may do without asking, per chat. */
+const PERMISSION_MODES = [
+  { value: 'ask', name: 'Ask', description: 'Every tool request asks you first' },
+  {
+    value: 'project',
+    name: 'Auto in project',
+    description: 'Runs inside the project; asks before touching anything outside'
+  },
+  { value: 'full', name: 'Full access', description: 'Runs every request without asking' }
+]
+
+function permissionMode(chat: Chat): string {
+  if (!chat.bypassPermissions) return 'ask'
+  return chat.projectOnly ? 'project' : 'full'
+}
 
 /** @-tags. `@browser` tells the agent to work in the built-in browser panel. */
 const TAGS: CompletionItem[] = [
@@ -322,34 +330,29 @@ export function Composer({
             {error}
           </span>
         )}
-        <button
-          type="button"
-          className={`bypass-toggle${chat.projectOnly ? ' on' : ''}`}
-          aria-pressed={Boolean(chat.projectOnly)}
-          title={
-            chat.projectOnly
-              ? 'Project only is on: anything outside this project asks you first, even with Bypass on. Click to turn off.'
-              : 'Project only: ask before the agent touches files outside this project'
-          }
-          onClick={() => window.api.setProjectOnly(chat.id, !chat.projectOnly)}
-        >
-          <LockIcon width={14} height={14} />
-          <span className="bypass-label">Project only</span>
-        </button>
-        <button
-          type="button"
-          className={`bypass-toggle${chat.bypassPermissions ? ' on' : ''}`}
-          aria-pressed={Boolean(chat.bypassPermissions)}
-          title={
-            chat.bypassPermissions
-              ? 'Bypass permissions is on: every tool request is approved automatically (allow once). Click to ask again.'
-              : 'Bypass permissions: approve every tool request automatically'
-          }
-          onClick={() => window.api.setBypassPermissions(chat.id, !chat.bypassPermissions)}
-        >
-          <ShieldIcon width={14} height={14} />
-          <span className="bypass-label">{chat.bypassPermissions ? 'Bypass on' : 'Ask'}</span>
-        </button>
+        <div className={`permission-mode ${permissionMode(chat)}`}>
+          <Picker
+            title="Permissions"
+            value={permissionMode(chat)}
+            values={PERMISSION_MODES}
+            onChange={(mode) => {
+              // Two per-chat settings underneath: bypass approves requests,
+              // project-only still asks for anything outside the project.
+              const permissions = {
+                bypassPermissions: mode !== 'ask',
+                projectOnly: mode === 'project'
+              }
+              window.api.setBypassPermissions(chat.id, permissions.bypassPermissions)
+              window.api.setProjectOnly(chat.id, permissions.projectOnly)
+              // Remembered for new chats.
+              try {
+                localStorage.setItem('permissions', JSON.stringify(permissions))
+              } catch {
+                // A convenience only.
+              }
+            }}
+          />
+        </div>
         <div className="spacer" />
         {chat.running ? (
           <button

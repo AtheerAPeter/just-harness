@@ -44,8 +44,9 @@ const api = {
   createChat: (
     projectId: string,
     agent: AgentId,
-    settings: Record<string, string>
-  ): Promise<Chat> => ipcRenderer.invoke('chat:create', projectId, agent, settings),
+    settings: Record<string, string>,
+    permissions: Pick<Chat, 'bypassPermissions' | 'projectOnly'> = {}
+  ): Promise<Chat> => ipcRenderer.invoke('chat:create', projectId, agent, settings, permissions),
   deleteChat: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:delete', chatId),
   renameChat: (chatId: string, title: string): Promise<void> =>
     ipcRenderer.invoke('chat:rename', chatId, title),

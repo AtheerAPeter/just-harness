@@ -33,25 +33,25 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1e1e20;
-    --bg-soft: #26262a;
+    --bg: #181818; /* Codex's neutral black */
+    --bg-soft: #212121;
     --bg-hover: rgba(255, 255, 255, 0.06);
     --bg-selected: rgba(255, 255, 255, 0.1);
     --border: rgba(255, 255, 255, 0.08);
-    --text: #f2f2f4;
-    --text-muted: #98989f;
+    --text: #f0f0f0;
+    --text-muted: #b4b4b4;
     --danger: #ff6369;
     --ok: #3dd68c;
     --warn: #f5c542;
     --code-bg: rgba(255, 255, 255, 0.06);
     --user-bubble: rgba(255, 255, 255, 0.08);
 
-    --glass-strong: rgba(44, 44, 48, 0.72);
+    --glass-strong: rgba(36, 36, 36, 0.78);
     --glass-rim: rgba(255, 255, 255, 0.14);
     --glass-edge: rgba(0, 0, 0, 0.55);
     --float-shadow: 0 12px 36px rgba(0, 0, 0, 0.5), 0 0 0 0.5px var(--glass-edge);
     --separator: rgba(0, 0, 0, 0.6);
-    --toolbar: rgba(34, 34, 37, 0.85);
+    --toolbar: rgba(24, 24, 24, 0.9);
     color-scheme: dark;
   }
 }
@@ -616,10 +616,77 @@ pre {
   font-size: 13.5px;
 }
 
-.tool-group {
+/* Tool runs: a timeline rail of steps */
+.tool-rail {
+  position: relative;
+  padding-left: 22px;
+}
+
+.tool-rail::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 8px;
+  bottom: 8px;
+  width: 1.5px;
+  background: var(--border);
+}
+
+.tool-step {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  min-width: 0;
+  height: 24px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.tool-step::before {
+  content: '';
+  position: absolute;
+  left: -17px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1.5px var(--ok);
+}
+
+.tool-step.more::before {
+  box-shadow: inset 0 0 0 1.5px var(--text-muted);
+}
+
+.tool-step.more:hover {
+  color: var(--text);
+}
+
+.tool-step.pending::before,
+.tool-step.in_progress::before {
+  box-shadow: none;
+  background: var(--warn);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.tool-step.failed {
+  color: var(--danger);
+}
+
+.tool-step.failed::before {
+  box-shadow: inset 0 0 0 1.5px var(--danger);
+}
+
+.tool-step .tool-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-detail {
+  color: var(--text);
+  opacity: 0.8;
 }
 
 .msg-tool {
@@ -632,24 +699,6 @@ pre {
   border-radius: 6px;
   color: var(--text-muted);
   font-size: 12.5px;
-}
-
-.msg-tool svg {
-  flex-shrink: 0;
-  opacity: 0.8;
-}
-
-.msg-tool .tool-name {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.msg-tool.pending,
-.msg-tool.in_progress {
-  color: var(--text);
-  animation: pulse 1.4s ease-in-out infinite;
 }
 
 .msg-tool.failed {
@@ -877,6 +926,15 @@ pre {
 .send-button:disabled {
   background: var(--bg-selected);
   color: var(--text-muted);
+}
+
+.permission-mode.project .picker-button {
+  color: var(--accent);
+}
+
+.permission-mode.full .picker-button {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
 
 .bypass-toggle {

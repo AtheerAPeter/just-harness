@@ -157,13 +157,21 @@ function registerIpc(browser: BuiltinBrowser): void {
 
   ipcMain.handle(
     'chat:create',
-    (_e, projectId: string, agent: AgentId, settings: Record<string, string>) => {
+    (
+      _e,
+      projectId: string,
+      agent: AgentId,
+      settings: Record<string, string>,
+      permissions: Pick<Chat, 'bypassPermissions' | 'projectOnly'> = {}
+    ) => {
       const chat: Chat = {
         id: crypto.randomUUID(),
         projectId,
         title: 'New chat',
         agent,
         settings,
+        bypassPermissions: permissions.bypassPermissions,
+        projectOnly: permissions.projectOnly,
         running: false,
         createdAt: Date.now(),
         updatedAt: Date.now()

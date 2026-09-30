@@ -274,9 +274,9 @@ export interface BrowserRouting {
 }
 
 /**
- * Tools for one request. `pathChat` is set when the agent called a per-chat
- * address (opencode); otherwise the chat comes from the `browser` argument
- * (cline is told its ID in each prompt) or falls back to the latest active chat.
+ * Tools for one request. The chat comes from the `browser` argument (every chat
+ * is told its ID in each prompt), or from `pathChat` when a per-chat address is
+ * used, or falls back to the only running chat.
  */
 function buildServer(
   browser: BuiltinBrowser,
@@ -556,13 +556,13 @@ export async function startBrowserMcp(
   return endpoint
 }
 
-/** The MCP server entry passed in a chat's ACP session: that chat's own browser. */
-export function browserMcpServer(chatId: string): AcpMcpServer {
+/** The MCP server entry passed in ACP sessions; chats pick their browser by ID. */
+export function browserMcpServer(): AcpMcpServer {
   if (!endpoint) throw new Error('Browser MCP server has not started')
   return {
     type: 'http',
     name: SERVER_NAME,
-    url: `${endpoint.url}/${chatId}`,
+    url: endpoint.url,
     headers: [{ name: 'Authorization', value: `Bearer ${endpoint.token}` }]
   }
 }
