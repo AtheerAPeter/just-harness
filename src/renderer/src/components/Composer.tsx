@@ -6,11 +6,20 @@ import {
   type AgentOption,
   type AgentStatus,
   type Chat,
-  type Skill
+  type Skill,
+  type Attachment
 } from '../../../shared/types'
 import { Picker } from './Picker'
 import { CompletionMenu, type CompletionItem } from './CompletionMenu'
-import { LockIcon, SendIcon, ShieldIcon, StopIcon } from './icons'
+import {
+  CloseIcon,
+  FileIcon,
+  LockIcon,
+  PaperclipIcon,
+  SendIcon,
+  ShieldIcon,
+  StopIcon
+} from './icons'
 
 interface ComposerProps {
   chat: Chat
@@ -142,12 +151,44 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 240)}px`
   }, [text])
 
-  const canSend = text.trim().length > 0 && !chat.running && status?.available !== false
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [dragging, setDragging] = useState(false)
+
+  const canSend =
+    (text.trim().length > 0 || attachments.length > 0) &&
+    !chat.running &&
+    status?.available !== false
+
+  const addAttachments = (added: Attachment[]): void =>
+    setAttachments((current) => [
+      ...current,
+      ...added.filter((a) => !a.path || !current.some((c) => c.path === a.path))
+    ])
+
+  /** Files from a paste or drop. Pasted screenshots have no path, so their data is read. */
+  async function attachFiles(files: FileList): Promise<void> {
+    const added: Attachment[] = []
+    for (const file of Array.from(files)) {
+      const path = window.api.pathForFile(file)
+      if (path) {
+        added.push({ name: file.name, path, mimeType: file.type || undefined })
+      } else if (file.type.startsWith('image/')) {
+        const data = await new Promise<string>((done) => {
+          const reader = new FileReader()
+          reader.onload = () => done(String(reader.result).split(',')[1] ?? '')
+          reader.readAsDataURL(file)
+        })
+        added.push({ name: file.name || 'Pasted image', mimeType: file.type, data })
+      }
+    }
+    addAttachments(added)
+  }
 
   function submit(): void {
     if (!canSend) return
-    window.api.send(chat.id, text.trim())
+    window.api.send(chat.id, text.trim(), attachments)
     setText('')
+    setAttachments([])
     setCaret(0)
   }
 
@@ -157,7 +198,42 @@ export function Composer({
   const error = status?.error ?? optionsError
 
   return (
-    <div className="composer">
+    <div
+      className={`composer${dragging ? ' dragging' : ''}`}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes('Files')) return
+        e.preventDefault()
+        setDragging(true)
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        if (!e.dataTransfer.files.length) return
+        e.preventDefault()
+        setDragging(false)
+        attachFiles(e.dataTransfer.files)
+      }}
+    >
+      {attachments.length > 0 && (
+        <div className="attachments">
+          {attachments.map((a, index) => (
+            <span className="attachment" key={`${a.path ?? a.name}-${index}`} title={a.path}>
+              {a.data ? (
+                <img src={`data:${a.mimeType};base64,${a.data}`} alt="" />
+              ) : (
+                <FileIcon width={13} height={13} />
+              )}
+              <span className="attachment-name">{a.name}</span>
+              <button
+                type="button"
+                title="Remove"
+                onClick={() => setAttachments((current) => current.filter((_, i) => i !== index))}
+              >
+                <CloseIcon width={11} height={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       {menuOpen && (
         <CompletionMenu
           items={menuItems}
@@ -179,6 +255,12 @@ export function Composer({
           setMenuActive(0)
         }}
         onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+        onPaste={(e) => {
+          // Files and images on the clipboard become attachments; text pastes normally.
+          if (e.clipboardData.files.length === 0) return
+          e.preventDefault()
+          attachFiles(e.clipboardData.files)
+        }}
         onKeyDown={(e) => {
           if (menuOpen && menuItems.length > 0) {
             if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -204,6 +286,14 @@ export function Composer({
         }}
       />
       <div className="composer-bar">
+        <button
+          type="button"
+          className="icon-btn"
+          title="Attach files"
+          onClick={async () => addAttachments(await window.api.pickFiles())}
+        >
+          <PaperclipIcon width={15} height={15} />
+        </button>
         <Picker
           title={started ? 'The agent is fixed once a chat has started' : 'Agent'}
           value={chat.agent}

@@ -12,6 +12,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import appIcon from '../../resources/icon.png?asset'
 import type {
   AgentCommand,
+  Attachment,
   AgentId,
   AgentOption,
   Chat,
@@ -194,8 +195,15 @@ function registerIpc(browser: BuiltinBrowser): void {
   ipcMain.handle('chat:open', (_e, chatId: string) => agents.open(chatId))
 
   // Fire and forget: progress arrives through chat:item and state:changed events.
-  ipcMain.handle('chat:send', (_e, chatId: string, text: string) => {
-    void agents.send(chatId, text)
+  ipcMain.handle('chat:send', (_e, chatId: string, text: string, attachments?: Attachment[]) => {
+    void agents.send(chatId, text, attachments)
+  })
+  ipcMain.handle('files:pick', async (): Promise<Attachment[]> => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile', 'multiSelections'],
+      buttonLabel: 'Attach'
+    })
+    return result.canceled ? [] : result.filePaths.map((path) => ({ name: basename(path), path }))
   })
   ipcMain.handle('chat:setBypass', (_e, chatId: string, enabled: boolean) =>
     agents.setBypassPermissions(chatId, enabled)

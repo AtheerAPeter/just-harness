@@ -765,6 +765,64 @@ pre {
     0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
+.composer.dragging {
+  box-shadow:
+    inset 0 0 0 0.5px var(--border),
+    0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.attachments,
+.msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attachments {
+  padding: 10px 12px 0;
+}
+
+.msg-attachments {
+  margin-top: 6px;
+}
+
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 0.5px var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.attachment img {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+.attachment-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.attachment button {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.attachment button:hover {
+  color: var(--text);
+}
+
 .composer textarea {
   display: block;
   width: 100%;

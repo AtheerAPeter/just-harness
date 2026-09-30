@@ -162,7 +162,21 @@ const Item = memo(function Item({
 }): React.JSX.Element {
   switch (item.kind) {
     case 'user':
-      return <div className="msg-user">{item.text}</div>
+      return (
+        <div className="msg-user">
+          {item.text}
+          {item.attachments && (
+            <div className="msg-attachments">
+              {item.attachments.map((a, index) => (
+                <span className="attachment" key={index}>
+                  <FileIcon width={12} height={12} />
+                  <span className="attachment-name">{a.name}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )
     case 'text':
       return (
         <div

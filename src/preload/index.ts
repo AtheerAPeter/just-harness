@@ -1,6 +1,7 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type {
   AgentCommand,
+  Attachment,
   AgentOption,
   OpenChatResult,
   AgentStatus,
@@ -51,8 +52,12 @@ const api = {
   getMessages: (chatId: string): Promise<ChatItem[]> => ipcRenderer.invoke('chat:messages', chatId),
   setAgent: (chatId: string, agent: AgentId, settings: Record<string, string>): Promise<void> =>
     ipcRenderer.invoke('chat:setAgent', chatId, agent, settings),
-  send: (chatId: string, text: string): Promise<void> =>
-    ipcRenderer.invoke('chat:send', chatId, text),
+  send: (chatId: string, text: string, attachments: Attachment[] = []): Promise<void> =>
+    ipcRenderer.invoke('chat:send', chatId, text, attachments),
+  /** Choose files to attach with the system file picker. */
+  pickFiles: (): Promise<Attachment[]> => ipcRenderer.invoke('files:pick'),
+  /** The path of a dropped or pasted file (empty for data with no file, like a screenshot). */
+  pathForFile: (file: File): string => webUtils.getPathForFile(file),
   cancel: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:cancel', chatId),
   setProjectOnly: (chatId: string, enabled: boolean): Promise<void> =>
     ipcRenderer.invoke('chat:setProjectOnly', chatId, enabled),

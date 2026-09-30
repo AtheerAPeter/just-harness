@@ -1,10 +1,14 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
-import { basename, isAbsolute, relative, resolve as resolvePath } from 'node:path'
+import { basename, extname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
+import { statSync } from 'node:fs'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { app } from 'electron'
 import { pathToFileURL } from 'node:url'
 import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 import type {
+  Attachment,
   BrowserState,
   OpenChatResult,
   AgentCommand,
@@ -45,6 +49,78 @@ function agentEnv(agent: AgentId): NodeJS.ProcessEnv {
     browser: 'deny'
   }
   return { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, permission }) }
+}
+
+const IMAGE_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp'
+}
+/** Larger images are sent as file references instead of inline data. */
+const MAX_INLINE_IMAGE = 15 * 1024 * 1024
+
+function imageType(attachment: Attachment): string | undefined {
+  if (attachment.mimeType?.startsWith('image/')) return attachment.mimeType
+  return attachment.path ? IMAGE_TYPES[extname(attachment.path).toLowerCase()] : undefined
+}
+
+function isImage(attachment: Attachment): boolean {
+  return imageType(attachment) !== undefined
+}
+
+/**
+ * ACP content for attachments: images inline (both agents accept image
+ * content), other files as references the agent reads itself.
+ */
+async function attachmentBlocks(attachments: Attachment[]): Promise<acp.ContentBlock[]> {
+  const blocks: acp.ContentBlock[] = []
+  for (const attachment of attachments) {
+    const mimeType = imageType(attachment)
+    if (mimeType && attachment.data) {
+      blocks.push({ type: 'image', data: attachment.data, mimeType })
+    } else if (mimeType && attachment.path && statSync(attachment.path).size <= MAX_INLINE_IMAGE) {
+      const data = (await readFile(attachment.path)).toString('base64')
+      blocks.push({ type: 'image', data, mimeType, uri: pathToFileURL(attachment.path).href })
+    } else if (attachment.path) {
+      blocks.push({
+        type: 'resource_link',
+        uri: pathToFileURL(attachment.path).href,
+        name: attachment.name
+      })
+    }
+  }
+  return blocks
+}
+
+/**
+ * Agents whose ACP mode keeps only the text of a prompt. Cline 3.0.65 filters
+ * prompts to `type === "text"` blocks (its `qJ` in the ACP agent), dropping
+ * images and file links although it advertises image support. They get
+ * attachments as file paths in the text and read them with their own tools.
+ * (@file mentions are already in the text as paths.)
+ */
+const TEXT_ONLY_PROMPTS = new Set<AgentId>(['cline'])
+
+/** Pasted images have no file; save them so a path can be given to the agent. */
+const attachmentsDir = join(app.getPath('userData'), 'attachments')
+
+async function withFilePaths(text: string, attachments: Attachment[]): Promise<string> {
+  if (attachments.length === 0) return text
+  const paths: string[] = []
+  for (const attachment of attachments) {
+    if (attachment.path) {
+      paths.push(attachment.path)
+    } else if (attachment.data) {
+      await mkdir(attachmentsDir, { recursive: true })
+      const ext = attachment.mimeType?.split('/')[1]?.replace('jpeg', 'jpg') ?? 'png'
+      const path = join(attachmentsDir, `${crypto.randomUUID()}.${ext}`)
+      await writeFile(path, Buffer.from(attachment.data, 'base64'))
+      paths.push(path)
+    }
+  }
+  return `${text}\n\nAttached files (read them with your file tools):\n${paths.map((p) => `- ${p}`).join('\n')}`
 }
 
 /** The short browser ID agents are given for a chat: the start of its id. */
@@ -772,7 +848,7 @@ export class AgentManager {
     return `${text}\n\n(Your ${BROWSER_SERVER} browser ID is "${browserId(chatId)}". Pass it as the "browser" argument in every ${BROWSER_SERVER} tool call.)`
   }
 
-  async send(chatId: string, text: string): Promise<void> {
+  async send(chatId: string, text: string, attachments: Attachment[] = []): Promise<void> {
     this.recentChats = [...this.recentChats.filter((id) => id !== chatId), chatId]
     const chat = store.getChat(chatId)
     if (chat.running) throw new Error('This chat is already running.')
@@ -780,20 +856,34 @@ export class AgentManager {
     store.updateChat(chatId, {
       running: true,
       updatedAt: Date.now(),
-      ...(isFirst && !chat.renamed ? { title: text.split('\n')[0].slice(0, 60) } : {})
+      ...(isFirst && !chat.renamed
+        ? { title: (text.split('\n')[0] || attachments[0]?.name || 'New chat').slice(0, 60) }
+        : {})
     })
     this.events.item(
       chatId,
-      store.upsertItem(chatId, { kind: 'user', id: crypto.randomUUID(), text })
+      store.upsertItem(chatId, {
+        kind: 'user',
+        id: crypto.randomUUID(),
+        text,
+        ...(attachments.length
+          ? { attachments: attachments.map((a) => ({ name: a.name, image: isImage(a) })) }
+          : {})
+      })
     )
     this.events.stateChanged()
 
     try {
-      const response = await this.processes[chat.agent].prompt(
+      let prompt = this.withBrowserId(
         chatId,
-        this.withBrowserId(chatId, this.expandBrowserTag(chatId, this.expandSkill(chatId, text))),
-        this.fileLinks(chatId, text)
+        this.expandBrowserTag(chatId, this.expandSkill(chatId, text))
       )
+      let blocks = [...this.fileLinks(chatId, text), ...(await attachmentBlocks(attachments))]
+      if (TEXT_ONLY_PROMPTS.has(chat.agent)) {
+        prompt = await withFilePaths(prompt, attachments)
+        blocks = []
+      }
+      const response = await this.processes[chat.agent].prompt(chatId, prompt, blocks)
       if (response.stopReason === 'refusal' || response.stopReason === 'max_tokens') {
         this.events.item(
           chatId,

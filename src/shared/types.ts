@@ -36,6 +36,15 @@ export interface Chat {
   updatedAt: number
 }
 
+/** A file or image attached to a message: a path on disk, or pasted image data. */
+export interface Attachment {
+  name: string
+  path?: string
+  mimeType?: string
+  /** Base64 contents, for pasted images that have no file. */
+  data?: string
+}
+
 export type Theme = 'system' | 'light' | 'dark'
 
 export interface AppState {
@@ -76,7 +85,13 @@ export interface AgentStatus {
 export type ToolStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
 
 export type ChatItem =
-  | { kind: 'user'; id: string; text: string }
+  | {
+      kind: 'user'
+      id: string
+      text: string
+      /** Names of files and images sent with the message. */
+      attachments?: { name: string; image: boolean }[]
+    }
   | { kind: 'text'; id: string; text: string }
   | { kind: 'thought'; id: string; text: string }
   | {

@@ -144,6 +144,11 @@ export const LockIcon = (p: IconProps): React.JSX.Element => (
     <path d="M8 11V8a4 4 0 0 1 8 0v3" />
   </Icon>
 )
+export const PaperclipIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <path d="m20 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8" />
+  </Icon>
+)
 export const ChatIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
     <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
