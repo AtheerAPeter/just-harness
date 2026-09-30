@@ -171,10 +171,15 @@ const Item = memo(function Item({
         />
       )
     case 'thought':
+      // Short one-line thoughts are progress notes between tool calls and stay
+      // visible; longer ones are the model's raw reasoning and fold away.
+      if (item.text.length <= THOUGHT_INLINE_MAX && !item.text.trim().includes('\n')) {
+        return <div className="msg-thought">{item.text}</div>
+      }
       return (
-        <Collapsible className="msg-thought" summary="Thinking">
+        <Collapsible className="msg-thought-block" summary="Thinking">
           <div
-            className="markdown"
+            className="markdown msg-thought"
             dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
           />
         </Collapsible>
@@ -235,6 +240,9 @@ const Item = memo(function Item({
  * A short name for a tool call: drops arguments (agents put them after ":") and
  * MCP server prefixes, e.g. "harness_browser__click: {...}" -> "browser · click".
  */
+/** Thoughts up to this length on one line are shown inline instead of folded. */
+const THOUGHT_INLINE_MAX = 300
+
 function toolLabel(title: string): string {
   const name = title.split(':')[0].trim()
   const mcp = name.match(/^harness_(\w+?)_{1,2}(\w+)$/)

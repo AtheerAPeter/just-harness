@@ -5,12 +5,13 @@ import type { BrowserState, Rect } from '../shared/types'
 
 /**
  * `persist:` partitions are stored on disk, so cookies, localStorage and
- * IndexedDB (logins) survive restarts. The agent automates this same view,
- * which is how it reuses whatever the user signed into.
+ * IndexedDB (logins) survive restarts. Every chat's page uses the same
+ * partition, so they all share the user's logins.
  *
- * The page only exists while the panel is open: closing the panel destroys it
- * so it stops using memory and CPU. Logins stay on disk and the last URL is
- * reopened next time.
+ * Each chat has its own page, so several chats can automate the browser at
+ * once. The panel shows the selected chat's page; pages of other chats that are
+ * running stay alive hidden. A page is closed when its chat is neither selected
+ * nor running, and its last URL is reopened next time.
  */
 const PARTITION = 'persist:browser'
 const EMPTY_STATE: BrowserState = {
@@ -20,6 +21,8 @@ const EMPTY_STATE: BrowserState = {
   canGoBack: false,
   canGoForward: false
 }
+/** Page size for chats working in the background before the panel was ever shown. */
+const DEFAULT_BOUNDS = { x: 0, y: 0, width: 1024, height: 768 }
 
 export interface Download {
   url: string
@@ -41,14 +44,22 @@ export class BuiltinBrowser {
   readonly downloads: Download[] = []
   private downloadWaiters: ((download: Download) => void)[] = []
 
-  private view?: WebContentsView
-  private lastUrl = 'about:blank'
-  private waitingForBounds: (() => void)[] = []
+  private views = new Map<string, WebContentsView>()
+  private activeChat?: string
+  /** Where the panel is, in window points; undefined while the panel is closed. */
+  private panelBounds?: Electron.Rectangle
+  private waitingForPanel: (() => void)[] = []
 
   constructor(
     private readonly window: BrowserWindow,
     private readonly onState: (state: BrowserState) => void,
-    private readonly requestShow: () => void
+    private readonly requestShow: () => void,
+    private readonly isRunning: (chatId: string) => boolean,
+    /** Where each chat's last page is kept, so it survives restarts. */
+    private readonly lastPage: {
+      get(chatId: string): string | undefined
+      set(chatId: string, url: string): void
+    }
   ) {
     const browserSession = session.fromPartition(PARTITION)
     // Save straight to ~/Downloads instead of showing a Save dialog, which an
@@ -76,17 +87,23 @@ export class BuiltinBrowser {
     )
   }
 
-  private ensureView(): WebContentsView {
-    if (this.view) return this.view
+  private viewFor(chatId: string): WebContentsView {
+    const existing = this.views.get(chatId)
+    if (existing) return existing
     const view = new WebContentsView({
-      webPreferences: { partition: PARTITION, sandbox: true, contextIsolation: true }
+      webPreferences: {
+        partition: PARTITION,
+        sandbox: true,
+        contextIsolation: true,
+        // Hidden pages of background chats must keep running their automation.
+        backgroundThrottling: false
+      }
     })
     const contents = view.webContents
-    // OAuth flows open popups and expect window.opener to work, so allow them in the same session.
     contents.setWindowOpenHandler((details) => {
       // Sign-in flows open real popups and rely on window.opener; allow those in
       // the same session. Anything that would open a tab loads here instead, so
-      // the page never leaves the panel.
+      // the page never leaves the chat's browser.
       if (details.disposition === 'new-window') {
         return {
           action: 'allow',
@@ -107,61 +124,104 @@ export class BuiltinBrowser {
       'did-start-loading',
       'did-stop-loading'
     ] as const) {
-      contents.on(event as 'did-stop-loading', () => this.emitState())
+      contents.on(event as 'did-stop-loading', () => {
+        if (chatId === this.activeChat) this.emitState()
+      })
     }
-    contents.loadURL(this.lastUrl)
-    this.view = view
+    // Remember every page as it is reached, so the chat (and its agent) can pick
+    // up there after the page is closed or the app restarts.
+    const remember = (): void => {
+      const url = contents.getURL()
+      if (url && url !== 'about:blank') this.lastPage.set(chatId, url)
+    }
+    contents.on('did-navigate', remember)
+    contents.on('did-navigate-in-page', remember)
+    // Attached (so it lays out and renders at a real size) but hidden until shown.
+    view.setBounds(this.panelBounds ?? DEFAULT_BOUNDS)
+    view.setVisible(false)
+    this.window.contentView.addChildView(view)
+    contents.loadURL(this.lastPage.get(chatId) ?? 'about:blank')
+    this.views.set(chatId, view)
     return view
   }
 
-  get contents(): WebContents {
-    return this.ensureView().webContents
+  /** The page of a chat, created if needed. */
+  contents(chatId: string): WebContents {
+    return this.viewFor(chatId).webContents
+  }
+
+  private closeView(chatId: string): void {
+    const view = this.views.get(chatId)
+    if (!view) return
+    this.views.delete(chatId)
+    this.window.contentView.removeChildView(view)
+    view.webContents.close()
+  }
+
+  /** Close pages that nothing needs: not shown in the panel and not running. */
+  prune(): void {
+    for (const chatId of [...this.views.keys()]) {
+      const shown = chatId === this.activeChat && this.panelBounds
+      if (!shown && !this.isRunning(chatId)) this.closeView(chatId)
+    }
+  }
+
+  /** Show only the selected chat's page, at the panel's position. */
+  private layout(): void {
+    for (const [chatId, view] of this.views) {
+      const shown = chatId === this.activeChat && this.panelBounds !== undefined
+      if (this.panelBounds) view.setBounds(this.panelBounds)
+      view.setVisible(shown)
+    }
+  }
+
+  /** The chat whose page the panel shows. */
+  setActiveChat(chatId: string | undefined): void {
+    this.activeChat = chatId
+    if (chatId && this.panelBounds) this.viewFor(chatId)
+    this.layout()
+    this.prune()
+    this.emitState()
   }
 
   /** Called by the renderer with the panel's rect, or null when the panel is closed. */
   setBounds(rect: Rect | null): void {
     if (!rect) {
-      this.destroyView()
+      this.panelBounds = undefined
+      this.layout()
+      this.prune()
       return
     }
-    const isNew = !this.view
-    const view = this.ensureView()
-    if (isNew) this.window.contentView.addChildView(view)
     // The renderer measures in CSS pixels, which change with the app's zoom level;
     // the native view is placed in window points.
     const zoom = this.window.webContents.getZoomFactor()
-    view.setBounds({
+    this.panelBounds = {
       x: Math.round(rect.x * zoom),
       y: Math.round(rect.y * zoom),
       width: Math.round(rect.width * zoom),
       height: Math.round(rect.height * zoom)
-    })
-    for (const resolve of this.waitingForBounds.splice(0)) resolve()
+    }
+    if (this.activeChat) this.viewFor(this.activeChat)
+    this.layout()
+    for (const resolve of this.waitingForPanel.splice(0)) resolve()
     this.emitState()
   }
 
-  private destroyView(): void {
-    const view = this.view
-    if (!view) return
-    this.view = undefined
-    const url = view.webContents.getURL()
-    if (url) this.lastUrl = url
-    this.window.contentView.removeChildView(view)
-    view.webContents.close()
-  }
-
-  /** Open the panel if it is closed, so the agent's actions are visible and screenshots render. */
-  async ensureVisible(): Promise<void> {
-    if (this.view) return
-    const shown = new Promise<void>((resolve) => this.waitingForBounds.push(resolve))
-    this.requestShow()
-    await Promise.race([shown, new Promise((resolve) => setTimeout(resolve, 3000))])
-    // If the window could not show the panel (e.g. it is minimized), work off-screen.
-    this.ensureView()
+  /**
+   * Get a chat's page ready for an agent. For the selected chat the panel is
+   * opened so the user can watch; other chats work hidden in the background.
+   */
+  async ensureReady(chatId: string): Promise<WebContents> {
+    if (chatId === this.activeChat && !this.panelBounds) {
+      const shown = new Promise<void>((resolve) => this.waitingForPanel.push(resolve))
+      this.requestShow()
+      await Promise.race([shown, new Promise((resolve) => setTimeout(resolve, 3000))])
+    }
+    return this.contents(chatId)
   }
 
   /** Download a URL with the browser's logins and wait until the file is saved. */
-  download(url: string): Promise<Download> {
+  download(chatId: string, url: string): Promise<Download> {
     const finished = new Promise<Download>((done, fail) => {
       const timer = setTimeout(
         () => fail(new Error('Download did not finish within 5 minutes')),
@@ -172,35 +232,45 @@ export class BuiltinBrowser {
         done(download)
       })
     })
-    this.contents.downloadURL(url)
+    this.contents(chatId).downloadURL(url)
     return finished
   }
 
-  /** Show the panel and open a URL in it. */
+  /** Open a URL in the selected chat's page and show the panel (links in chat messages). */
   async open(url: string): Promise<void> {
-    await this.ensureVisible()
-    await this.navigate(url)
+    if (!this.activeChat) return
+    const contents = await this.ensureReady(this.activeChat)
+    await contents.loadURL(normalizeUrl(url))
   }
 
+  // Toolbar actions act on the page the panel shows.
+
   navigate(input: string): Promise<void> {
-    return this.contents.loadURL(normalizeUrl(input))
+    if (!this.activeChat) return Promise.resolve()
+    return this.contents(this.activeChat).loadURL(normalizeUrl(input))
   }
 
   back(): void {
-    if (this.contents.navigationHistory.canGoBack()) this.contents.navigationHistory.goBack()
+    const history = this.activePage()?.navigationHistory
+    if (history?.canGoBack()) history.goBack()
   }
 
   forward(): void {
-    if (this.contents.navigationHistory.canGoForward()) this.contents.navigationHistory.goForward()
+    const history = this.activePage()?.navigationHistory
+    if (history?.canGoForward()) history.goForward()
   }
 
   reload(): void {
-    this.contents.reload()
+    this.activePage()?.reload()
+  }
+
+  private activePage(): WebContents | undefined {
+    return this.activeChat ? this.views.get(this.activeChat)?.webContents : undefined
   }
 
   async clearData(): Promise<void> {
     await session.fromPartition(PARTITION).clearStorageData()
-    this.view?.webContents.reload()
+    for (const view of this.views.values()) view.webContents.reload()
   }
 
   /** Make sure logins written moments ago reach disk before quitting. */
@@ -210,11 +280,12 @@ export class BuiltinBrowser {
     browserSession.flushStorageData()
   }
 
-  /** The current page, without creating one when the panel is closed. */
-  state(): BrowserState {
-    if (!this.view)
-      return { ...EMPTY_STATE, url: this.lastUrl === 'about:blank' ? '' : this.lastUrl }
-    const contents = this.view.webContents
+  /** A chat's current page (the selected chat by default), without creating one. */
+  state(chatId = this.activeChat): BrowserState {
+    const contents = chatId ? this.views.get(chatId)?.webContents : undefined
+    if (!contents) {
+      return { ...EMPTY_STATE, url: (chatId && this.lastPage.get(chatId)) || '' }
+    }
     const url = contents.getURL()
     return {
       // A blank page shows as an empty address bar, with its placeholder.
@@ -226,12 +297,17 @@ export class BuiltinBrowser {
     }
   }
 
+  /** Close a deleted chat's page. */
+  closeChat(chatId: string): void {
+    this.closeView(chatId)
+  }
+
   private emitState(): void {
     this.onState(this.state())
   }
 }
 
-function normalizeUrl(input: string): string {
+export function normalizeUrl(input: string): string {
   const text = input.trim()
   if (/^[a-z][a-z0-9+.-]*:/i.test(text)) return text
   if (/^localhost(:\d+)?(\/|$)/.test(text) || /^[\d.]+(:\d+)?(\/|$)/.test(text))

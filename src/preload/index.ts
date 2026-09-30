@@ -73,6 +73,8 @@ const api = {
 
   browser: {
     setBounds: (rect: Rect | null): void => ipcRenderer.send('browser:setBounds', rect),
+    /** Which chat's page the panel shows. */
+    setChat: (chatId: string | null): void => ipcRenderer.send('browser:setChat', chatId),
     navigate: (url: string): Promise<void> => ipcRenderer.invoke('browser:navigate', url),
     back: (): Promise<void> => ipcRenderer.invoke('browser:back'),
     forward: (): Promise<void> => ipcRenderer.invoke('browser:forward'),

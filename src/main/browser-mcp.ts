@@ -4,12 +4,12 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import type { AddressInfo } from 'node:net'
-import { app, clipboard, ClipboardItem, nativeImage } from 'electron'
+import { app, clipboard, ClipboardItem, nativeImage, type WebContents } from 'electron'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { McpServer as AcpMcpServer } from '@agentclientprotocol/sdk'
 import { z } from 'zod'
-import type { BuiltinBrowser } from './browser'
+import { normalizeUrl, type BuiltinBrowser } from './browser'
 
 /**
  * An MCP server that drives the built-in browser, on loopback HTTP guarded by a
@@ -95,11 +95,11 @@ const text = (value: string): { content: { type: 'text'; text: string }[] } => (
   content: [{ type: 'text', text: value }]
 })
 
-async function settle(browser: BuiltinBrowser): Promise<void> {
+async function settle(page: WebContents): Promise<void> {
   // Give a click or key press time to start a navigation, then wait for it to finish.
   await new Promise((resolve) => setTimeout(resolve, 400))
   const deadline = Date.now() + 15_000
-  while (browser.contents.isLoading() && Date.now() < deadline) {
+  while (page.isLoading() && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
 }
@@ -111,12 +111,12 @@ async function settle(browser: BuiltinBrowser): Promise<void> {
  * with the files; interception is switched off again right after, so the user's
  * own clicks still open the normal macOS picker.
  */
-async function uploadFiles(browser: BuiltinBrowser, ref: number, paths: string[]): Promise<void> {
+async function uploadFiles(page: WebContents, ref: number, paths: string[]): Promise<void> {
   const files = paths.map((path) => resolve(path.replace(/^~(?=\/|$)/, homedir())))
   const missing = files.filter((file) => !existsSync(file))
   if (missing.length) throw new Error(`File not found: ${missing.join(', ')}`)
 
-  const cdp = browser.contents.debugger
+  const cdp = page.debugger
   const attachedHere = !cdp.isAttached()
   if (attachedHere) cdp.attach('1.3')
   try {
@@ -139,7 +139,7 @@ async function uploadFiles(browser: BuiltinBrowser, ref: number, paths: string[]
       }
       cdp.on('message', onMessage)
     })
-    await clickRef(browser, ref)
+    await clickRef(page, ref)
     let backendNodeId = await chooser
     if (backendNodeId === undefined) {
       // No chooser opened: the ref may be the <input type=file> itself or sit next to one.
@@ -166,8 +166,28 @@ async function uploadFiles(browser: BuiltinBrowser, ref: number, paths: string[]
   }
 }
 
-async function clickRef(browser: BuiltinBrowser, ref: number): Promise<void> {
-  const point = (await browser.contents.executeJavaScript(locateScript(ref))) as {
+/**
+ * PNG of the visible part of a page, as base64. Pages of background chats are
+ * hidden and have no frame to copy, so capture through the DevTools protocol,
+ * which renders one on request.
+ */
+async function screenshot(page: WebContents): Promise<string> {
+  const cdp = page.debugger
+  const attachedHere = !cdp.isAttached()
+  if (attachedHere) cdp.attach('1.3')
+  try {
+    const { data } = (await cdp.sendCommand('Page.captureScreenshot', {
+      format: 'png',
+      fromSurface: true
+    })) as { data: string }
+    return data
+  } finally {
+    if (attachedHere) cdp.detach()
+  }
+}
+
+async function clickRef(page: WebContents, ref: number): Promise<void> {
+  const point = (await page.executeJavaScript(locateScript(ref))) as {
     x: number
     y: number
   } | null
@@ -178,9 +198,9 @@ async function clickRef(browser: BuiltinBrowser, ref: number): Promise<void> {
   const x = Math.round(point.x)
   const y = Math.round(point.y)
   // Real input events, so pages see trusted clicks rather than synthetic ones.
-  browser.contents.sendInputEvent({ type: 'mouseMove', x, y })
-  browser.contents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
-  browser.contents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+  page.sendInputEvent({ type: 'mouseMove', x, y })
+  page.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+  page.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
 }
 
 type Modifier = 'cmd' | 'shift' | 'alt' | 'ctrl'
@@ -191,8 +211,7 @@ const MODIFIERS: Record<Modifier, 'meta' | 'shift' | 'alt' | 'control'> = {
   ctrl: 'control'
 }
 
-function pressKey(browser: BuiltinBrowser, key: string, modifiers: Modifier[] = []): void {
-  const contents = browser.contents
+function pressKey(contents: WebContents, key: string, modifiers: Modifier[] = []): void {
   // Editing shortcuts are menu commands on macOS; synthetic key events never reach
   // the menu, so run the command itself.
   if (modifiers.length === 1 && modifiers[0] === 'cmd' && key.length === 1) {
@@ -216,7 +235,7 @@ function pressKey(browser: BuiltinBrowser, key: string, modifiers: Modifier[] = 
  * Paste an image into the focused element, the way a user would with ⌘V. The
  * user's clipboard is put back afterwards.
  */
-async function pasteImage(browser: BuiltinBrowser, path: string): Promise<void> {
+async function pasteImage(page: WebContents, path: string): Promise<void> {
   const file = resolve(path.replace(/^~(?=\/|$)/, homedir()))
   const image = nativeImage.createFromPath(file)
   if (image.isEmpty()) throw new Error(`Not an image file, or not found: ${file}`)
@@ -233,29 +252,61 @@ async function pasteImage(browser: BuiltinBrowser, path: string): Promise<void> 
   )
   const png = new Blob([new Uint8Array(image.toPNG())], { type: 'image/png' })
   await clipboard.write([new ClipboardItem({ 'image/png': png })])
-  browser.contents.paste()
+  page.paste()
   // Let the page read the clipboard before restoring it.
   await new Promise((done) => setTimeout(done, 1000))
   await clipboard.write(previous)
 }
 
-function buildServer(browser: BuiltinBrowser): McpServer {
+/** Every tool takes this: which chat's browser to use, for agents that share one tool address. */
+const browserArg = {
+  browser: z
+    .string()
+    .optional()
+    .describe('Your browser ID, if the conversation gave you one. Omit it otherwise.')
+}
+
+export interface BrowserRouting {
+  /** The chat whose browser ID this is (IDs are the start of the chat id). */
+  chatForBrowserId(id: string): string | undefined
+  /** The chat to use when a request names none: the most recently active one. */
+  fallbackChat(): string | undefined
+}
+
+/**
+ * Tools for one request. `pathChat` is set when the agent called a per-chat
+ * address (opencode); otherwise the chat comes from the `browser` argument
+ * (cline is told its ID in each prompt) or falls back to the latest active chat.
+ */
+function buildServer(
+  browser: BuiltinBrowser,
+  routing: BrowserRouting,
+  pathChat: string | undefined
+): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: '1.0.0' },
     { instructions: BROWSER_GUIDANCE }
   )
 
+  const chatFor = (id: string | undefined): string => {
+    const chatId =
+      pathChat ?? (id ? routing.chatForBrowserId(id) : undefined) ?? routing.fallbackChat()
+    if (!chatId) throw new Error('No chat to attach the browser to.')
+    return chatId
+  }
+  const pageFor = (id: string | undefined): Promise<WebContents> => browser.ensureReady(chatFor(id))
+
   server.registerTool(
     'navigate',
     {
       description:
-        "Open a URL in the user's Just Harness browser panel (signed in to their accounts). Prefer this over any other browser tool unless the user asks for a different browser.",
-      inputSchema: { url: z.string().describe('URL to open') }
+        "Open a URL in the user's Just Harness browser (signed in to their accounts). Prefer this over any other browser tool unless the user asks for a different browser.",
+      inputSchema: { url: z.string().describe('URL to open'), ...browserArg }
     },
-    async ({ url }) => {
-      await browser.ensureVisible()
-      await browser.navigate(url)
-      return text(await browser.contents.executeJavaScript(SNAPSHOT_SCRIPT))
+    async ({ url, browser: id }) => {
+      const page = await pageFor(id)
+      await page.loadURL(normalizeUrl(url))
+      return text(await page.executeJavaScript(SNAPSHOT_SCRIPT))
     }
   )
 
@@ -263,27 +314,23 @@ function buildServer(browser: BuiltinBrowser): McpServer {
     'snapshot',
     {
       description:
-        'Read the current page: URL, title, visible text and a numbered list of interactive elements. Use the numbers as `ref` for click and type.'
+        'Read the current page: URL, title, visible text and a numbered list of interactive elements. Use the numbers as `ref` for click and type.',
+      inputSchema: { ...browserArg }
     },
-    async () => {
-      await browser.ensureVisible()
-      return text(await browser.contents.executeJavaScript(SNAPSHOT_SCRIPT))
-    }
+    async ({ browser: id }) => text(await (await pageFor(id)).executeJavaScript(SNAPSHOT_SCRIPT))
   )
 
   server.registerTool(
     'click',
     {
       description: 'Click an element by its ref from the latest snapshot.',
-      inputSchema: { ref: z.number().int().describe('Element ref from snapshot') }
+      inputSchema: { ref: z.number().int().describe('Element ref from snapshot'), ...browserArg }
     },
-    async ({ ref }) => {
-      await browser.ensureVisible()
-      await clickRef(browser, ref)
-      await settle(browser)
-      return text(
-        `Clicked [${ref}]. Now at ${browser.contents.getURL()}. Take a snapshot to see the result.`
-      )
+    async ({ ref, browser: id }) => {
+      const page = await pageFor(id)
+      await clickRef(page, ref)
+      await settle(page)
+      return text(`Clicked [${ref}]. Now at ${page.getURL()}. Take a snapshot to see the result.`)
     }
   )
 
@@ -295,21 +342,22 @@ function buildServer(browser: BuiltinBrowser): McpServer {
       inputSchema: {
         ref: z.number().int().describe('Element ref from snapshot'),
         text: z.string().describe('Text to enter'),
-        submit: z.boolean().optional().describe('Press Enter afterwards')
+        submit: z.boolean().optional().describe('Press Enter afterwards'),
+        ...browserArg
       }
     },
-    async ({ ref, text: value, submit }) => {
-      await browser.ensureVisible()
-      await clickRef(browser, ref)
-      await browser.contents.executeJavaScript(`(() => {
+    async ({ ref, text: value, submit, browser: id }) => {
+      const page = await pageFor(id)
+      await clickRef(page, ref)
+      await page.executeJavaScript(`(() => {
         const el = document.querySelector('[data-harness-ref="${ref}"]');
         if (el && 'select' in el) el.select();
         else if (el && el.isContentEditable) document.execCommand('selectAll');
       })()`)
-      await browser.contents.insertText(value)
+      await page.insertText(value)
       if (submit) {
-        pressKey(browser, 'Enter')
-        await settle(browser)
+        pressKey(page, 'Enter')
+        await settle(page)
       }
       return text(`Typed into [${ref}]${submit ? ' and pressed Enter' : ''}.`)
     }
@@ -322,13 +370,14 @@ function buildServer(browser: BuiltinBrowser): McpServer {
         'Press a key or shortcut in the focused element, e.g. Enter, Escape, Tab, ArrowDown, or "a" with modifiers ["cmd"] for select all. ⌘A/C/V/X/Z run the real edit commands.',
       inputSchema: {
         key: z.string(),
-        modifiers: z.array(z.enum(['cmd', 'shift', 'alt', 'ctrl'])).optional()
+        modifiers: z.array(z.enum(['cmd', 'shift', 'alt', 'ctrl'])).optional(),
+        ...browserArg
       }
     },
-    async ({ key, modifiers }) => {
-      await browser.ensureVisible()
-      pressKey(browser, key, modifiers)
-      await settle(browser)
+    async ({ key, modifiers, browser: id }) => {
+      const page = await pageFor(id)
+      pressKey(page, key, modifiers)
+      await settle(page)
       return text(`Pressed ${[...(modifiers ?? []), key].join('+')}.`)
     }
   )
@@ -338,12 +387,12 @@ function buildServer(browser: BuiltinBrowser): McpServer {
     {
       description:
         'Paste a local image into the focused element, like copying it and pressing ⌘V. Click the target field first. For other file types use upload.',
-      inputSchema: { path: z.string().describe('Absolute path of the image') }
+      inputSchema: { path: z.string().describe('Absolute path of the image'), ...browserArg }
     },
-    async ({ path }) => {
-      await browser.ensureVisible()
-      await pasteImage(browser, path)
-      await settle(browser)
+    async ({ path, browser: id }) => {
+      const page = await pageFor(id)
+      await pasteImage(page, path)
+      await settle(page)
       return text('Pasted the image. Take a snapshot to confirm it was attached.')
     }
   )
@@ -352,20 +401,24 @@ function buildServer(browser: BuiltinBrowser): McpServer {
     'scroll',
     {
       description: 'Scroll the page vertically by a number of pixels (negative scrolls up).',
-      inputSchema: { pixels: z.number() }
+      inputSchema: { pixels: z.number(), ...browserArg }
     },
-    async ({ pixels }) => {
-      await browser.ensureVisible()
-      await browser.contents.executeJavaScript(`window.scrollBy(0, ${Number(pixels)})`)
+    async ({ pixels, browser: id }) => {
+      await (await pageFor(id)).executeJavaScript(`window.scrollBy(0, ${Number(pixels)})`)
       return text(`Scrolled ${pixels}px.`)
     }
   )
 
-  server.registerTool('back', { description: 'Go back in browser history.' }, async () => {
-    browser.back()
-    await settle(browser)
-    return text(`Now at ${browser.contents.getURL()}.`)
-  })
+  server.registerTool(
+    'back',
+    { description: 'Go back in browser history.', inputSchema: { ...browserArg } },
+    async ({ browser: id }) => {
+      const page = await pageFor(id)
+      if (page.navigationHistory.canGoBack()) page.navigationHistory.goBack()
+      await settle(page)
+      return text(`Now at ${page.getURL()}.`)
+    }
+  )
 
   server.registerTool(
     'upload',
@@ -374,13 +427,14 @@ function buildServer(browser: BuiltinBrowser): McpServer {
         'Attach local files to the page: pass the ref of the upload button or file field (e.g. "Upload", "Files", "Attach") and absolute file paths. Use this instead of asking the user to pick files.',
       inputSchema: {
         ref: z.number().int().describe('Ref of the upload button or file input from snapshot'),
-        paths: z.array(z.string()).min(1).describe('Absolute paths of the files to attach')
+        paths: z.array(z.string()).min(1).describe('Absolute paths of the files to attach'),
+        ...browserArg
       }
     },
-    async ({ ref, paths }) => {
-      await browser.ensureVisible()
-      await uploadFiles(browser, ref, paths)
-      await settle(browser)
+    async ({ ref, paths, browser: id }) => {
+      const page = await pageFor(id)
+      await uploadFiles(page, ref, paths)
+      await settle(page)
       return text(`Attached ${paths.length} file(s) via [${ref}]. Take a snapshot to confirm.`)
     }
   )
@@ -390,11 +444,12 @@ function buildServer(browser: BuiltinBrowser): McpServer {
     {
       description:
         "Download a file from a URL using the browser's logins. It is saved to ~/Downloads and the saved path is returned, so you can read or upload it.",
-      inputSchema: { url: z.string().describe('URL of the file') }
+      inputSchema: { url: z.string().describe('URL of the file'), ...browserArg }
     },
-    async ({ url }) => {
-      await browser.ensureVisible()
-      const download = await browser.download(url)
+    async ({ url, browser: id }) => {
+      const chatId = chatFor(id)
+      await browser.ensureReady(chatId)
+      const download = await browser.download(chatId, url)
       if (download.state !== 'completed') throw new Error(`Download ${download.state}: ${url}`)
       return text(`Saved to ${download.path}`)
     }
@@ -404,7 +459,8 @@ function buildServer(browser: BuiltinBrowser): McpServer {
     'downloads',
     {
       description:
-        'List recent downloads from the browser (including ones started by clicking links), newest first, with where each file was saved.'
+        'List recent downloads from the browser (including ones started by clicking links), newest first, with where each file was saved.',
+      inputSchema: { ...browserArg }
     },
     async () => {
       if (browser.downloads.length === 0) return text('No downloads yet.')
@@ -414,25 +470,23 @@ function buildServer(browser: BuiltinBrowser): McpServer {
 
   server.registerTool(
     'screenshot',
-    { description: 'Take a screenshot of the visible part of the page.' },
-    async () => {
-      await browser.ensureVisible()
-      const image = await browser.contents.capturePage()
-      return {
-        content: [{ type: 'image', data: image.toPNG().toString('base64'), mimeType: 'image/png' }]
-      }
-    }
+    {
+      description: 'Take a screenshot of the visible part of the page.',
+      inputSchema: { ...browserArg }
+    },
+    async ({ browser: id }) => ({
+      content: [{ type: 'image', data: await screenshot(await pageFor(id)), mimeType: 'image/png' }]
+    })
   )
 
   server.registerTool(
     'evaluate',
     {
       description: 'Run a JavaScript expression in the page and return its JSON-serialized result.',
-      inputSchema: { expression: z.string() }
+      inputSchema: { expression: z.string(), ...browserArg }
     },
-    async ({ expression }) => {
-      await browser.ensureVisible()
-      const result = await browser.contents.executeJavaScript(expression, true)
+    async ({ expression, browser: id }) => {
+      const result = await (await pageFor(id)).executeJavaScript(expression, true)
       return text(JSON.stringify(result, null, 2) ?? 'undefined')
     }
   )
@@ -446,7 +500,10 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-export async function startBrowserMcp(browser: BuiltinBrowser): Promise<BrowserMcpEndpoint> {
+export async function startBrowserMcp(
+  browser: BuiltinBrowser,
+  routing: BrowserRouting
+): Promise<BrowserMcpEndpoint> {
   const saved = readSaved()
   const token = saved?.token ?? randomBytes(24).toString('hex')
   const http = createServer(async (req, res) => {
@@ -454,12 +511,14 @@ export async function startBrowserMcp(browser: BuiltinBrowser): Promise<BrowserM
       res.writeHead(401).end()
       return
     }
-    if (req.method !== 'POST') {
-      res.writeHead(405).end()
+    // "/mcp" is shared; "/mcp/<chat id>" is one chat's browser.
+    const match = req.url?.match(/^\/mcp(?:\/([\w-]+))?\/?$/)
+    if (req.method !== 'POST' || !match) {
+      res.writeHead(req.method !== 'POST' ? 405 : 404).end()
       return
     }
     // Stateless mode: a fresh server and transport per request.
-    const server = buildServer(browser)
+    const server = buildServer(browser, routing, match[1])
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true
@@ -493,13 +552,13 @@ export async function startBrowserMcp(browser: BuiltinBrowser): Promise<BrowserM
   return endpoint
 }
 
-/** The MCP server entry passed in ACP session requests. */
-export function browserMcpServer(): AcpMcpServer {
+/** The MCP server entry passed in a chat's ACP session: that chat's own browser. */
+export function browserMcpServer(chatId: string): AcpMcpServer {
   if (!endpoint) throw new Error('Browser MCP server has not started')
   return {
     type: 'http',
     name: SERVER_NAME,
-    url: endpoint.url,
+    url: `${endpoint.url}/${chatId}`,
     headers: [{ name: 'Authorization', value: `Bearer ${endpoint.token}` }]
   }
 }

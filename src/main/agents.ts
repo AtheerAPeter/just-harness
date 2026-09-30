@@ -47,6 +47,11 @@ function agentEnv(agent: AgentId): NodeJS.ProcessEnv {
   return { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, permission }) }
 }
 
+/** The short browser ID agents are given for a chat: the start of its id. */
+export function browserId(chatId: string): string {
+  return chatId.slice(0, 8)
+}
+
 /** ACP's error code for an unknown session (RequestError.resourceNotFound). */
 const RESOURCE_NOT_FOUND = -32002
 
@@ -181,6 +186,15 @@ class AgentProcess {
     this.child?.kill()
   }
 
+  /**
+   * Whether this agent takes HTTP MCP servers per session. If so, each chat gets
+   * its own browser address; if not (cline), chats share one address and the
+   * agent is told its browser ID instead.
+   */
+  takesHttpMcp(): boolean {
+    return this.initResult?.agentCapabilities?.mcpCapabilities?.http === true
+  }
+
   getOptions(chatId: string): AgentOption[] | undefined {
     return this.options.get(chatId)
   }
@@ -226,9 +240,7 @@ class AgentProcess {
     // Agents that take HTTP MCP servers over ACP get the browser tools here. Cline's
     // ACP mode ignores session MCP servers; it is registered in cline's own config
     // instead (see cline-mcp.ts).
-    const mcpServers = this.initResult?.agentCapabilities?.mcpCapabilities?.http
-      ? [browserMcpServer()]
-      : []
+    const mcpServers = this.takesHttpMcp() ? [browserMcpServer(chatId)] : []
 
     let sessionId: string
     let configOptions: acp.SessionConfigOption[] | null | undefined
@@ -615,7 +627,7 @@ export class AgentManager {
   constructor(
     private readonly events: AgentEvents,
     /** The page open in the built-in browser, for `@browser` messages. */
-    private readonly browserPage: () => BrowserState | undefined
+    private readonly browserPage: (chatId: string) => BrowserState | undefined
   ) {
     this.processes = {
       opencode: new AgentProcess('opencode', events, this.permissions),
@@ -706,9 +718,9 @@ export class AgentManager {
    * sees the tag as plain text, so spell out which tools that means and what
    * page is open.
    */
-  private expandBrowserTag(text: string): string {
+  private expandBrowserTag(chatId: string, text: string): string {
     if (!/(^|\s)@browser\b/.test(text)) return text
-    const page = this.browserPage()
+    const page = this.browserPage(chatId)
     const where = page?.url
       ? ` It currently shows ${page.url}${page.title ? ` ("${page.title}")` : ''}.`
       : ''
@@ -732,7 +744,31 @@ export class AgentManager {
     return [...links.values()]
   }
 
+  /** Chats in the order they last sent a prompt, most recent last. */
+  private recentChats: string[] = []
+
+  /** For browser requests that name no chat: the most recently active running chat. */
+  latestActiveChat(): string | undefined {
+    const running = new Set(
+      store
+        .getState()
+        .chats.filter((c) => c.running)
+        .map((c) => c.id)
+    )
+    return [...this.recentChats].reverse().find((id) => running.has(id)) ?? this.recentChats.at(-1)
+  }
+
+  /**
+   * Agents that share one browser address (cline) are told which browser is
+   * theirs, so parallel chats each drive their own page.
+   */
+  private withBrowserId(chatId: string, text: string): string {
+    if (this.processes[store.getChat(chatId).agent].takesHttpMcp()) return text
+    return `${text}\n\n(Your ${BROWSER_SERVER} browser ID is "${browserId(chatId)}". Pass it as the "browser" argument in every ${BROWSER_SERVER} tool call.)`
+  }
+
   async send(chatId: string, text: string): Promise<void> {
+    this.recentChats = [...this.recentChats.filter((id) => id !== chatId), chatId]
     const chat = store.getChat(chatId)
     if (chat.running) throw new Error('This chat is already running.')
     const isFirst = !store.getMessages(chatId).some((i) => i.kind === 'user')
@@ -750,7 +786,7 @@ export class AgentManager {
     try {
       const response = await this.processes[chat.agent].prompt(
         chatId,
-        this.expandBrowserTag(this.expandSkill(chatId, text)),
+        this.withBrowserId(chatId, this.expandBrowserTag(chatId, this.expandSkill(chatId, text))),
         this.fileLinks(chatId, text)
       )
       if (response.stopReason === 'refusal' || response.stopReason === 'max_tokens') {

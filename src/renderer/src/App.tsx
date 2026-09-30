@@ -59,6 +59,10 @@ export default function App(): React.JSX.Element {
   useEffect(() => writePref('browserWidth', browserWidth), [browserWidth])
 
   const chat = state.chats.find((c) => c.id === selectedChatId)
+
+  // Each chat has its own browser page; the panel shows the selected chat's.
+  const chatId = chat?.id
+  useEffect(() => window.api.browser.setChat(chatId ?? null), [chatId])
   const project = state.projects.find((p) => p.id === chat?.projectId) ?? state.projects[0]
 
   const newChat = useCallback(async (projectId: string) => {

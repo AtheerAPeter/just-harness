@@ -28,6 +28,8 @@ export interface Chat {
   bypassPermissions?: boolean
   /** Refuse any tool request that touches a path outside the project folder. */
   projectOnly?: boolean
+  /** Last page the chat's browser showed, reopened when its browser comes back. */
+  browserUrl?: string
   createdAt: number
   updatedAt: number
 }

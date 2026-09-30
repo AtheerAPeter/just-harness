@@ -42,9 +42,13 @@ const agents = new AgentManager(
     item: (chatId: string, item: ChatItem) => send('chat:item', chatId, item),
     options: (chatId: string, options: AgentOption[]) => send('chat:options', chatId, options),
     commands: (chatId: string, commands: AgentCommand[]) => send('chat:commands', chatId, commands),
-    stateChanged: () => send('state:changed', store.getState())
+    stateChanged: () => {
+      send('state:changed', store.getState())
+      // A chat that stopped running may no longer need its browser page.
+      browser?.prune()
+    }
   },
-  () => browser?.state()
+  (chatId) => browser?.state(chatId)
 )
 
 function createWindow(): BuiltinBrowser {
@@ -81,7 +85,16 @@ function createWindow(): BuiltinBrowser {
   const browser = new BuiltinBrowser(
     mainWindow,
     (state) => send('browser:state', state),
-    () => send('browser:show')
+    () => send('browser:show'),
+    (chatId) => store.getState().chats.some((c) => c.id === chatId && c.running),
+    {
+      get: (chatId) => store.getState().chats.find((c) => c.id === chatId)?.browserUrl,
+      set: (chatId, url) => {
+        if (store.getState().chats.some((c) => c.id === chatId)) {
+          store.updateChat(chatId, { browserUrl: url })
+        }
+      }
+    }
   )
 
   // Links in chat messages open in the built-in browser, not the system one.
@@ -150,7 +163,10 @@ function registerIpc(browser: BuiltinBrowser): void {
     }
   )
 
-  ipcMain.handle('chat:delete', (_e, chatId: string) => agents.deleteChat(chatId))
+  ipcMain.handle('chat:delete', async (_e, chatId: string) => {
+    await agents.deleteChat(chatId)
+    browser.closeChat(chatId)
+  })
 
   ipcMain.handle('chat:rename', (_e, chatId: string, title: string) => {
     const trimmed = title.trim()
@@ -188,6 +204,9 @@ function registerIpc(browser: BuiltinBrowser): void {
 
   ipcMain.handle('agents:status', (_e, agent: AgentId) => agents.status(agent))
 
+  ipcMain.on('browser:setChat', (_e, chatId: string | null) =>
+    browser.setActiveChat(chatId ?? undefined)
+  )
   ipcMain.on('browser:setBounds', (_e, rect: Rect | null) => browser.setBounds(rect))
   ipcMain.handle('browser:navigate', (_e, url: string) =>
     browser.navigate(url).catch(() => undefined)
@@ -237,7 +256,10 @@ app.whenReady().then(async () => {
   installMenu((command) => send('menu', command), nativeTheme.themeSource, setTheme)
   browser = createWindow()
   registerIpc(browser)
-  const endpoint = await startBrowserMcp(browser)
+  const endpoint = await startBrowserMcp(browser, {
+    chatForBrowserId: (id) => store.getState().chats.find((c) => c.id.startsWith(id))?.id,
+    fallbackChat: () => agents.latestActiveChat()
+  })
   // Only when cline is installed; failures are logged and the app works without it.
   agents.status('cline').then(({ available }) => {
     if (!available) return

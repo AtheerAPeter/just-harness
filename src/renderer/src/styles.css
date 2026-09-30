@@ -601,8 +601,9 @@ pre {
   padding: 4px 8px 4px 28px;
 }
 
-.msg-thought .collapsible-body {
+.msg-thought {
   color: var(--text-muted);
+  font-size: 13.5px;
 }
 
 .tool-group {
