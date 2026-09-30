@@ -747,15 +747,20 @@ export class AgentManager {
   /** Chats in the order they last sent a prompt, most recent last. */
   private recentChats: string[] = []
 
-  /** For browser requests that name no chat: the most recently active running chat. */
+  /**
+   * For browser requests that name no chat. Only agents that share one browser
+   * address (cline) send those, so it must be one of their chats: the running
+   * one, or the most recent if none runs. With several running it is ambiguous,
+   * so no chat is returned and the tool asks for the browser ID instead of
+   * guessing and driving another chat's browser.
+   */
   latestActiveChat(): string | undefined {
-    const running = new Set(
-      store
-        .getState()
-        .chats.filter((c) => c.running)
-        .map((c) => c.id)
-    )
-    return [...this.recentChats].reverse().find((id) => running.has(id)) ?? this.recentChats.at(-1)
+    const shared = store.getState().chats.filter((c) => !this.processes[c.agent].takesHttpMcp())
+    const running = shared.filter((c) => c.running)
+    if (running.length === 1) return running[0].id
+    if (running.length > 1) return undefined
+    const ids = new Set(shared.map((c) => c.id))
+    return [...this.recentChats].reverse().find((id) => ids.has(id))
   }
 
   /**

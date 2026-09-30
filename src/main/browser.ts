@@ -53,7 +53,8 @@ export class BuiltinBrowser {
   constructor(
     private readonly window: BrowserWindow,
     private readonly onState: (state: BrowserState) => void,
-    private readonly requestShow: () => void,
+    /** Open the panel in this chat (it is the selected chat). */
+    private readonly requestShow: (chatId: string) => void,
     private readonly isRunning: (chatId: string) => boolean,
     /** Where each chat's last page is kept, so it survives restarts. */
     private readonly lastPage: {
@@ -214,7 +215,7 @@ export class BuiltinBrowser {
   async ensureReady(chatId: string): Promise<WebContents> {
     if (chatId === this.activeChat && !this.panelBounds) {
       const shown = new Promise<void>((resolve) => this.waitingForPanel.push(resolve))
-      this.requestShow()
+      this.requestShow(chatId)
       await Promise.race([shown, new Promise((resolve) => setTimeout(resolve, 3000))])
     }
     return this.contents(chatId)

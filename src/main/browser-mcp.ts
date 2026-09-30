@@ -291,7 +291,11 @@ function buildServer(
   const chatFor = (id: string | undefined): string => {
     const chatId =
       pathChat ?? (id ? routing.chatForBrowserId(id) : undefined) ?? routing.fallbackChat()
-    if (!chatId) throw new Error('No chat to attach the browser to.')
+    if (!chatId) {
+      throw new Error(
+        'Could not tell which chat\'s browser to use. Pass your browser ID (given in the conversation) as "browser".'
+      )
+    }
     return chatId
   }
   const pageFor = (id: string | undefined): Promise<WebContents> => browser.ensureReady(chatFor(id))

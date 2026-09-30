@@ -472,6 +472,7 @@ pre {
 
 .chat-scroll {
   flex: 1;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -521,9 +522,11 @@ pre {
 }
 
 .markdown {
+  min-width: 0;
   font-size: 15px;
   line-height: 1.65;
-  word-wrap: break-word;
+  /* Long URLs and paths wrap instead of pushing the chat wider. */
+  overflow-wrap: anywhere;
 }
 
 .markdown > :first-child {
@@ -570,7 +573,11 @@ pre {
   background: none;
 }
 
+/* A wide table scrolls by itself instead of widening the chat. */
 .markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
   margin: 0 0 10px;
 }
@@ -579,6 +586,9 @@ pre {
 .markdown td {
   border: 1px solid var(--border);
   padding: 4px 8px;
+  /* Cells wrap normally; the table scrolls when it is still too wide. */
+  overflow-wrap: normal;
+  min-width: 6ch;
 }
 
 .collapsible-summary {

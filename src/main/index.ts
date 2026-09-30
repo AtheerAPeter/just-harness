@@ -85,7 +85,7 @@ function createWindow(): BuiltinBrowser {
   const browser = new BuiltinBrowser(
     mainWindow,
     (state) => send('browser:state', state),
-    () => send('browser:show'),
+    (chatId) => setBrowserOpen(chatId, true),
     (chatId) => store.getState().chats.some((c) => c.id === chatId && c.running),
     {
       get: (chatId) => store.getState().chats.find((c) => c.id === chatId)?.browserUrl,
@@ -119,7 +119,17 @@ function setTheme(theme: Theme): void {
   send('state:changed', store.getState())
 }
 
+/** The browser panel is open or closed per chat, saved with the chat. */
+function setBrowserOpen(chatId: string, open: boolean): void {
+  if (!store.getState().chats.some((c) => c.id === chatId)) return
+  store.updateChat(chatId, { browserOpen: open })
+  send('state:changed', store.getState())
+}
+
 function registerIpc(browser: BuiltinBrowser): void {
+  ipcMain.handle('browser:setOpen', (_e, chatId: string, open: boolean) =>
+    setBrowserOpen(chatId, open)
+  )
   ipcMain.handle('theme:set', (_e, theme: Theme) => setTheme(theme))
   ipcMain.handle('state:get', () => store.getState())
   ipcMain.handle('system:accent', () => `#${systemPreferences.getAccentColor()}`)

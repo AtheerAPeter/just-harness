@@ -30,6 +30,8 @@ export interface Chat {
   projectOnly?: boolean
   /** Last page the chat's browser showed, reopened when its browser comes back. */
   browserUrl?: string
+  /** Whether the browser panel is open in this chat. */
+  browserOpen?: boolean
   createdAt: number
   updatedAt: number
 }

@@ -82,7 +82,9 @@ const api = {
     clearData: (): Promise<void> => ipcRenderer.invoke('browser:clearData'),
     getState: (): Promise<BrowserState> => ipcRenderer.invoke('browser:state'),
     onState: (listener: (state: BrowserState) => void) => on('browser:state', listener),
-    onShowRequest: (listener: () => void) => on('browser:show', listener)
+    /** Open or close the browser panel in a chat. */
+    setOpen: (chatId: string, open: boolean): Promise<void> =>
+      ipcRenderer.invoke('browser:setOpen', chatId, open)
   },
 
   listFiles: (projectPath: string): Promise<string[]> =>

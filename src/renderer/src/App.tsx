@@ -26,11 +26,14 @@ function writePref(key: string, value: unknown): void {
 
 export default function App(): React.JSX.Element {
   const [state, setState] = useState<AppState>({ projects: [], chats: [] })
+  const stateRef = useRef(state)
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
   const [selectedChatId, setSelectedChatId] = useState<string | undefined>(() =>
     readPref('selectedChat', undefined)
   )
   const [view, setView] = useState<'chat' | 'skills'>('chat')
-  const [browserOpen, setBrowserOpen] = useState(() => readPref('browserOpen', false))
   const [sidebarOpen, setSidebarOpen] = useState(() => readPref('sidebarOpen', true))
   const [browserWidth, setBrowserWidth] = useState(() => readPref('browserWidth', 520))
   const [statuses, setStatuses] = useState<Partial<Record<AgentId, AgentStatus>>>({})
@@ -42,23 +45,27 @@ export default function App(): React.JSX.Element {
     window.api.getAccentColor().then(applyAccent)
     const offAccent = window.api.onAccentColor(applyAccent)
     const offState = window.api.onState(setState)
-    const offShow = window.api.browser.onShowRequest(() => setBrowserOpen(true))
     for (const { id } of AGENTS) {
       window.api.agentStatus(id).then((status) => setStatuses((c) => ({ ...c, [id]: status })))
     }
     return () => {
       offAccent()
       offState()
-      offShow()
     }
   }, [])
 
   useEffect(() => writePref('selectedChat', selectedChatId), [selectedChatId])
-  useEffect(() => writePref('browserOpen', browserOpen), [browserOpen])
   useEffect(() => writePref('sidebarOpen', sidebarOpen), [sidebarOpen])
   useEffect(() => writePref('browserWidth', browserWidth), [browserWidth])
 
   const chat = state.chats.find((c) => c.id === selectedChatId)
+  // The browser panel belongs to the chat: each chat opens and closes its own.
+  const browserOpen = Boolean(chat?.browserOpen)
+  const toggleBrowser = useCallback((chatId: string | undefined, open?: boolean) => {
+    if (!chatId) return
+    const current = stateRef.current.chats.find((c) => c.id === chatId)
+    window.api.browser.setOpen(chatId, open ?? !current?.browserOpen)
+  }, [])
 
   // Each chat has its own browser page; the panel shows the selected chat's.
   const chatId = chat?.id
@@ -75,21 +82,23 @@ export default function App(): React.JSX.Element {
   // Menu bar commands. The handler reads the current project through a ref so the
   // subscription is made once.
   const projectRef = useRef(project)
+  const selectedChatRef = useRef(chat?.id)
   useEffect(() => {
     projectRef.current = project
-  }, [project])
+    selectedChatRef.current = chat?.id
+  }, [project, chat?.id])
   useEffect(
     () =>
       window.api.onMenu((command) => {
         if (command === 'toggle-sidebar') setSidebarOpen((o) => !o)
-        else if (command === 'toggle-browser') setBrowserOpen((o) => !o)
+        else if (command === 'toggle-browser') toggleBrowser(selectedChatRef.current)
         else if (command === 'open-project') window.api.addProject()
         else if (command === 'new-chat') {
           if (projectRef.current) newChat(projectRef.current.id)
           else window.api.addProject()
         }
       }),
-    [newChat]
+    [newChat, toggleBrowser]
   )
 
   async function changeAgent(agent: AgentId): Promise<void> {
@@ -140,7 +149,8 @@ export default function App(): React.JSX.Element {
           <button
             className={`icon-btn${browserOpen ? ' on' : ''}`}
             title="Toggle browser (⌘B)"
-            onClick={() => setBrowserOpen((o) => !o)}
+            disabled={!chat}
+            onClick={() => toggleBrowser(chat?.id)}
           >
             <GlobeIcon />
           </button>
@@ -182,7 +192,7 @@ export default function App(): React.JSX.Element {
         <BrowserPanel
           width={browserWidth}
           onResize={setBrowserWidth}
-          onClose={() => setBrowserOpen(false)}
+          onClose={() => toggleBrowser(chat?.id, false)}
         />
       )}
     </div>
