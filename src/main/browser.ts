@@ -1,7 +1,18 @@
-import { app, BrowserWindow, WebContentsView, session, type WebContents } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  WebContentsView,
+  session,
+  type IpcMainEvent,
+  type WebContents
+} from 'electron'
+import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { extname, basename, join } from 'node:path'
 import type { BrowserState, Rect } from '../shared/types'
+import { PageDriver } from './page-driver'
 
 /**
  * `persist:` partitions are stored on disk, so cookies, localStorage and
@@ -10,8 +21,8 @@ import type { BrowserState, Rect } from '../shared/types'
  *
  * Each chat has its own page, so several chats can automate the browser at
  * once. The panel shows the selected chat's page; pages of other chats that are
- * running stay alive hidden. A page is closed when its chat is neither selected
- * nor running, and its last URL is reopened next time.
+ * running stay alive, parked out of sight. A page is closed when its chat is
+ * neither selected nor running, and its last URL is reopened next time.
  */
 const PARTITION = 'persist:browser'
 const EMPTY_STATE: BrowserState = {
@@ -30,6 +41,19 @@ export interface Download {
   state: 'progressing' | 'completed' | 'cancelled' | 'interrupted'
 }
 
+/** An alert() or confirm() a page is waiting on. */
+export interface PageDialog {
+  type: 'alert' | 'confirm'
+  message: string
+  /** The site asking, as shown to the user. */
+  site: string
+  /**
+   * Answer it: OK, or Cancel. Missing for a dialog Electron shows itself (from
+   * a frame the page preload does not run in), which only the user can answer.
+   */
+  answer?: (accept: boolean) => void
+}
+
 /** A free file name in the folder: "name.ext", then "name (1).ext", ... */
 function uniquePath(folder: string, fileName: string): string {
   const ext = extname(fileName)
@@ -39,12 +63,97 @@ function uniquePath(folder: string, fileName: string): string {
   return path
 }
 
+/**
+ * Where a page waits out of sight: left of the window, at its size. Pages are
+ * parked rather than hidden because Chromium sends no mouse input to a page
+ * that was never shown, and pages of background chats must stay clickable.
+ */
+function parked(bounds: Electron.Rectangle): Electron.Rectangle {
+  return { ...bounds, x: -bounds.width - 100 }
+}
+
+function siteOf(url: string): string {
+  try {
+    return new URL(url).host || 'This page'
+  } catch {
+    return 'This page'
+  }
+}
+
+/**
+ * A chat's page: its view, the driver agents use, and the dialog it waits on.
+ * Emits 'dialog' when a dialog opens.
+ */
+export class ChatPage extends EventEmitter {
+  readonly driver: PageDriver
+  dialog?: PageDialog
+  /** The message box showing the dialog to the user, while it is on screen. */
+  box?: AbortController
+  /** In the panel, as opposed to parked out of sight. */
+  shown = false
+  /** Agent tool calls in progress on this page. */
+  private automating = 0
+
+  constructor(readonly view: WebContentsView) {
+    super()
+    this.driver = new PageDriver(
+      view.webContents,
+      (native) => {
+        if (native) this.openDialog({ ...native, site: siteOf(this.contents.getURL()) })
+        else if (this.dialog && !this.dialog.answer) this.closeDialog()
+      },
+      () => this.shown
+    )
+  }
+
+  get contents(): WebContents {
+    return this.view.webContents
+  }
+
+  /** Whether an agent tool call is running on the page. */
+  get automated(): boolean {
+    return this.automating > 0
+  }
+
+  /** Run an agent tool call on the page. */
+  async automate<T>(work: () => Promise<T>): Promise<T> {
+    this.automating++
+    try {
+      return await work()
+    } finally {
+      this.automating--
+    }
+  }
+
+  openDialog(dialog: PageDialog): void {
+    this.dialog = dialog
+    this.emit('dialog')
+  }
+
+  /** Forget the dialog and take its message box off the screen. */
+  closeDialog(): void {
+    this.box?.abort()
+    this.box = undefined
+    this.dialog = undefined
+  }
+
+  /** Cancel the dialog if there is one, so the page can go on (or go away). */
+  dismissDialog(): void {
+    this.dialog?.answer?.(false)
+  }
+}
+
 export class BuiltinBrowser {
   /** Most recent first; agents read paths from here to use downloaded files. */
   readonly downloads: Download[] = []
-  private downloadWaiters: ((download: Download) => void)[] = []
+  /** download() calls waiting for their file, matched by page and URL. */
+  private downloadWaiters: {
+    contents: WebContents
+    url: string
+    done: (download: Download) => void
+  }[] = []
 
-  private views = new Map<string, WebContentsView>()
+  private pages = new Map<string, ChatPage>()
   private activeChat?: string
   /** Where the panel is, in window points; undefined while the panel is closed. */
   private panelBounds?: Electron.Rectangle
@@ -65,7 +174,7 @@ export class BuiltinBrowser {
     const browserSession = session.fromPartition(PARTITION)
     // Save straight to ~/Downloads instead of showing a Save dialog, which an
     // agent cannot answer, and record where each file went.
-    browserSession.on('will-download', (_event, item) => {
+    browserSession.on('will-download', (_event, item, contents) => {
       const download: Download = {
         url: item.getURL(),
         path: uniquePath(app.getPath('downloads'), item.getFilename()),
@@ -74,9 +183,16 @@ export class BuiltinBrowser {
       item.setSavePath(download.path)
       this.downloads.unshift(download)
       this.downloads.splice(50)
+      // The download() call that asked for this file, if any (the first URL is
+      // the one requested, before redirects).
+      const requested = item.getURLChain()[0]
+      const waiter = this.downloadWaiters.find(
+        (w) => w.contents === contents && w.url === requested
+      )
+      if (waiter) this.downloadWaiters.splice(this.downloadWaiters.indexOf(waiter), 1)
       item.once('done', (_e, state) => {
         download.state = state
-        for (const notify of this.downloadWaiters.splice(0)) notify(download)
+        waiter?.done(download)
       })
     })
     // Some sign-in pages (Google in particular) reject user agents that mention Electron.
@@ -86,10 +202,11 @@ export class BuiltinBrowser {
         .replace(/\sElectron\/\S+/, '')
         .replace(/\sjust-harness\/\S+/, '')
     )
+    ipcMain.on('page:dialog', (event, type, message) => this.onPageDialog(event, type, message))
   }
 
-  private viewFor(chatId: string): WebContentsView {
-    const existing = this.views.get(chatId)
+  private viewFor(chatId: string): ChatPage {
+    const existing = this.pages.get(chatId)
     if (existing) return existing
     const view = new WebContentsView({
       webPreferences: {
@@ -97,9 +214,14 @@ export class BuiltinBrowser {
         sandbox: true,
         contextIsolation: true,
         // Hidden pages of background chats must keep running their automation.
-        backgroundThrottling: false
+        backgroundThrottling: false,
+        // Routes alert() and confirm() to the app (see onPageDialog). Run in
+        // iframes too; with the sandbox on, frames get no Node.js either way.
+        preload: join(import.meta.dirname, '../preload/page.cjs'),
+        nodeIntegrationInSubFrames: true
       }
     })
+    const page = new ChatPage(view)
     const contents = view.webContents
     contents.setWindowOpenHandler((details) => {
       // Sign-in flows open real popups and rely on window.opener; allow those in
@@ -137,43 +259,131 @@ export class BuiltinBrowser {
     }
     contents.on('did-navigate', remember)
     contents.on('did-navigate-in-page', remember)
-    // Attached (so it lays out and renders at a real size) but hidden until shown.
-    view.setBounds(this.panelBounds ?? DEFAULT_BOUNDS)
-    view.setVisible(false)
+    // A page with unsaved changes asks before it is left. Electron would
+    // silently stay; the agent was asked to leave, the user is asked.
+    contents.on('will-prevent-unload', (event) => {
+      if (page.automated) {
+        event.preventDefault()
+        return
+      }
+      const choice = dialog.showMessageBoxSync(this.window, {
+        type: 'question',
+        buttons: ['Leave', 'Stay'],
+        defaultId: 0,
+        cancelId: 1,
+        message: 'Leave this page?',
+        detail: 'Changes you made may not be saved.'
+      })
+      if (choice === 0) event.preventDefault()
+    })
+    contents.on('render-process-gone', () => {
+      page.driver.detach()
+      page.closeDialog()
+      if (chatId === this.activeChat) this.emitState()
+    })
+    view.setBounds(parked(this.panelBounds ?? DEFAULT_BOUNDS))
     this.window.contentView.addChildView(view)
-    contents.loadURL(this.lastPage.get(chatId) ?? 'about:blank')
-    this.views.set(chatId, view)
-    return view
+    contents.loadURL(this.lastPage.get(chatId) ?? 'about:blank').catch(() => undefined)
+    this.pages.set(chatId, page)
+    return page
   }
 
   /** The page of a chat, created if needed. */
-  contents(chatId: string): WebContents {
-    return this.viewFor(chatId).webContents
+  page(chatId: string): ChatPage {
+    return this.viewFor(chatId)
+  }
+
+  private pageOf(contents: WebContents): [string, ChatPage] | undefined {
+    for (const entry of this.pages) if (entry[1].contents === contents) return entry
+    return undefined
+  }
+
+  /**
+   * alert() and confirm() from a page, sent by its preload. The page waits
+   * until it is answered: by the user in a message box (shown while the page
+   * is in the panel), or by the agent. Replying null lets the page show
+   * Electron's own dialog, which Chromium blocks for cross-origin iframes.
+   */
+  private onPageDialog(event: IpcMainEvent, type: unknown, message: unknown): void {
+    const entry = this.pageOf(event.sender)
+    const frame = event.senderFrame
+    if (
+      !entry ||
+      !frame ||
+      entry[1].dialog ||
+      (type !== 'alert' && type !== 'confirm') ||
+      typeof message !== 'string' ||
+      frame.origin !== event.sender.mainFrame.origin
+    ) {
+      event.returnValue = null
+      return
+    }
+    const [chatId, page] = entry
+    const open: PageDialog = {
+      type,
+      message,
+      site: siteOf(frame.origin),
+      answer: (accept) => {
+        if (page.dialog !== open) return
+        page.closeDialog()
+        event.returnValue = type === 'confirm' ? accept : true
+      }
+    }
+    page.openDialog(open)
+    if (chatId === this.activeChat) this.showDialog()
+  }
+
+  /** Show the dialog of the page in the panel, if it has one, in a message box. */
+  private showDialog(): void {
+    const page = this.activeChat ? this.pages.get(this.activeChat) : undefined
+    const open = page?.dialog
+    if (!page || !open?.answer || page.box || !this.panelBounds) return
+    const box = new AbortController()
+    page.box = box
+    dialog
+      .showMessageBox(this.window, {
+        type: open.type === 'alert' ? 'info' : 'question',
+        message: `${open.site} says`,
+        detail: open.message,
+        buttons: open.type === 'alert' ? ['OK'] : ['OK', 'Cancel'],
+        defaultId: 0,
+        cancelId: open.type === 'alert' ? 0 : 1,
+        noLink: true,
+        signal: box.signal
+      })
+      .then(({ response }) => {
+        // Aborted when the agent answered first or the page went away.
+        if (!box.signal.aborted) open.answer?.(response === 0)
+      })
   }
 
   private closeView(chatId: string): void {
-    const view = this.views.get(chatId)
-    if (!view) return
-    this.views.delete(chatId)
-    this.window.contentView.removeChildView(view)
-    view.webContents.close()
+    const page = this.pages.get(chatId)
+    if (!page) return
+    this.pages.delete(chatId)
+    page.dismissDialog()
+    page.closeDialog()
+    page.driver.detach()
+    this.window.contentView.removeChildView(page.view)
+    page.contents.close()
   }
 
   /** Close pages that nothing needs: not shown in the panel and not running. */
   prune(): void {
-    for (const chatId of [...this.views.keys()]) {
+    for (const chatId of [...this.pages.keys()]) {
       const shown = chatId === this.activeChat && this.panelBounds
       if (!shown && !this.isRunning(chatId)) this.closeView(chatId)
     }
   }
 
-  /** Show only the selected chat's page, at the panel's position. */
+  /** Put the selected chat's page in the panel and park the others. */
   private layout(): void {
-    for (const [chatId, view] of this.views) {
-      const shown = chatId === this.activeChat && this.panelBounds !== undefined
-      if (this.panelBounds) view.setBounds(this.panelBounds)
-      view.setVisible(shown)
+    for (const [chatId, page] of this.pages) {
+      const shown = chatId === this.activeChat && this.panelBounds
+      page.shown = Boolean(shown)
+      page.view.setBounds(shown || parked(this.panelBounds ?? page.view.getBounds()))
     }
+    this.showDialog()
   }
 
   /** The chat whose page the panel shows. */
@@ -212,66 +422,85 @@ export class BuiltinBrowser {
    * Get a chat's page ready for an agent. For the selected chat the panel is
    * opened so the user can watch; other chats work hidden in the background.
    */
-  async ensureReady(chatId: string): Promise<WebContents> {
+  async ensureReady(chatId: string): Promise<ChatPage> {
     if (chatId === this.activeChat && !this.panelBounds) {
       const shown = new Promise<void>((resolve) => this.waitingForPanel.push(resolve))
       this.requestShow(chatId)
       await Promise.race([shown, new Promise((resolve) => setTimeout(resolve, 3000))])
     }
-    return this.contents(chatId)
+    const page = this.viewFor(chatId)
+    // A page whose renderer crashed comes back by loading it again.
+    if (page.contents.isCrashed()) await reloadAndWait(page.contents)
+    return page
   }
 
   /** Download a URL with the browser's logins and wait until the file is saved. */
   download(chatId: string, url: string): Promise<Download> {
-    const finished = new Promise<Download>((done, fail) => {
-      const timer = setTimeout(
-        () => fail(new Error('Download did not finish within 5 minutes')),
-        300_000
-      )
-      this.downloadWaiters.push((download) => {
-        clearTimeout(timer)
-        done(download)
-      })
+    const contents = this.page(chatId).contents
+    return new Promise<Download>((resolve, reject) => {
+      const waiter = {
+        contents,
+        url: new URL(url).href,
+        done: (download: Download) => {
+          clearTimeout(timer)
+          resolve(download)
+        }
+      }
+      const timer = setTimeout(() => {
+        this.downloadWaiters = this.downloadWaiters.filter((w) => w !== waiter)
+        reject(new Error('Download did not finish within 5 minutes'))
+      }, 300_000)
+      this.downloadWaiters.push(waiter)
+      contents.downloadURL(url)
     })
-    this.contents(chatId).downloadURL(url)
-    return finished
   }
 
   /** Open a URL in the selected chat's page and show the panel (links in chat messages). */
   async open(url: string): Promise<void> {
     if (!this.activeChat) return
-    const contents = await this.ensureReady(this.activeChat)
-    await contents.loadURL(normalizeUrl(url))
+    const page = await this.ensureReady(this.activeChat)
+    page.dismissDialog()
+    await page.contents.loadURL(normalizeUrl(url))
   }
 
-  // Toolbar actions act on the page the panel shows.
+  // Toolbar actions act on the page the panel shows. A dialog the page waits on
+  // is cancelled first, as Chrome does when you leave a page.
 
   navigate(input: string): Promise<void> {
     if (!this.activeChat) return Promise.resolve()
-    return this.contents(this.activeChat).loadURL(normalizeUrl(input))
+    const page = this.page(this.activeChat)
+    page.dismissDialog()
+    return page.contents.loadURL(normalizeUrl(input))
   }
 
   back(): void {
-    const history = this.activePage()?.navigationHistory
-    if (history?.canGoBack()) history.goBack()
+    const page = this.activePage()
+    page?.dismissDialog()
+    if (page?.contents.navigationHistory.canGoBack()) page.contents.navigationHistory.goBack()
   }
 
   forward(): void {
-    const history = this.activePage()?.navigationHistory
-    if (history?.canGoForward()) history.goForward()
+    const page = this.activePage()
+    page?.dismissDialog()
+    if (page?.contents.navigationHistory.canGoForward()) page.contents.navigationHistory.goForward()
   }
 
   reload(): void {
-    this.activePage()?.reload()
+    const page = this.activePage()
+    page?.dismissDialog()
+    page?.contents.reload()
   }
 
-  private activePage(): WebContents | undefined {
-    return this.activeChat ? this.views.get(this.activeChat)?.webContents : undefined
+  private activePage(): ChatPage | undefined {
+    return this.activeChat ? this.pages.get(this.activeChat) : undefined
   }
 
   async clearData(): Promise<void> {
     await session.fromPartition(PARTITION).clearStorageData()
-    for (const view of this.views.values()) view.webContents.reload()
+    for (const page of this.pages.values()) {
+      page.dismissDialog()
+      page.contents.reload()
+    }
   }
 
   /** Make sure logins written moments ago reach disk before quitting. */
@@ -283,7 +512,7 @@ export class BuiltinBrowser {
 
   /** A chat's current page (the selected chat by default), without creating one. */
   state(chatId = this.activeChat): BrowserState {
-    const contents = chatId ? this.views.get(chatId)?.webContents : undefined
+    const contents = chatId ? this.pages.get(chatId)?.contents : undefined
     if (!contents) {
       return { ...EMPTY_STATE, url: (chatId && this.lastPage.get(chatId)) || '' }
     }
@@ -306,6 +535,22 @@ export class BuiltinBrowser {
   private emitState(): void {
     this.onState(this.state())
   }
+}
+
+/** Reload a page and wait until it has loaded, or failed to, or 15 seconds passed. */
+function reloadAndWait(contents: WebContents): Promise<void> {
+  return new Promise((resolve) => {
+    const done = (): void => {
+      clearTimeout(timer)
+      contents.off('did-finish-load', done)
+      contents.off('did-fail-load', done)
+      resolve()
+    }
+    const timer = setTimeout(done, 15_000)
+    contents.on('did-finish-load', done)
+    contents.on('did-fail-load', done)
+    contents.reload()
+  })
 }
 
 export function normalizeUrl(input: string): string {

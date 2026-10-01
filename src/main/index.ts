@@ -66,7 +66,7 @@ function createWindow(): BuiltinBrowser {
     visualEffectState: 'followWindow',
     backgroundColor: '#00000000',
     webPreferences: {
-      preload: join(import.meta.dirname, '../preload/index.mjs'),
+      preload: join(import.meta.dirname, '../preload/index.cjs'),
       sandbox: false
     }
   })
