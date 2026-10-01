@@ -103,6 +103,18 @@ async function attachmentBlocks(attachments: Attachment[]): Promise<acp.ContentB
  */
 const TEXT_ONLY_PROMPTS = new Set<AgentId>(['cline'])
 
+/**
+ * Commands an agent runs but does not list over ACP: opencode compacts the
+ * session when a prompt starts with /compact.
+ */
+const UNLISTED_COMMANDS: Record<AgentId, AgentCommand[]> = {
+  opencode: [{ name: 'compact', description: 'Summarize older messages to free up context' }],
+  cline: []
+}
+
+/** A prompt asking to compact the conversation. */
+const COMPACT = /^\/compact(\s|$)/
+
 /** Pasted images have no file; save them so a path can be given to the agent. */
 const attachmentsDir = join(app.getPath('userData'), 'attachments')
 
@@ -515,10 +527,14 @@ class AgentProcess {
 
   private onUpdate(params: acp.SessionNotification): void {
     if (params.update.sessionUpdate === 'available_commands_update') {
-      const commands = params.update.availableCommands.map((c) => ({
+      const listed = params.update.availableCommands.map((c) => ({
         name: c.name,
         description: c.description
       }))
+      const commands = [
+        ...listed,
+        ...UNLISTED_COMMANDS[this.agent].filter((c) => !listed.some((l) => l.name === c.name))
+      ]
       this.commands.set(params.sessionId, commands)
       const target = this.sessionChats.get(params.sessionId)
       if (target) this.events.commands(target, commands)
@@ -847,6 +863,22 @@ export class AgentManager {
     this.recentChats = [...this.recentChats.filter((id) => id !== chatId), chatId]
     const chat = store.getChat(chatId)
     if (chat.running) throw new Error('This chat is already running.')
+    const compact = COMPACT.test(text.trim())
+    // Cline compacts on its own when its context fills up. Its ACP mode has no
+    // command for it: the text would reach the model as an ordinary message.
+    if (compact && chat.agent === 'cline') {
+      for (const item of [
+        { kind: 'user', id: crypto.randomUUID(), text },
+        {
+          kind: 'notice',
+          id: crypto.randomUUID(),
+          text: 'Cline compacts the conversation on its own when its context fills up. It has no command to do it now.'
+        }
+      ] as const) {
+        this.events.item(chatId, store.upsertItem(chatId, item))
+      }
+      return
+    }
     const isFirst = !store.getMessages(chatId).some((i) => i.kind === 'user')
     store.updateChat(chatId, {
       running: true,
@@ -879,6 +911,17 @@ export class AgentManager {
         blocks = []
       }
       const response = await this.processes[chat.agent].prompt(chatId, prompt, blocks)
+      // opencode reports nothing while it compacts, so say when it is done.
+      if (compact && response.stopReason === 'end_turn') {
+        this.events.item(
+          chatId,
+          store.upsertItem(chatId, {
+            kind: 'notice',
+            id: crypto.randomUUID(),
+            text: 'Compacted the conversation: older messages are now a summary, freeing up context.'
+          })
+        )
+      }
       if (response.stopReason === 'refusal' || response.stopReason === 'max_tokens') {
         this.events.item(
           chatId,

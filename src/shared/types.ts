@@ -117,6 +117,8 @@ export type ChatItem =
       outside?: string
     }
   | { kind: 'error'; id: string; text: string }
+  /** Something the app tells the user about the chat, such as a finished compaction. */
+  | { kind: 'notice'; id: string; text: string }
 
 /** A chat's browser tabs as saved between launches: their pages and which one was active. */
 export interface SavedTabs {

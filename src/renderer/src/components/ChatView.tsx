@@ -234,6 +234,8 @@ const Item = memo(function Item({
       )
     case 'error':
       return <div className="msg-error">{item.text}</div>
+    case 'notice':
+      return <div className="msg-notice">{item.text}</div>
   }
 })
 
