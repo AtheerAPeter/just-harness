@@ -22,8 +22,16 @@ function writeJson(path: string, value: unknown): void {
 }
 
 const state: AppState = readJson<AppState>(statePath, { projects: [], chats: [] })
-// Nothing can be running right after launch.
-for (const chat of state.chats) chat.running = false
+for (const chat of state.chats) {
+  // Nothing can be running right after launch.
+  chat.running = false
+  // Before tabs, a chat's browser kept one page.
+  const legacy = chat as Chat & { browserUrl?: string }
+  if (legacy.browserUrl) {
+    chat.browserTabs ??= { urls: [legacy.browserUrl], active: 0 }
+    delete legacy.browserUrl
+  }
+}
 
 const messages = new Map<string, ChatItem[]>()
 const dirtyChats = new Set<string>()

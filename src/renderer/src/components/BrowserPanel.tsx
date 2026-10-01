@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { BrowserState } from '../../../shared/types'
-import { BackIcon, CloseIcon, ForwardIcon, ReloadIcon, TrashIcon } from './icons'
+import { BackIcon, CloseIcon, ForwardIcon, PlusIcon, ReloadIcon, TrashIcon } from './icons'
 
 interface BrowserPanelProps {
   width: number
@@ -104,6 +104,9 @@ export function BrowserPanel({ width, onResize, onClose }: BrowserPanelProps): R
             placeholder="Search or enter address"
           />
         </form>
+        <button className="icon-btn" title="New tab" onClick={() => window.api.browser.newTab()}>
+          <PlusIcon />
+        </button>
         <button
           className="icon-btn"
           title="Sign out everywhere (clear cookies and site data)"
@@ -123,6 +126,32 @@ export function BrowserPanel({ width, onResize, onClose }: BrowserPanelProps): R
           <CloseIcon />
         </button>
       </div>
+      {state && state.tabs.length > 1 && (
+        <div className="browser-tabs" role="tablist">
+          {state.tabs.map((tab) => (
+            <div
+              key={tab.id}
+              role="tab"
+              aria-selected={tab.id === state.activeTab}
+              className={`browser-tab${tab.id === state.activeTab ? ' active' : ''}`}
+              title={tab.url || 'New tab'}
+              onClick={() => window.api.browser.selectTab(tab.id)}
+            >
+              <span className="browser-tab-title">{tab.title || tab.url || 'New tab'}</span>
+              <button
+                className="browser-tab-close"
+                title="Close tab"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  window.api.browser.closeTab(tab.id)
+                }}
+              >
+                <CloseIcon width={10} height={10} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="browser-viewport" ref={viewportRef} />
     </aside>
   )

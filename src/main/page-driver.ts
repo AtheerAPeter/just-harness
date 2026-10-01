@@ -242,6 +242,22 @@ const KEY_IN_PAGE = `function (key, modifiers) {
   return allowed;
 }`
 
+/**
+ * Listen for the next press of a pointer or key in a document, to tell whether
+ * real input reached it. Returns false where it cannot tell: a key press goes
+ * to a focused iframe, whose events this document never sees.
+ */
+const WATCH_INPUT = `function (type) {
+  const seen = { input: false };
+  globalThis.${INJECTED}Seen = seen;
+  addEventListener(type, () => { seen.input = true }, { capture: true, once: true });
+  return type !== 'keydown' || !(document.activeElement instanceof HTMLIFrameElement);
+}`
+
+const INPUT_SEEN = `function () {
+  return Boolean(globalThis.${INJECTED}Seen && globalThis.${INJECTED}Seen.input);
+}`
+
 /** A frame of the page, and the DevTools session its document lives in. */
 interface FrameTarget {
   frameId: string
@@ -326,9 +342,11 @@ export class PageDriver {
       dialog: { type: 'alert' | 'confirm'; message: string } | undefined
     ) => void,
     /**
-     * Whether the page is on screen. Chromium drops clicks and key presses for
-     * a page whose document has not been shown, so pages of background chats,
-     * parked out of sight, get those events made inside the page instead.
+     * Whether the page is in the panel. Chromium drops clicks and key presses
+     * for a page that is not on screen, so pages parked out of sight (other
+     * tabs, background chats) get those events made inside the page instead.
+     * Pages in the panel get real input, made inside the page too when it does
+     * not arrive (the app window is minimized or covered).
      */
     private readonly onScreen: () => boolean
   ) {
@@ -747,15 +765,21 @@ export class PageDriver {
 
   async click(ref: string): Promise<void> {
     const { frame, local, page } = await this.target(ref, 'click')
+    const contextId = await this.context(frame)
     if (this.onScreen()) {
+      await this.call(frame, { contextId }, WATCH_INPUT, ['pointerdown'])
       await this.mouse('mouseMoved', page)
       await this.mouse('mousePressed', page, { button: 'left', clickCount: 1 })
       await this.mouse('mouseReleased', page, { button: 'left', clickCount: 1 })
-      return
+      // A page that went away (the click navigated) got the click.
+      const arrived = await this.call<boolean>(frame, { contextId }, INPUT_SEEN, []).catch(
+        () => true
+      )
+      if (arrived) return
     }
     const clicked = await this.call<boolean>(
       frame,
-      { contextId: await this.context(frame) },
+      { contextId },
       CLICK_IN_PAGE,
       [ref, local.x, local.y],
       true
@@ -769,13 +793,27 @@ export class PageDriver {
   }
 
   /**
-   * Press a key in a page that is not on screen (see `onScreen`), on its
-   * focused element. Characters are typed with the key.
+   * Press a key on the focused element. `real` sends real key events, used for
+   * a page in the panel; when they do not arrive, or the page is parked (see
+   * `onScreen`), the key is pressed inside the page, and characters typed.
    */
-  async pressInPage(key: string, modifiers: string[]): Promise<void> {
+  async press(key: string, modifiers: string[], real: () => void): Promise<void> {
     await this.attach()
     const frame = await this.mainFrame()
     const contextId = await this.context(frame)
+    if (this.onScreen()) {
+      const watched = await this.call<boolean>(frame, { contextId }, WATCH_INPUT, ['keydown'])
+      real()
+      if (!watched) return
+      // Real key events are delivered asynchronously.
+      for (const deadline = Date.now() + 300; Date.now() < deadline;) {
+        await sleep(25)
+        const arrived = await this.call<boolean>(frame, { contextId }, INPUT_SEEN, []).catch(
+          () => true
+        )
+        if (arrived) return
+      }
+    }
     const allowed = await this.call<boolean>(
       frame,
       { contextId },

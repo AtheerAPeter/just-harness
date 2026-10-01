@@ -1198,6 +1198,69 @@ pre {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
+/* Tabs: shown when a chat's browser has more than one */
+.browser-tabs {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+  padding: 4px 8px;
+  overflow-x: auto;
+  background: var(--toolbar);
+  border-bottom: 0.5px solid var(--separator);
+  scrollbar-width: none;
+}
+
+.browser-tab {
+  flex: 0 1 180px;
+  min-width: 72px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 10px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: default;
+}
+
+.browser-tab:hover {
+  background: var(--bg-hover);
+}
+
+.browser-tab.active {
+  background: var(--bg-selected);
+  color: var(--text);
+}
+
+.browser-tab-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.browser-tab-close {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--text-muted);
+  opacity: 0;
+}
+
+.browser-tab:hover .browser-tab-close,
+.browser-tab.active .browser-tab-close {
+  opacity: 1;
+}
+
+.browser-tab-close:hover {
+  background: var(--bg-hover);
+}
+
 .browser-viewport {
   flex: 1;
   background: var(--bg-soft);

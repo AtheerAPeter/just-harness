@@ -11,21 +11,23 @@ import {
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { extname, basename, join } from 'node:path'
-import type { BrowserState, Rect } from '../shared/types'
+import type { BrowserState, Rect, SavedTabs } from '../shared/types'
 import { PageDriver } from './page-driver'
 
 /**
  * `persist:` partitions are stored on disk, so cookies, localStorage and
- * IndexedDB (logins) survive restarts. Every chat's page uses the same
+ * IndexedDB (logins) survive restarts. Every chat's pages use the same
  * partition, so they all share the user's logins.
  *
- * Each chat has its own page, so several chats can automate the browser at
- * once. The panel shows the selected chat's page; pages of other chats that are
- * running stay alive, parked out of sight. A page is closed when its chat is
- * neither selected nor running, and its last URL is reopened next time.
+ * Each chat has its own browser with tabs, so several chats can automate the
+ * browser at once. The panel shows the selected chat's active tab; every other
+ * tab, and the tabs of other chats that are running, stay alive, parked out of
+ * sight. A chat's browser is closed when the chat is neither selected nor
+ * running, and its tabs are reopened next time.
  */
 const PARTITION = 'persist:browser'
 const EMPTY_STATE: BrowserState = {
+  tabs: [],
   url: '',
   title: '',
   loading: false,
@@ -34,6 +36,18 @@ const EMPTY_STATE: BrowserState = {
 }
 /** Page size for chats working in the background before the panel was ever shown. */
 const DEFAULT_BOUNDS = { x: 0, y: 0, width: 1024, height: 768 }
+/** Tabs one chat's browser may have open. */
+const MAX_TABS = 20
+/**
+ * For tabs and the windows pages open as tabs. With the sandbox on, iframes get
+ * no Node.js either way; they run the page preload (see onPageDialog).
+ */
+const TAB_PREFERENCES = {
+  partition: PARTITION,
+  sandbox: true,
+  contextIsolation: true,
+  nodeIntegrationInSubFrames: true
+}
 
 export interface Download {
   url: string
@@ -81,8 +95,8 @@ function siteOf(url: string): string {
 }
 
 /**
- * A chat's page: its view, the driver agents use, and the dialog it waits on.
- * Emits 'dialog' when a dialog opens.
+ * A tab of a chat's browser: its view, the driver agents use, and the dialog it
+ * waits on. Emits 'dialog' when a dialog opens.
  */
 export class ChatPage extends EventEmitter {
   readonly driver: PageDriver
@@ -91,10 +105,18 @@ export class ChatPage extends EventEmitter {
   box?: AbortController
   /** In the panel, as opposed to parked out of sight. */
   shown = false
+  /** The page it shows, kept for reopening the tab after the browser closes. */
+  url = ''
   /** Agent tool calls in progress on this page. */
   private automating = 0
 
-  constructor(readonly view: WebContentsView) {
+  constructor(
+    /** Short id agents use: t1, t2, ... */
+    readonly id: string,
+    readonly view: WebContentsView,
+    /** The tab whose page opened this one (window.open, a link to a new tab). */
+    readonly openedBy?: ChatPage
+  ) {
     super()
     this.driver = new PageDriver(
       view.webContents,
@@ -143,6 +165,16 @@ export class ChatPage extends EventEmitter {
   }
 }
 
+/** The tabs of one chat's browser. */
+interface ChatTabs {
+  tabs: ChatPage[]
+  active?: ChatPage
+  /** For the next tab's id. */
+  next: number
+  /** While its saved tabs are being reopened, which must not overwrite what was saved. */
+  restoring: boolean
+}
+
 export class BuiltinBrowser {
   /** Most recent first; agents read paths from here to use downloaded files. */
   readonly downloads: Download[] = []
@@ -153,7 +185,7 @@ export class BuiltinBrowser {
     done: (download: Download) => void
   }[] = []
 
-  private pages = new Map<string, ChatPage>()
+  private chats = new Map<string, ChatTabs>()
   private activeChat?: string
   /** Where the panel is, in window points; undefined while the panel is closed. */
   private panelBounds?: Electron.Rectangle
@@ -165,13 +197,20 @@ export class BuiltinBrowser {
     /** Open the panel in this chat (it is the selected chat). */
     private readonly requestShow: (chatId: string) => void,
     private readonly isRunning: (chatId: string) => boolean,
-    /** Where each chat's last page is kept, so it survives restarts. */
-    private readonly lastPage: {
-      get(chatId: string): string | undefined
-      set(chatId: string, url: string): void
+    /** Where each chat's tabs are kept, so they survive restarts. */
+    private readonly savedTabs: {
+      get(chatId: string): SavedTabs | undefined
+      set(chatId: string, tabs: SavedTabs): void
     }
   ) {
     const browserSession = session.fromPartition(PARTITION)
+    // Routes alert() and confirm() to the app (see onPageDialog). Registered on
+    // the session, so it also runs in windows that pages open as tabs.
+    browserSession.registerPreloadScript({
+      type: 'frame',
+      id: 'just-harness-page',
+      filePath: join(import.meta.dirname, '../preload/page.cjs')
+    })
     // Save straight to ~/Downloads instead of showing a Save dialog, which an
     // agent cannot answer, and record where each file went.
     browserSession.on('will-download', (_event, item, contents) => {
@@ -205,40 +244,54 @@ export class BuiltinBrowser {
     ipcMain.on('page:dialog', (event, type, message) => this.onPageDialog(event, type, message))
   }
 
-  private viewFor(chatId: string): ChatPage {
-    const existing = this.pages.get(chatId)
+  /** A chat's browser, opened with its saved tabs if it is not open. */
+  private browserFor(chatId: string): ChatTabs {
+    const existing = this.chats.get(chatId)
     if (existing) return existing
-    const view = new WebContentsView({
-      webPreferences: {
-        partition: PARTITION,
-        sandbox: true,
-        contextIsolation: true,
-        // Hidden pages of background chats must keep running their automation.
-        backgroundThrottling: false,
-        // Routes alert() and confirm() to the app (see onPageDialog). Run in
-        // iframes too; with the sandbox on, frames get no Node.js either way.
-        preload: join(import.meta.dirname, '../preload/page.cjs'),
-        nodeIntegrationInSubFrames: true
-      }
-    })
-    const page = new ChatPage(view)
-    const contents = view.webContents
+    const browser: ChatTabs = { tabs: [], next: 1, restoring: true }
+    this.chats.set(chatId, browser)
+    const saved = this.savedTabs.get(chatId)
+    for (const url of saved?.urls.length ? saved.urls : ['']) this.addTab(chatId, browser, { url })
+    browser.active = browser.tabs[Math.min(saved?.active ?? 0, browser.tabs.length - 1)]
+    browser.restoring = false
+    this.layout()
+    return browser
+  }
+
+  /**
+   * Open a tab in a chat's browser: a new page, or a window one of its pages
+   * opened (window.open, a link to a new tab), which keeps its tie to the
+   * page that opened it, so sign-in popups can report back.
+   */
+  private addTab(
+    chatId: string,
+    browser: ChatTabs,
+    options: {
+      url?: string
+      /** What Electron passes to createWindow for a window a page opened. */
+      opened?: Electron.BrowserWindowConstructorOptions
+      openedBy?: ChatPage
+      activate?: boolean
+    }
+  ): ChatPage {
+    const view = new WebContentsView(options.opened ?? { webPreferences: TAB_PREFERENCES })
+    const tab = new ChatPage(`t${browser.next++}`, view, options.openedBy)
+    const contents = tab.contents
+    // Tabs out of sight and tabs of background chats keep running their automation.
+    contents.setBackgroundThrottling(false)
     contents.setWindowOpenHandler((details) => {
-      // Sign-in flows open real popups and rely on window.opener; allow those in
-      // the same session. Anything that would open a tab loads here instead, so
-      // the page never leaves the chat's browser.
-      if (details.disposition === 'new-window') {
-        return {
-          action: 'allow',
-          overrideBrowserWindowOptions: {
-            width: 520,
-            height: 720,
-            webPreferences: { partition: PARTITION }
-          }
-        }
+      if (browser.tabs.length >= MAX_TABS) return { action: 'deny' }
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: { webPreferences: TAB_PREFERENCES },
+        createWindow: (opened) =>
+          this.addTab(chatId, browser, {
+            opened,
+            openedBy: tab,
+            // ⌘-click opens a link in the background, as in Chrome.
+            activate: details.disposition !== 'background-tab'
+          }).contents
       }
-      contents.loadURL(details.url)
-      return { action: 'deny' }
     })
     for (const event of [
       'did-navigate',
@@ -251,18 +304,18 @@ export class BuiltinBrowser {
         if (chatId === this.activeChat) this.emitState()
       })
     }
-    // Remember every page as it is reached, so the chat (and its agent) can pick
-    // up there after the page is closed or the app restarts.
+    // Remember every page as it is reached, so the tab (and its agent) can pick
+    // up there after the browser is closed or the app restarts.
     const remember = (): void => {
-      const url = contents.getURL()
-      if (url && url !== 'about:blank') this.lastPage.set(chatId, url)
+      tab.url = contents.getURL()
+      this.saveTabs(chatId)
     }
     contents.on('did-navigate', remember)
     contents.on('did-navigate-in-page', remember)
     // A page with unsaved changes asks before it is left. Electron would
     // silently stay; the agent was asked to leave, the user is asked.
     contents.on('will-prevent-unload', (event) => {
-      if (page.automated) {
+      if (tab.automated) {
         event.preventDefault()
         return
       }
@@ -277,24 +330,109 @@ export class BuiltinBrowser {
       if (choice === 0) event.preventDefault()
     })
     contents.on('render-process-gone', () => {
-      page.driver.detach()
-      page.closeDialog()
+      tab.driver.detach()
+      tab.closeDialog()
       if (chatId === this.activeChat) this.emitState()
     })
+    // Closed by the page itself (window.close()) or with the rest of the browser.
+    contents.once('destroyed', () => this.removeTab(chatId, tab))
     view.setBounds(parked(this.panelBounds ?? DEFAULT_BOUNDS))
     this.window.contentView.addChildView(view)
-    contents.loadURL(this.lastPage.get(chatId) ?? 'about:blank').catch(() => undefined)
-    this.pages.set(chatId, page)
-    return page
+    browser.tabs.push(tab)
+    if (options.activate || !browser.active) browser.active = tab
+    if (!options.opened) {
+      tab.url = options.url ?? ''
+      contents.loadURL(tab.url || 'about:blank').catch(() => undefined)
+    }
+    if (!browser.restoring) {
+      this.layout()
+      this.saveTabs(chatId)
+      if (chatId === this.activeChat) this.emitState()
+    }
+    return tab
   }
 
-  /** The page of a chat, created if needed. */
-  page(chatId: string): ChatPage {
-    return this.viewFor(chatId)
+  /** Take a closed tab out of its browser; the tab that opened it, or a neighbour, becomes active. */
+  private removeTab(chatId: string, tab: ChatPage): void {
+    tab.closeDialog()
+    tab.driver.detach()
+    if (!this.window.isDestroyed()) this.window.contentView.removeChildView(tab.view)
+    const browser = this.chats.get(chatId)
+    const index = browser?.tabs.indexOf(tab) ?? -1
+    if (!browser || index === -1) return
+    browser.tabs.splice(index, 1)
+    if (browser.active === tab) {
+      browser.active =
+        tab.openedBy && browser.tabs.includes(tab.openedBy)
+          ? tab.openedBy
+          : browser.tabs[Math.min(index, browser.tabs.length - 1)]
+    }
+    // A browser always has a tab.
+    if (!browser.tabs.length) this.addTab(chatId, browser, { url: '' })
+    this.layout()
+    this.saveTabs(chatId)
+    if (chatId === this.activeChat) this.emitState()
+  }
+
+  private saveTabs(chatId: string): void {
+    const browser = this.chats.get(chatId)
+    if (!browser || browser.restoring || !browser.active) return
+    this.savedTabs.set(chatId, {
+      urls: browser.tabs.map((tab) => (tab.url === 'about:blank' ? '' : tab.url)),
+      active: browser.tabs.indexOf(browser.active)
+    })
+  }
+
+  /** A chat's tabs, its browser opened if needed. */
+  tabs(chatId: string): { tabs: ChatPage[]; active: ChatPage } {
+    const browser = this.browserFor(chatId)
+    return { tabs: browser.tabs, active: browser.active! }
+  }
+
+  /** Open a blank tab in a chat's browser and make it the active one. */
+  newTab(chatId: string): ChatPage {
+    const browser = this.browserFor(chatId)
+    if (browser.tabs.length >= MAX_TABS) {
+      throw new Error(
+        `This browser has ${MAX_TABS} tabs open, the most it can have. Close some first.`
+      )
+    }
+    return this.addTab(chatId, browser, { url: '', activate: true })
+  }
+
+  /** Make a tab the active one, shown in the panel when its chat is selected. */
+  selectTab(chatId: string, tabId: string): ChatPage {
+    const browser = this.browserFor(chatId)
+    const tab = this.findTab(browser, tabId)
+    browser.active = tab
+    this.layout()
+    this.saveTabs(chatId)
+    if (chatId === this.activeChat) this.emitState()
+    return tab
+  }
+
+  /** Close a tab. A page waiting on a dialog is answered Cancel first. */
+  closeTab(chatId: string, tabId: string): void {
+    const tab = this.findTab(this.browserFor(chatId), tabId)
+    tab.dismissDialog()
+    this.removeTab(chatId, tab)
+    tab.contents.close()
+  }
+
+  private findTab(browser: ChatTabs, tabId: string): ChatPage {
+    const tab = browser.tabs.find((t) => t.id === tabId)
+    if (!tab) {
+      const open = browser.tabs.map((t) => t.id).join(', ')
+      throw new Error(`There is no tab ${tabId}. Open tabs: ${open}.`)
+    }
+    return tab
   }
 
   private pageOf(contents: WebContents): [string, ChatPage] | undefined {
-    for (const entry of this.pages) if (entry[1].contents === contents) return entry
+    for (const [chatId, browser] of this.chats) {
+      const tab = browser.tabs.find((t) => t.contents === contents)
+      if (tab) return [chatId, tab]
+    }
     return undefined
   }
 
@@ -318,7 +456,7 @@ export class BuiltinBrowser {
       event.returnValue = null
       return
     }
-    const [chatId, page] = entry
+    const [, page] = entry
     const open: PageDialog = {
       type,
       message,
@@ -330,14 +468,14 @@ export class BuiltinBrowser {
       }
     }
     page.openDialog(open)
-    if (chatId === this.activeChat) this.showDialog()
+    this.showDialog()
   }
 
   /** Show the dialog of the page in the panel, if it has one, in a message box. */
   private showDialog(): void {
-    const page = this.activeChat ? this.pages.get(this.activeChat) : undefined
+    const page = this.activePage()
     const open = page?.dialog
-    if (!page || !open?.answer || page.box || !this.panelBounds) return
+    if (!page?.shown || !open?.answer || page.box) return
     const box = new AbortController()
     page.box = box
     dialog
@@ -357,39 +495,44 @@ export class BuiltinBrowser {
       })
   }
 
-  private closeView(chatId: string): void {
-    const page = this.pages.get(chatId)
-    if (!page) return
-    this.pages.delete(chatId)
-    page.dismissDialog()
-    page.closeDialog()
-    page.driver.detach()
-    this.window.contentView.removeChildView(page.view)
-    page.contents.close()
-  }
-
-  /** Close pages that nothing needs: not shown in the panel and not running. */
-  prune(): void {
-    for (const chatId of [...this.pages.keys()]) {
-      const shown = chatId === this.activeChat && this.panelBounds
-      if (!shown && !this.isRunning(chatId)) this.closeView(chatId)
+  /** Close a chat's browser and all its tabs. */
+  private closeBrowser(chatId: string): void {
+    const browser = this.chats.get(chatId)
+    if (!browser) return
+    this.chats.delete(chatId)
+    for (const tab of browser.tabs) {
+      tab.dismissDialog()
+      tab.closeDialog()
+      tab.driver.detach()
+      this.window.contentView.removeChildView(tab.view)
+      tab.contents.close()
     }
   }
 
-  /** Put the selected chat's page in the panel and park the others. */
-  private layout(): void {
-    for (const [chatId, page] of this.pages) {
+  /** Close browsers that nothing needs: not shown in the panel and not running. */
+  prune(): void {
+    for (const chatId of [...this.chats.keys()]) {
       const shown = chatId === this.activeChat && this.panelBounds
-      page.shown = Boolean(shown)
-      page.view.setBounds(shown || parked(this.panelBounds ?? page.view.getBounds()))
+      if (!shown && !this.isRunning(chatId)) this.closeBrowser(chatId)
+    }
+  }
+
+  /** Put the selected chat's active tab in the panel and park every other tab. */
+  private layout(): void {
+    for (const [chatId, browser] of this.chats) {
+      for (const tab of browser.tabs) {
+        const shown = chatId === this.activeChat && tab === browser.active && this.panelBounds
+        tab.shown = Boolean(shown)
+        tab.view.setBounds(shown || parked(this.panelBounds ?? tab.view.getBounds()))
+      }
     }
     this.showDialog()
   }
 
-  /** The chat whose page the panel shows. */
+  /** The chat whose browser the panel shows. */
   setActiveChat(chatId: string | undefined): void {
     this.activeChat = chatId
-    if (chatId && this.panelBounds) this.viewFor(chatId)
+    if (chatId && this.panelBounds) this.browserFor(chatId)
     this.layout()
     this.prune()
     this.emitState()
@@ -412,31 +555,33 @@ export class BuiltinBrowser {
       width: Math.round(rect.width * zoom),
       height: Math.round(rect.height * zoom)
     }
-    if (this.activeChat) this.viewFor(this.activeChat)
+    if (this.activeChat) this.browserFor(this.activeChat)
     this.layout()
     for (const resolve of this.waitingForPanel.splice(0)) resolve()
     this.emitState()
   }
 
   /**
-   * Get a chat's page ready for an agent. For the selected chat the panel is
-   * opened so the user can watch; other chats work hidden in the background.
+   * Get a tab of a chat's browser ready for an agent: the given one, or the
+   * active one. For the selected chat the panel is opened so the user can
+   * watch; other chats work in the background.
    */
-  async ensureReady(chatId: string): Promise<ChatPage> {
+  async ensureReady(chatId: string, tabId?: string): Promise<ChatPage> {
     if (chatId === this.activeChat && !this.panelBounds) {
       const shown = new Promise<void>((resolve) => this.waitingForPanel.push(resolve))
       this.requestShow(chatId)
       await Promise.race([shown, new Promise((resolve) => setTimeout(resolve, 3000))])
     }
-    const page = this.viewFor(chatId)
+    const browser = this.browserFor(chatId)
+    const tab = tabId ? this.findTab(browser, tabId) : browser.active!
     // A page whose renderer crashed comes back by loading it again.
-    if (page.contents.isCrashed()) await reloadAndWait(page.contents)
-    return page
+    if (tab.contents.isCrashed()) await reloadAndWait(tab.contents)
+    return tab
   }
 
   /** Download a URL with the browser's logins and wait until the file is saved. */
   download(chatId: string, url: string): Promise<Download> {
-    const contents = this.page(chatId).contents
+    const contents = this.tabs(chatId).active.contents
     return new Promise<Download>((resolve, reject) => {
       const waiter = {
         contents,
@@ -455,20 +600,19 @@ export class BuiltinBrowser {
     })
   }
 
-  /** Open a URL in the selected chat's page and show the panel (links in chat messages). */
+  /** Open a link from a chat message in a new tab of the selected chat's browser. */
   async open(url: string): Promise<void> {
     if (!this.activeChat) return
-    const page = await this.ensureReady(this.activeChat)
-    page.dismissDialog()
-    await page.contents.loadURL(normalizeUrl(url))
+    await this.ensureReady(this.activeChat)
+    await this.newTab(this.activeChat).contents.loadURL(normalizeUrl(url))
   }
 
-  // Toolbar actions act on the page the panel shows. A dialog the page waits on
+  // Toolbar actions act on the tab the panel shows. A dialog the page waits on
   // is cancelled first, as Chrome does when you leave a page.
 
   navigate(input: string): Promise<void> {
     if (!this.activeChat) return Promise.resolve()
-    const page = this.page(this.activeChat)
+    const page = this.tabs(this.activeChat).active
     page.dismissDialog()
     return page.contents.loadURL(normalizeUrl(input))
   }
@@ -491,15 +635,36 @@ export class BuiltinBrowser {
     page?.contents.reload()
   }
 
+  /** The tab buttons of the panel, for the selected chat. */
+  selectActiveChatTab(tabId: string): void {
+    if (this.activeChat) this.selectTab(this.activeChat, tabId)
+  }
+
+  closeActiveChatTab(tabId: string): void {
+    if (this.activeChat) this.closeTab(this.activeChat, tabId)
+  }
+
+  newActiveChatTab(): void {
+    if (this.activeChat) this.newTab(this.activeChat)
+  }
+
+  /** Minimized or hidden: macOS draws nothing for it, so pages cannot be captured. */
+  get windowHidden(): boolean {
+    return this.window.isMinimized() || !this.window.isVisible()
+  }
+
+  /** The tab the panel shows, if the selected chat's browser is open. */
   private activePage(): ChatPage | undefined {
-    return this.activeChat ? this.pages.get(this.activeChat) : undefined
+    return this.activeChat ? this.chats.get(this.activeChat)?.active : undefined
   }
 
   async clearData(): Promise<void> {
     await session.fromPartition(PARTITION).clearStorageData()
-    for (const page of this.pages.values()) {
-      page.dismissDialog()
-      page.contents.reload()
+    for (const browser of this.chats.values()) {
+      for (const tab of browser.tabs) {
+        tab.dismissDialog()
+        tab.contents.reload()
+      }
     }
   }
 
@@ -510,16 +675,25 @@ export class BuiltinBrowser {
     browserSession.flushStorageData()
   }
 
-  /** A chat's current page (the selected chat by default), without creating one. */
+  /** A chat's browser (the selected chat by default), without opening it. */
   state(chatId = this.activeChat): BrowserState {
-    const contents = chatId ? this.pages.get(chatId)?.contents : undefined
-    if (!contents) {
-      return { ...EMPTY_STATE, url: (chatId && this.lastPage.get(chatId)) || '' }
+    const browser = chatId ? this.chats.get(chatId) : undefined
+    const contents = browser?.active?.contents
+    if (!browser || !contents) {
+      const saved = chatId ? this.savedTabs.get(chatId) : undefined
+      return { ...EMPTY_STATE, url: saved?.urls[saved.active] ?? '' }
     }
-    const url = contents.getURL()
+    const shownUrl = (url: string): string => (url === 'about:blank' ? '' : url)
     return {
+      tabs: browser.tabs.map((tab) => ({
+        id: tab.id,
+        title: tab.contents.getTitle(),
+        url: shownUrl(tab.contents.getURL() || tab.url),
+        loading: tab.contents.isLoading()
+      })),
+      activeTab: browser.active?.id,
       // A blank page shows as an empty address bar, with its placeholder.
-      url: url === 'about:blank' ? '' : url,
+      url: shownUrl(contents.getURL()),
       title: contents.getTitle(),
       loading: contents.isLoading(),
       canGoBack: contents.navigationHistory.canGoBack(),
@@ -527,9 +701,9 @@ export class BuiltinBrowser {
     }
   }
 
-  /** Close a deleted chat's page. */
+  /** Close a deleted chat's browser. */
   closeChat(chatId: string): void {
-    this.closeView(chatId)
+    this.closeBrowser(chatId)
   }
 
   private emitState(): void {

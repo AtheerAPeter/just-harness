@@ -89,10 +89,10 @@ function createWindow(): BuiltinBrowser {
     (chatId) => setBrowserOpen(chatId, true),
     (chatId) => store.getState().chats.some((c) => c.id === chatId && c.running),
     {
-      get: (chatId) => store.getState().chats.find((c) => c.id === chatId)?.browserUrl,
-      set: (chatId, url) => {
+      get: (chatId) => store.getState().chats.find((c) => c.id === chatId)?.browserTabs,
+      set: (chatId, tabs) => {
         if (store.getState().chats.some((c) => c.id === chatId)) {
-          store.updateChat(chatId, { browserUrl: url })
+          store.updateChat(chatId, { browserTabs: tabs })
         }
       }
     }
@@ -240,6 +240,9 @@ function registerIpc(browser: BuiltinBrowser): void {
   ipcMain.handle('browser:back', () => browser.back())
   ipcMain.handle('browser:forward', () => browser.forward())
   ipcMain.handle('browser:reload', () => browser.reload())
+  ipcMain.handle('browser:selectTab', (_e, tabId: string) => browser.selectActiveChatTab(tabId))
+  ipcMain.handle('browser:closeTab', (_e, tabId: string) => browser.closeActiveChatTab(tabId))
+  ipcMain.handle('browser:newTab', () => browser.newActiveChatTab())
   ipcMain.handle('browser:clearData', () => browser.clearData())
   ipcMain.handle('browser:state', () => browser.state())
 

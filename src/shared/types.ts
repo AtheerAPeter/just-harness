@@ -28,8 +28,8 @@ export interface Chat {
   bypassPermissions?: boolean
   /** Refuse any tool request that touches a path outside the project folder. */
   projectOnly?: boolean
-  /** Last page the chat's browser showed, reopened when its browser comes back. */
-  browserUrl?: string
+  /** The chat's browser tabs, reopened when its browser comes back. */
+  browserTabs?: SavedTabs
   /** Whether the browser panel is open in this chat. */
   browserOpen?: boolean
   createdAt: number
@@ -118,7 +118,24 @@ export type ChatItem =
     }
   | { kind: 'error'; id: string; text: string }
 
+/** A chat's browser tabs as saved between launches: their pages and which one was active. */
+export interface SavedTabs {
+  urls: string[]
+  active: number
+}
+
+export interface BrowserTab {
+  /** Short id agents use: t1, t2, ... */
+  id: string
+  title: string
+  url: string
+  loading: boolean
+}
+
+/** The selected chat's browser: its tabs, and the active tab's page. */
 export interface BrowserState {
+  tabs: BrowserTab[]
+  activeTab?: string
   url: string
   title: string
   loading: boolean
