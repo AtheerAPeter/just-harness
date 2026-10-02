@@ -4,6 +4,9 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   main: {
+    // Dependencies are bundled in, not loaded from node_modules at runtime: one
+    // file starts faster than hundreds of small ones read out of the asar.
+    build: { externalizeDeps: false, minify: true },
     resolve: {
       alias: {
         // Playwright's in-page runtime, bundled into the main process. Its package
@@ -35,6 +38,8 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
-    plugins: [react()]
+    plugins: [react()],
+    // electron-vite leaves output unminified by default; the renderer loads faster minified.
+    build: { minify: true }
   }
 })

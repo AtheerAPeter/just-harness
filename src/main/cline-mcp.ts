@@ -3,6 +3,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { SERVER_NAME, type BrowserMcpEndpoint } from './browser-mcp'
+import { loadShellPath } from './shell-env'
 
 /**
  * Cline's ACP mode ignores the MCP servers a client passes in session/new and
@@ -13,7 +14,8 @@ import { SERVER_NAME, type BrowserMcpEndpoint } from './browser-mcp'
  */
 const recordFile = join(app.getPath('userData'), 'cline-mcp.json')
 
-function run(args: string[]): Promise<void> {
+async function run(args: string[]): Promise<void> {
+  await loadShellPath()
   return new Promise((resolve, reject) => {
     execFile('cline', args, { timeout: 60_000 }, (error, _stdout, stderr) =>
       error ? reject(new Error(stderr.trim() || error.message)) : resolve()

@@ -27,6 +27,10 @@ const ACTION_TIMEOUT = 5_000
 const FRAMES_TIMEOUT = 2_000
 /** Longest snapshot returned, in characters, so one page cannot flood the model. */
 const MAX_SNAPSHOT = 50_000
+/** Longest console or network message kept, in characters. */
+const MAX_LOG_TEXT = 2_000
+/** Console and network errors kept per page, oldest first. */
+const MAX_LOG = 200
 /** Ways to scroll an element into view, tried in turn to get it out from under sticky bars. */
 const ALIGNMENTS = ['center', 'end', 'start', 'nearest']
 
@@ -319,6 +323,34 @@ function valueOf(response: RemoteResult): unknown {
   return response.result.value
 }
 
+/** One argument a page passed to console, as the console would show it. */
+interface ConsoleArg {
+  type: string
+  value?: unknown
+  description?: string
+}
+
+function consoleArg(arg: ConsoleArg): string {
+  if (arg.type === 'string') return arg.value as string
+  try {
+    return JSON.stringify(arg.value) ?? arg.description ?? arg.type
+  } catch {
+    return arg.description ?? '…'
+  }
+}
+
+/** One page error or warning, kept for the console tool. */
+export interface PageLogEntry {
+  /** When it happened, as Date.now(). */
+  at: number
+  level: 'error' | 'warning'
+  text: string
+}
+
+function clipped(text: string): string {
+  return text.length <= MAX_LOG_TEXT ? text : `${text.slice(0, MAX_LOG_TEXT)}…`
+}
+
 export class PageDriver {
   private readonly cdp: Electron.Debugger
   private attaching?: Promise<void>
@@ -328,6 +360,10 @@ export class PageDriver {
   private readonly frameNumbers = new Map<string, number>()
   /** Iframes in the latest snapshot, by number. */
   private frames = new Map<number, FrameTarget>()
+  /** Console and network errors and warnings, oldest first, for the console tool. */
+  private readonly log: PageLogEntry[] = []
+  /** Requests in flight, by request id, to name the ones that fail. */
+  private readonly requests = new Map<string, string>()
   private readonly eventListeners = new Set<
     (method: string, params: unknown, sessionId?: string) => void
   >()
@@ -368,6 +404,10 @@ export class PageDriver {
     this.cdp.on('message', this.onMessage)
     this.cdp.on('detach', this.reset)
     await this.send('Page.enable')
+    // For the console tool: what the page prints and throws, and requests that fail.
+    await this.send('Runtime.enable')
+    await this.send('Log.enable')
+    await this.send('Network.enable')
     await this.followIframes()
   }
 
@@ -420,6 +460,8 @@ export class PageDriver {
     this.attaching = undefined
     this.frameSessions.clear()
     this.frames.clear()
+    this.log.length = 0
+    this.requests.clear()
     this.onNativeDialog(undefined)
   }
 
@@ -435,6 +477,7 @@ export class PageDriver {
       // An iframe target's id is its frame id.
       this.frameSessions.set(target.targetId, childSession)
       this.send('Page.enable', {}, childSession).catch(() => undefined)
+      this.send('Log.enable', {}, childSession).catch(() => undefined)
       this.followIframes(childSession).catch(() => undefined)
     } else if (method === 'Target.detachedFromTarget') {
       for (const [frameId, id] of this.frameSessions) {
@@ -447,6 +490,44 @@ export class PageDriver {
       }
     } else if (!sessionId && method === 'Page.javascriptDialogClosed') {
       this.onNativeDialog(undefined)
+    } else if (!sessionId && method === 'Runtime.consoleAPICalled') {
+      const type = params.type as string
+      if (type === 'error' || type === 'warning') {
+        this.addLog(type, (params.args as ConsoleArg[]).map(consoleArg).join(' '))
+      }
+    } else if (!sessionId && method === 'Runtime.exceptionThrown') {
+      const details = params.exceptionDetails as RemoteResult['exceptionDetails']
+      this.addLog(
+        'error',
+        details?.exception?.description ?? details?.text ?? 'An error was thrown'
+      )
+    } else if (method === 'Log.entryAdded') {
+      const entry = params.entry as { source: string; level: string; text: string; url?: string }
+      // Exceptions come through Runtime, failed requests through Network.
+      if (entry.source !== 'javascript' && entry.source !== 'network') {
+        if (entry.level === 'error' || entry.level === 'warning') {
+          this.addLog(entry.level, entry.url ? `${entry.text} (${entry.url})` : entry.text)
+        }
+      }
+    } else if (!sessionId && method === 'Network.requestWillBeSent') {
+      const { requestId, request } = params as {
+        requestId: string
+        request: { method: string; url: string }
+      }
+      if (this.requests.size >= 500) this.requests.delete(this.requests.keys().next().value!)
+      this.requests.set(requestId, `${request.method} ${request.url}`)
+    } else if (!sessionId && method === 'Network.loadingFinished') {
+      this.requests.delete((params as { requestId: string }).requestId)
+    } else if (!sessionId && method === 'Network.loadingFailed') {
+      const { requestId, errorText, canceled } = params as {
+        requestId: string
+        errorText: string
+        canceled?: boolean
+      }
+      const request = this.requests.get(requestId)
+      this.requests.delete(requestId)
+      // A canceled request is an aborted navigation, which says nothing.
+      if (!canceled) this.addLog('error', `${request ?? 'A request'} failed (${errorText})`)
     }
     for (const listener of this.eventListeners) listener(method, params, sessionId || undefined)
   }
@@ -578,6 +659,17 @@ export class PageDriver {
     this.frames = new Map()
     const tree = await this.frameSnapshot(await this.mainFrame(), '', Date.now() + FRAMES_TIMEOUT)
     return compact(tree)
+  }
+
+  /** Keep a console or network message for the console tool. */
+  private addLog(level: 'error' | 'warning', text: string): void {
+    this.log.push({ at: Date.now(), level, text: clipped(text) })
+    this.log.splice(0, this.log.length - MAX_LOG)
+  }
+
+  /** The page's recent console and network errors and warnings, oldest first. */
+  logs(): PageLogEntry[] {
+    return [...this.log]
   }
 
   private async frameSnapshot(

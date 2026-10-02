@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
+import { loadShellPath } from './shell-env'
 
 /** Enough for the @ menu in large repos without holding huge lists in memory. */
 const MAX_FILES = 5000
@@ -16,7 +17,8 @@ const SKIP_DIRS = new Set([
   '.venv'
 ])
 
-function gitFiles(projectPath: string): Promise<string[] | undefined> {
+async function gitFiles(projectPath: string): Promise<string[] | undefined> {
+  await loadShellPath()
   return new Promise((done) => {
     execFile(
       'git',

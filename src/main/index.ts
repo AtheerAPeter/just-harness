@@ -62,9 +62,9 @@ function createWindow(): BuiltinBrowser {
     titleBarStyle: 'hiddenInset',
     // Centred on the 52px toolbar row.
     trafficLightPosition: { x: 20, y: 19 },
-    vibrancy: 'sidebar',
-    visualEffectState: 'followWindow',
-    backgroundColor: '#00000000',
+    // Opaque, in the chat's background color: a transparent window would make
+    // macOS blend it with what is behind it on every frame.
+    backgroundColor: windowBackground(),
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
       sandbox: false
@@ -72,6 +72,9 @@ function createWindow(): BuiltinBrowser {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
+  nativeTheme.on('updated', () => {
+    if (!mainWindow.isDestroyed()) mainWindow.setBackgroundColor(windowBackground())
+  })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -109,9 +112,14 @@ function createWindow(): BuiltinBrowser {
   return browser
 }
 
+/** The window's color behind the page, matching --chat-bg in styles.css. */
+function windowBackground(): string {
+  return nativeTheme.shouldUseDarkColors ? '#000000' : '#ffffff'
+}
+
 /**
  * nativeTheme drives prefers-color-scheme in the app and in browser pages, and
- * the native window material, so one setting switches everything.
+ * the window background, so one setting switches everything.
  */
 function setTheme(theme: Theme): void {
   nativeTheme.themeSource = theme
@@ -279,7 +287,8 @@ app.whenReady().then(async () => {
   electronApp.setAppUserModelId('dev.justharness.app')
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
-  await loadShellPath()
+  // Only commands need PATH, and they wait for it; the window does not.
+  void loadShellPath()
   // Set before the window exists so it opens in the right appearance.
   nativeTheme.themeSource = store.getState().theme ?? 'system'
   installMenu((command) => send('menu', command), nativeTheme.themeSource, setTheme)

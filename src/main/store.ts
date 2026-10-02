@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AppState, Chat, ChatItem, Project, Theme } from '../shared/types'
+import { cleanStoredOutput } from './tool-output'
 
 const dataDir = join(app.getPath('userData'), 'data')
 const chatsDir = join(dataDir, 'chats')
@@ -110,9 +111,18 @@ export function getMessages(chatId: string): ChatItem[] {
   let items = messages.get(chatId)
   if (!items) {
     items = readJson<ChatItem[]>(join(chatsDir, `${chatId}.json`), [])
-    // A permission prompt cannot survive a restart: the agent process that asked is gone.
     for (const item of items) {
+      // A permission prompt cannot survive a restart: the agent process that asked is gone.
       if (item.kind === 'permission' && !item.resolved) item.resolved = 'cancelled'
+      // Earlier versions kept tool output whole, screenshots included; slim it once.
+      if (item.kind === 'tool' && item.output) {
+        const output = cleanStoredOutput(item.output)
+        if (output !== item.output) {
+          item.output = output
+          dirtyChats.add(chatId)
+          scheduleFlush()
+        }
+      }
     }
     messages.set(chatId, items)
   }

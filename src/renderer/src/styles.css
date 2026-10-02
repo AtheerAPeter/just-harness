@@ -1,7 +1,6 @@
 /*
- * macOS 27 look with public APIs only: the sidebar sits flush on the native
- * sidebar material (vibrancy), panes are split by hairlines, the toolbar is one
- * frosted bar, and controls are rounded rectangles. Menus use translucent glass.
+ * Claude Code's terminal look: one opaque background, monospace type, panes
+ * split by 1px lines. Menus use translucent glass.
  */
 
 :root {
@@ -17,7 +16,14 @@
   --ok: #30a46c;
   --warn: #b8860b;
   --code-bg: rgba(0, 0, 0, 0.045);
-  --user-bubble: rgba(0, 0, 0, 0.055);
+  --user-bubble: rgba(0, 0, 0, 0.09);
+  /* The chat reads like Claude Code in a terminal. */
+  --chat-bg: #ffffff;
+  --chat-border: rgba(0, 0, 0, 0.2);
+  /* Width of the chat's text column; the composer lines up with it. */
+  --chat-width: 804px;
+  --code-fg: #5769f7;
+  --spinner: #d77757;
 
   --glass-strong: rgba(252, 252, 253, 0.72);
   --glass-rim: rgba(255, 255, 255, 0.75);
@@ -25,7 +31,6 @@
   --glass-blur: blur(28px) saturate(180%);
   --float-shadow: 0 10px 32px rgba(0, 0, 0, 0.16), 0 0 0 0.5px var(--glass-edge);
   --separator: rgba(0, 0, 0, 0.12);
-  --toolbar: rgba(255, 255, 255, 0.82);
 
   --mono: ui-monospace, 'SF Mono', Menlo, monospace;
   color-scheme: light;
@@ -44,14 +49,16 @@
     --ok: #3dd68c;
     --warn: #f5c542;
     --code-bg: rgba(255, 255, 255, 0.06);
-    --user-bubble: rgba(255, 255, 255, 0.08);
+    --user-bubble: rgba(255, 255, 255, 0.17);
+    --chat-bg: #000000;
+    --chat-border: rgba(255, 255, 255, 0.24);
+    --code-fg: #b1b9f9;
 
     --glass-strong: rgba(36, 36, 36, 0.78);
     --glass-rim: rgba(255, 255, 255, 0.14);
     --glass-edge: rgba(0, 0, 0, 0.55);
     --float-shadow: 0 12px 36px rgba(0, 0, 0, 0.5), 0 0 0 0.5px var(--glass-edge);
     --separator: rgba(0, 0, 0, 0.6);
-    --toolbar: rgba(24, 24, 24, 0.9);
     color-scheme: dark;
   }
 }
@@ -68,8 +75,7 @@ body,
 }
 
 body {
-  /* Transparent so the window's native material shows around the panes. */
-  background: transparent;
+  background: var(--chat-bg);
   color: var(--text);
   font:
     13px/1.5 -apple-system,
@@ -144,7 +150,10 @@ pre {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-right: 0.5px solid var(--separator);
+  border-right: 1px solid var(--chat-border);
+  background: var(--chat-bg);
+  font-family: var(--mono);
+  font-size: 12px;
 }
 
 .sidebar-drag {
@@ -177,7 +186,8 @@ pre {
   min-width: 420px;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background: var(--chat-bg);
+  font-family: var(--mono);
 }
 
 .topbar {
@@ -187,9 +197,8 @@ pre {
   align-items: center;
   gap: 2px;
   padding: 0 10px 0 12px;
-  background: var(--toolbar);
-  backdrop-filter: var(--glass-blur);
-  border-bottom: 0.5px solid var(--separator);
+  background: var(--chat-bg);
+  border-bottom: 1px solid var(--chat-border);
   -webkit-app-region: drag;
 }
 
@@ -399,7 +408,7 @@ pre {
   padding: 0 12px;
   border-radius: 6px;
   background: var(--bg-hover);
-  box-shadow: inset 0 0 0 0.5px var(--border);
+  box-shadow: inset 0 0 0 1px var(--chat-border);
   font-weight: 500;
 }
 
@@ -477,13 +486,36 @@ pre {
 }
 
 .chat-items {
-  max-width: 760px;
+  max-width: calc(var(--chat-width) + 56px);
   margin: 0 auto;
   padding: 16px 28px 24px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
   user-select: text;
+}
+
+/* Claude Code's left column: a glyph, then the content hanging beside it. */
+.msg-user,
+.msg-text,
+.msg-thought,
+.working {
+  display: flex;
+  gap: 1ch;
+  min-width: 0;
+}
+
+.bullet {
+  flex-shrink: 0;
+  width: 1ch;
+}
+
+.msg-body {
+  min-width: 0;
+  flex: 1;
 }
 
 .chat-empty {
@@ -501,15 +533,14 @@ pre {
 }
 
 .msg-user {
-  align-self: flex-end;
-  max-width: 85%;
-  padding: 7px 12px;
-  border-radius: 12px;
+  padding: 2px 1ch;
   background: var(--user-bubble);
   white-space: pre-wrap;
   word-wrap: break-word;
-  margin-top: 8px;
-  font-size: 15px;
+}
+
+.msg-user > .bullet {
+  color: var(--text);
 }
 
 .msg-error {
@@ -523,8 +554,6 @@ pre {
 
 .markdown {
   min-width: 0;
-  font-size: 15px;
-  line-height: 1.65;
   /* Long URLs and paths wrap instead of pushing the chat wider. */
   overflow-wrap: anywhere;
 }
@@ -548,7 +577,7 @@ pre {
 .markdown h2,
 .markdown h3 {
   margin: 16px 0 8px;
-  font-size: 16px;
+  font-size: inherit;
 }
 
 .markdown a {
@@ -556,9 +585,8 @@ pre {
 }
 
 .markdown code {
-  padding: 1px 5px;
-  border-radius: 6px;
-  background: var(--code-bg);
+  color: var(--code-fg);
+  font-size: inherit;
 }
 
 .markdown pre {
@@ -569,8 +597,7 @@ pre {
 }
 
 .markdown pre code {
-  padding: 0;
-  background: none;
+  color: inherit;
 }
 
 /* A wide table scrolls by itself instead of widening the chat. */
@@ -611,9 +638,16 @@ pre {
   padding: 4px 8px 4px 28px;
 }
 
-.msg-thought {
+/* Muted italics for thoughts: the one-liners and the body of a folded one. */
+.msg-thought,
+.thought-body {
   color: var(--text-muted);
-  font-size: 13.5px;
+  font-style: italic;
+}
+
+.msg-thought-block .collapsible-summary {
+  padding-left: 0;
+  font-family: var(--mono);
 }
 
 .msg-notice {
@@ -623,77 +657,90 @@ pre {
   text-align: center;
 }
 
-/* Tool runs: a timeline rail of steps */
-.tool-rail {
-  position: relative;
-  padding-left: 22px;
-}
-
-.tool-rail::before {
-  content: '';
-  position: absolute;
-  left: 9px;
-  top: 8px;
-  bottom: 8px;
-  width: 1.5px;
-  background: var(--border);
-}
-
-.tool-step {
-  position: relative;
+/* Tool calls, as Claude Code prints them: "⏺ Name(detail)" and "⎿ result" */
+.tool-head,
+.tool-result {
   display: flex;
-  align-items: center;
+  gap: 1ch;
   min-width: 0;
-  height: 24px;
-  color: var(--text-muted);
-  font-size: 12.5px;
-  text-align: left;
 }
 
-.tool-step::before {
-  content: '';
-  position: absolute;
-  left: -17px;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--bg);
-  box-shadow: inset 0 0 0 1.5px var(--ok);
+.tool-head .bullet {
+  flex-shrink: 0;
+  color: var(--ok);
 }
 
-.tool-step.more::before {
-  box-shadow: inset 0 0 0 1.5px var(--text-muted);
-}
-
-.tool-step.more:hover {
+.msg-text > .bullet {
   color: var(--text);
 }
 
-.tool-step.pending::before,
-.tool-step.in_progress::before {
-  box-shadow: none;
-  background: var(--warn);
+.tool-call.pending .bullet,
+.tool-call.in_progress .bullet {
+  color: var(--text-muted);
   animation: pulse 1.2s ease-in-out infinite;
 }
 
-.tool-step.failed {
+.tool-call.failed .bullet {
   color: var(--danger);
 }
 
-.tool-step.failed::before {
-  box-shadow: inset 0 0 0 1.5px var(--danger);
+.tool-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
-.tool-step .tool-name {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.tool-name {
+  font-weight: 600;
 }
 
 .tool-detail {
+  color: var(--text-muted);
+}
+
+/* "⎿" sits under the name, past the bullet. */
+.tool-result {
+  padding-left: 2ch;
+  color: var(--text-muted);
+}
+
+.elbow {
+  flex-shrink: 0;
+}
+
+.tool-lines {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-call.failed .tool-lines {
+  color: var(--danger);
+}
+
+.tool-lines .diff-file {
   color: var(--text);
-  opacity: 0.8;
+}
+
+.tool-lines .diff-add,
+.tool-lines .diff-del {
+  color: var(--text);
+}
+
+.tool-lines .diff-add {
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+}
+
+.tool-lines .diff-del {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+.tool-more {
+  color: var(--text-muted);
+  font: inherit;
+}
+
+.tool-more:hover {
+  color: var(--text);
 }
 
 .msg-tool {
@@ -712,56 +759,22 @@ pre {
   color: var(--danger);
 }
 
-.status-dot {
-  width: 7px;
-  height: 7px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--ok);
-}
-
-.msg-tool.pending .status-dot,
-.msg-tool.in_progress .status-dot {
-  background: var(--warn);
-}
-
-.msg-tool.failed .status-dot {
-  background: var(--danger);
-}
-
-.msg-plan {
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: var(--bg-soft);
-}
-
 .plan-entry {
   display: flex;
-  gap: 8px;
-  align-items: baseline;
-  padding: 2px 0;
+  gap: 1ch;
+}
+
+.msg-plan .tool-head .bullet {
+  color: var(--ok);
 }
 
 .plan-entry.completed {
-  color: var(--text-muted);
   text-decoration: line-through;
 }
 
-.plan-box {
-  width: 13px;
-  height: 13px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--text-muted);
-  border-radius: 4px;
-  font-size: 10px;
-}
-
-.plan-entry.in_progress .plan-box {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
+.plan-entry.in_progress {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .msg-permission {
@@ -793,37 +806,39 @@ pre {
 }
 
 .working {
+  color: var(--spinner);
+}
+
+.working-time {
   color: var(--text-muted);
-  padding: 4px 8px;
-  animation: pulse 1.4s ease-in-out infinite;
 }
 
 /* Composer: docked below the messages */
 
 .composer-wrap {
   flex-shrink: 0;
-  padding: 0 20px 14px;
+  padding: 0 28px 14px;
 }
 
 .composer {
   position: relative;
   container-type: inline-size;
-  max-width: 760px;
+  max-width: var(--chat-width);
   margin: 0 auto;
-  border-radius: 12px;
-  background: var(--bg-soft);
-  box-shadow: inset 0 0 0 0.5px var(--border);
+  border-radius: 8px;
+  background: var(--chat-bg);
+  box-shadow: inset 0 0 0 1px var(--chat-border);
 }
 
 .composer:focus-within {
   box-shadow:
-    inset 0 0 0 0.5px var(--border),
+    inset 0 0 0 1px var(--chat-border),
     0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .composer.dragging {
   box-shadow:
-    inset 0 0 0 0.5px var(--border),
+    inset 0 0 0 1px var(--chat-border),
     0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
@@ -888,7 +903,9 @@ pre {
   outline: none;
   resize: none;
   background: transparent;
-  font-size: 15px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 /* One row: pickers truncate, and labels give way to icons when narrow. */
@@ -1151,8 +1168,9 @@ pre {
   min-width: 320px;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
-  border-left: 0.5px solid var(--separator);
+  background: var(--chat-bg);
+  border-left: 1px solid var(--chat-border);
+  font-family: var(--mono);
 }
 
 .browser-resize {
@@ -1172,8 +1190,8 @@ pre {
   align-items: center;
   gap: 2px;
   padding: 0 8px;
-  background: var(--toolbar);
-  border-bottom: 0.5px solid var(--separator);
+  background: var(--chat-bg);
+  border-bottom: 1px solid var(--chat-border);
   -webkit-app-region: drag;
 }
 
@@ -1192,17 +1210,19 @@ pre {
   height: 26px;
   padding: 0 10px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   outline: none;
-  background: var(--bg-hover);
+  background: var(--chat-bg);
+  box-shadow: inset 0 0 0 1px var(--chat-border);
   font-size: 12px;
   text-align: center;
 }
 
 .address input:focus {
   text-align: left;
-  background: var(--bg);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+  box-shadow:
+    inset 0 0 0 1px var(--chat-border),
+    0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 /* Tabs: shown when a chat's browser has more than one */
@@ -1212,8 +1232,8 @@ pre {
   gap: 2px;
   padding: 4px 8px;
   overflow-x: auto;
-  background: var(--toolbar);
-  border-bottom: 0.5px solid var(--separator);
+  background: var(--chat-bg);
+  border-bottom: 1px solid var(--chat-border);
   scrollbar-width: none;
 }
 
@@ -1270,7 +1290,7 @@ pre {
 
 .browser-viewport {
   flex: 1;
-  background: var(--bg-soft);
+  background: var(--chat-bg);
 }
 
 /* Skills */
@@ -1286,7 +1306,7 @@ pre {
   flex-shrink: 0;
   overflow-y: auto;
   padding: 8px;
-  border-right: 0.5px solid var(--border);
+  border-right: 1px solid var(--chat-border);
 }
 
 .skills-header {
@@ -1298,7 +1318,7 @@ pre {
 
 .skills-header h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: 13px;
 }
 
 .skills-group {
@@ -1376,14 +1396,17 @@ pre {
   border-radius: 8px;
   outline: none;
   resize: none;
-  background: var(--bg-soft);
+  background: var(--chat-bg);
+  box-shadow: inset 0 0 0 1px var(--chat-border);
   font-family: var(--mono);
   font-size: 12.5px;
   line-height: 1.6;
 }
 
 .skill-textarea:focus {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+  box-shadow:
+    inset 0 0 0 1px var(--chat-border),
+    0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .skills-empty {
@@ -1404,16 +1427,17 @@ pre {
   gap: 8px;
   margin: 0 0 12px;
   padding: 10px;
-  border-radius: 10px;
-  background: var(--bg-soft);
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--chat-border);
 }
 
 .new-skill input {
   padding: 6px 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 6px;
   outline: none;
-  background: var(--bg);
+  background: var(--chat-bg);
+  box-shadow: inset 0 0 0 1px var(--chat-border);
   font-family: var(--mono);
   font-size: 12px;
 }
@@ -1427,8 +1451,8 @@ pre {
 .segmented {
   display: flex;
   padding: 2px;
-  border-radius: 7px;
-  background: var(--bg-hover);
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--chat-border);
 }
 
 .segmented button {
@@ -1439,9 +1463,8 @@ pre {
 }
 
 .segmented button.on {
-  background: var(--bg);
+  background: var(--bg-selected);
   color: var(--text);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 
 .segmented button:disabled {

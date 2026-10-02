@@ -6,7 +6,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { app } from 'electron'
 import { pathToFileURL } from 'node:url'
 import { Readable, Writable } from 'node:stream'
-import * as acp from '@agentclientprotocol/sdk'
+import type * as acp from '@agentclientprotocol/sdk'
 import type {
   Attachment,
   BrowserState,
@@ -22,6 +22,8 @@ import * as store from './store'
 import { browserMcpServer, BROWSER_GUIDANCE, SERVER_NAME as BROWSER_SERVER } from './browser-mcp'
 import { listSkills } from './skills'
 import { resolveProjectFile } from './files'
+import { formatRaw, limitOutput } from './tool-output'
+import { loadShellPath } from './shell-env'
 
 const COMMANDS: Record<AgentId, { command: string; args: string[] }> = {
   opencode: { command: 'opencode', args: ['acp'] },
@@ -33,6 +35,17 @@ const COMMANDS: Record<AgentId, { command: string; args: string[] }> = {
  * hold 200+ MB each; chats reconnect with session/load when used again.
  */
 const IDLE_STOP_MS = 5 * 60_000
+
+/**
+ * The ACP SDK at runtime. It takes ~150 ms to load, so it is imported when the
+ * first agent starts instead of at launch; everything that uses it runs after.
+ */
+let sdk: typeof acp | undefined
+
+async function loadSdk(): Promise<typeof acp> {
+  sdk ??= await import('@agentclientprotocol/sdk')
+  return sdk
+}
 
 /**
  * Opencode ships a built-in `browser` tool that drives the user's own desktop
@@ -194,6 +207,8 @@ class AgentProcess {
   }
 
   private async start(): Promise<acp.ClientConnection> {
+    const { client, methods, ndJsonStream, PROTOCOL_VERSION } = await loadSdk()
+    await loadShellPath()
     const { command, args } = COMMANDS[this.agent]
     const child = spawn(command, args, {
       cwd: homedir(),
@@ -206,16 +221,13 @@ class AgentProcess {
     })
     child.stderr!.on('data', (data) => console.error(`[${this.agent}] ${String(data).trimEnd()}`))
 
-    const stream = acp.ndJsonStream(
+    const stream = ndJsonStream(
       Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>
     )
-    const connection = acp
-      .client({ name: 'just-harness' })
-      .onNotification(acp.methods.client.session.update, (ctx) => this.onUpdate(ctx.params))
-      .onRequest(acp.methods.client.session.requestPermission, (ctx) =>
-        this.onPermission(ctx.params)
-      )
+    const connection = client({ name: 'just-harness' })
+      .onNotification(methods.client.session.update, (ctx) => this.onUpdate(ctx.params))
+      .onRequest(methods.client.session.requestPermission, (ctx) => this.onPermission(ctx.params))
       .connect(stream)
 
     child.once('exit', (code, signal) => {
@@ -225,8 +237,8 @@ class AgentProcess {
     })
 
     this.child = child
-    this.initResult = await connection.agent.request(acp.methods.agent.initialize, {
-      protocolVersion: acp.PROTOCOL_VERSION,
+    this.initResult = await connection.agent.request(methods.agent.initialize, {
+      protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: {},
       clientInfo: { name: 'just-harness', version: '1.0.0' }
     })
@@ -322,6 +334,7 @@ class AgentProcess {
 
   private async openSession(chatId: string): Promise<string> {
     const connection = await this.connect()
+    const { methods } = await loadSdk()
     const chat = store.getChat(chatId)
     const cwd = store.getProject(chat.projectId).path
     // Agents that take HTTP MCP servers over ACP get the browser tools here. Cline's
@@ -341,7 +354,7 @@ class AgentProcess {
       sessionId = chat.sessionId
       configOptions = loaded.configOptions
     } else {
-      const created = await connection.agent.request(acp.methods.agent.session.new, {
+      const created = await connection.agent.request(methods.agent.session.new, {
         cwd,
         mcpServers
       })
@@ -373,7 +386,7 @@ class AgentProcess {
       const value = wanted[option.id]
       if (!value || value === option.currentValue) continue
       if (!option.values.some((v) => v.value === value)) continue
-      const response = await connection.agent.request(acp.methods.agent.session.setConfigOption, {
+      const response = await connection.agent.request(methods.agent.session.setConfigOption, {
         sessionId,
         configId: option.id,
         value
@@ -398,16 +411,17 @@ class AgentProcess {
   ): Promise<acp.LoadSessionResponse | undefined> {
     if (!this.initResult?.agentCapabilities?.loadSession) return undefined
     const connection = await this.connect()
+    const { methods, RequestError } = await loadSdk()
     this.sessionChats.set(sessionId, chatId)
     this.loadingSessions.add(sessionId)
     try {
-      return await connection.agent.request(acp.methods.agent.session.load, {
+      return await connection.agent.request(methods.agent.session.load, {
         sessionId,
         cwd,
         mcpServers
       })
     } catch (error) {
-      if (error instanceof acp.RequestError && error.code === RESOURCE_NOT_FOUND) {
+      if (error instanceof RequestError && error.code === RESOURCE_NOT_FOUND) {
         this.sessionChats.delete(sessionId)
         return undefined
       }
@@ -420,7 +434,8 @@ class AgentProcess {
   async applyOption(chatId: string, optionId: string, value: string): Promise<void> {
     const sessionId = await this.ensureSession(chatId)
     const connection = await this.connect()
-    const response = await connection.agent.request(acp.methods.agent.session.setConfigOption, {
+    const { methods } = await loadSdk()
+    const response = await connection.agent.request(methods.agent.session.setConfigOption, {
       sessionId,
       configId: optionId,
       value
@@ -436,8 +451,10 @@ class AgentProcess {
   async release(chatId: string): Promise<void> {
     const chat = store.getChat(chatId)
     this.options.delete(chatId)
-    if (!chat.sessionId || !this.connection) return
+    const connection = this.connection
+    if (!chat.sessionId || !connection) return
     const sessionId = chat.sessionId
+    const { methods } = await loadSdk()
     const caps = this.initResult?.agentCapabilities?.sessionCapabilities
     const empty = !store.getMessages(chatId).some((i) => i.kind === 'user')
     const wasLive = this.isLive(sessionId)
@@ -445,9 +462,9 @@ class AgentProcess {
     this.sessionChats.delete(sessionId)
     this.commands.delete(sessionId)
     if (empty && caps?.delete) {
-      await this.connection.agent.request(acp.methods.agent.session.delete, { sessionId })
+      await connection.agent.request(methods.agent.session.delete, { sessionId })
     } else if (wasLive && caps?.close) {
-      await this.connection.agent.request(acp.methods.agent.session.close, { sessionId })
+      await connection.agent.request(methods.agent.session.close, { sessionId })
     }
   }
 
@@ -465,7 +482,8 @@ class AgentProcess {
     try {
       const sessionId = await this.ensureSession(chatId)
       const connection = await this.connect()
-      return await connection.agent.request(acp.methods.agent.session.prompt, {
+      const { methods } = await loadSdk()
+      return await connection.agent.request(methods.agent.session.prompt, {
         sessionId,
         prompt: [{ type: 'text', text }, ...attachments]
       })
@@ -477,7 +495,9 @@ class AgentProcess {
 
   async cancel(chatId: string): Promise<void> {
     const sessionId = store.getChat(chatId).sessionId
-    if (!this.connection || !this.isLive(sessionId)) return
+    const connection = this.connection
+    if (!connection || !this.isLive(sessionId)) return
+    const { methods } = await loadSdk()
     for (const [id, pending] of this.permissions) {
       if (pending.chatId === chatId) {
         pending.resolve({ outcome: { outcome: 'cancelled' } })
@@ -485,7 +505,7 @@ class AgentProcess {
         this.resolvePermissionItem(chatId, id, 'cancelled')
       }
     }
-    await this.connection.agent.notify(acp.methods.agent.session.cancel, { sessionId })
+    await connection.agent.notify(methods.agent.session.cancel, { sessionId })
   }
 
   private emit(chatId: string, item: ChatItem): void {
@@ -564,7 +584,8 @@ class AgentProcess {
           existing?.kind === 'tool'
             ? existing
             : { kind: 'tool', id: update.toolCallId, title: 'Tool call', status: 'pending' }
-        const output = formatToolContent(update.content) ?? formatRaw(update.rawOutput)
+        const text = formatToolContent(update.content) ?? formatRaw(update.rawOutput)
+        const output = text === undefined ? undefined : limitOutput(text)
         this.emit(chatId, {
           ...base,
           title: update.title ?? base.title,
@@ -671,12 +692,6 @@ function diffLines(oldText: string, newText: string): string {
   ].join('\n')
 }
 
-function formatRaw(value: unknown): string | undefined {
-  if (value === undefined || value === null) return undefined
-  if (typeof value === 'string') return value
-  return JSON.stringify(value, null, 2)
-}
-
 function normalizeOptions(configOptions: acp.SessionConfigOption[]): AgentOption[] {
   return configOptions.flatMap((option): AgentOption[] => {
     if (option.type !== 'select') return []
@@ -697,7 +712,8 @@ function normalizeOptions(configOptions: acp.SessionConfigOption[]): AgentOption
   })
 }
 
-function cliVersion(agent: AgentId): Promise<string | undefined> {
+async function cliVersion(agent: AgentId): Promise<string | undefined> {
+  await loadShellPath()
   return new Promise((resolve) => {
     execFile(COMMANDS[agent].command, ['--version'], { timeout: 10_000 }, (error, stdout) =>
       resolve(error ? undefined : stdout.trim().split('\n').pop())
@@ -706,7 +722,7 @@ function cliVersion(agent: AgentId): Promise<string | undefined> {
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof acp.RequestError) {
+  if (sdk && error instanceof sdk.RequestError) {
     const data = error.data as { message?: string } | undefined
     return data?.message ? `${error.message}: ${data.message}` : error.message
   }

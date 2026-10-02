@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type {
   AgentCommand,
   AgentId,
@@ -41,18 +41,35 @@ export function ChatView({
     window.api.getMessages(chat.id).then((loaded) => {
       if (!cancelled) setItems(loaded)
     })
-    const off = window.api.onItem((chatId, item) => {
-      if (chatId !== chat.id) return
+    // Streaming sends an update per chunk, often faster than the screen redraws,
+    // so updates are collected and applied once per frame.
+    let queued = new Map<string, ChatItem>()
+    let frame = 0
+    const apply = (): void => {
+      frame = 0
+      const updates = queued
+      queued = new Map()
       setItems((current) => {
-        const index = current.findIndex((i) => i.id === item.id)
-        if (index === -1) return [...current, item]
         const next = current.slice()
-        next[index] = item
+        const index = new Map(next.map((item, i) => [item.id, i]))
+        for (const item of updates.values()) {
+          const at = index.get(item.id)
+          if (at === undefined) {
+            index.set(item.id, next.length)
+            next.push(item)
+          } else next[at] = item
+        }
         return next
       })
+    }
+    const off = window.api.onItem((chatId, item) => {
+      if (chatId !== chat.id) return
+      queued.set(item.id, item)
+      frame ||= requestAnimationFrame(apply)
     })
     return () => {
       cancelled = true
+      cancelAnimationFrame(frame)
       off()
     }
   }, [chat.id])
@@ -112,14 +129,10 @@ export function ChatView({
               <p>Pick an agent and model below. The agent works inside this project’s folder.</p>
             </div>
           )}
-          {groupTools(items).map((block) =>
-            Array.isArray(block) ? (
-              <ToolRun key={block[0].id} tools={block} />
-            ) : (
-              <Item key={block.id} item={block} chatId={chat.id} />
-            )
-          )}
-          {chat.running && <div className="working">Working…</div>}
+          {items.map((item) => (
+            <Item key={item.id} item={item} chatId={chat.id} />
+          ))}
+          {chat.running && <Working />}
         </div>
       </div>
       <div className="composer-wrap">
@@ -151,51 +164,71 @@ const Item = memo(function Item({
     case 'user':
       return (
         <div className="msg-user">
-          {item.text}
-          {item.attachments && (
-            <div className="msg-attachments">
-              {item.attachments.map((a, index) => (
-                <span className="attachment" key={index}>
-                  <FileIcon width={12} height={12} />
-                  <span className="attachment-name">{a.name}</span>
-                </span>
-              ))}
-            </div>
-          )}
+          <span className="bullet">&gt;</span>
+          <div className="msg-body">
+            {item.text}
+            {item.attachments && (
+              <div className="msg-attachments">
+                {item.attachments.map((a, index) => (
+                  <span className="attachment" key={index}>
+                    <FileIcon width={12} height={12} />
+                    <span className="attachment-name">{a.name}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )
     case 'text':
       return (
-        <div
-          className="msg-text markdown"
-          dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
-        />
+        <div className="msg-text">
+          <span className="bullet">●</span>
+          <div
+            className="msg-body markdown"
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
+          />
+        </div>
       )
     case 'thought':
       // Short one-line thoughts are progress notes between tool calls and stay
       // visible; longer ones are the model's raw reasoning and fold away.
       if (item.text.length <= THOUGHT_INLINE_MAX && !item.text.trim().includes('\n')) {
-        return <div className="msg-thought">{item.text}</div>
+        return (
+          <div className="msg-thought">
+            <span className="bullet">✻</span>
+            <div className="msg-body">{item.text}</div>
+          </div>
+        )
       }
       return (
-        <Collapsible className="msg-thought-block" summary="Thinking">
+        <Collapsible className="msg-thought-block" summary="✻ Thinking…">
           <div
-            className="markdown msg-thought"
+            className="markdown thought-body"
             dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
           />
         </Collapsible>
       )
     case 'tool':
-      return <ToolRun tools={[item]} />
+      return <ToolCall tool={item} />
     case 'plan':
       return (
         <div className="msg-plan">
-          {item.entries.map((entry, index) => (
-            <div key={index} className={`plan-entry ${entry.status}`}>
-              <span className="plan-box">{entry.status === 'completed' ? '✓' : ''}</span>
-              {entry.content}
+          <div className="tool-head">
+            <span className="bullet">●</span>
+            <span className="tool-name">Update Todos</span>
+          </div>
+          <div className="tool-result">
+            <span className="elbow">⎿</span>
+            <div>
+              {item.entries.map((entry, index) => (
+                <div key={index} className={`plan-entry ${entry.status}`}>
+                  <span>{entry.status === 'completed' ? '☒' : '☐'}</span>
+                  {entry.content}
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
       )
     case 'permission':
@@ -261,23 +294,10 @@ function humanize(name: string): string {
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>
 
-/** Runs of consecutive tool calls become one compact block. */
-function groupTools(items: ChatItem[]): (ChatItem | ToolItem[])[] {
-  const blocks: (ChatItem | ToolItem[])[] = []
-  for (const item of items) {
-    // Auto-approved permissions render nothing, so they must not split a run.
-    if (item.kind === 'permission' && item.auto) continue
-    const last = blocks[blocks.length - 1]
-    if (item.kind === 'tool' && Array.isArray(last)) last.push(item)
-    else blocks.push(item.kind === 'tool' ? [item] : item)
-  }
-  return blocks
-}
+/** Result lines shown under a tool call before the rest folds away. */
+const RESULT_PREVIEW = 3
 
-/** Runs up to this long show every step; longer ones fold the middle. */
-const RUN_FULL = 5
-
-/** A short detail for a step: the URL, path, command or query it acted on. */
+/** A short detail for a call: the URL, path, command or query it acted on. */
 function toolDetail(tool: ToolItem): string | undefined {
   if (!tool.input) return undefined
   let input: unknown
@@ -288,52 +308,152 @@ function toolDetail(tool: ToolItem): string | undefined {
   }
   if (!input || typeof input !== 'object') return undefined
   const fields = input as Record<string, unknown>
-  for (const key of ['url', 'path', 'filePath', 'command', 'commands', 'query', 'pattern']) {
+  for (const key of [
+    'url',
+    'path',
+    'filePath',
+    'command',
+    'commands',
+    'query',
+    'queries',
+    'pattern',
+    'files'
+  ]) {
     const value = fields[key]
-    const first = Array.isArray(value) ? value[0] : value
+    let first = Array.isArray(value) ? value[0] : value
+    // Cline lists files as objects: {"files": [{"path": "..."}]}.
+    if (first && typeof first === 'object') first = (first as Record<string, unknown>).path
     if (typeof first === 'string' && first) {
       // Absolute paths keep their informative end: ".../05-buying-clothes/story.js".
       const parts = first.split('/')
       const text =
         first.startsWith('/') && parts.length > 3 ? `…/${parts.slice(-2).join('/')}` : first
-      return text.length > 60 ? `${text.slice(0, 59)}…` : text
+      return text.length > 80 ? `${text.slice(0, 79)}…` : text
     }
   }
   return undefined
 }
 
 /**
- * A run of back-to-back tool calls as a timeline: short runs show every step,
- * longer ones show the first steps, a "+ N more steps" fold, and the latest step.
+ * The output's text. Cline answers batched tools (run_commands, read_files,
+ * search_codebase) with a JSON list of {query, result}; those become their results.
  */
-function ToolRun({ tools }: { tools: ToolItem[] }): React.JSX.Element {
+function outputResults(output: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(output)
+    if (
+      Array.isArray(parsed) &&
+      parsed.length > 0 &&
+      parsed.every((entry) => typeof entry?.result === 'string')
+    )
+      return parsed.map((entry: { result: string }) => entry.result.replace(/\s+$/, ''))
+  } catch {
+    // Plain text output.
+  }
+  return [output]
+}
+
+/** The lines under "⎿": a summary for reads, otherwise the output itself. */
+function resultLines(tool: ToolItem): string[] {
+  const output = tool.output?.replace(/\s+$/, '')
+  if (!output) {
+    if (tool.status === 'pending' || tool.status === 'in_progress') return ['Running…']
+    return [tool.status === 'failed' ? 'Failed' : 'Done']
+  }
+  const results = outputResults(output)
+  if (tool.toolKind === 'read' && tool.status === 'completed') {
+    if (results.length > 1) return [`Read ${results.length} files`]
+    const count = results[0].split('\n').length
+    return [`Read ${count} line${count === 1 ? '' : 's'}`]
+  }
+  return results.join('\n').split('\n')
+}
+
+/** Diff lines get Claude Code's red/green rows. */
+function lineClass(line: string): string | undefined {
+  if (line.startsWith('--- ')) return 'diff-file'
+  if (line.startsWith('+ ')) return 'diff-add'
+  if (line.startsWith('- ')) return 'diff-del'
+  return undefined
+}
+
+/** Claude Code's names for the ACP tool kinds. */
+const KIND_NAMES: Record<string, string> = {
+  read: 'Read',
+  edit: 'Update',
+  delete: 'Delete',
+  move: 'Move',
+  search: 'Search',
+  execute: 'Bash',
+  fetch: 'Fetch'
+}
+
+/**
+ * The name shown before "(detail)". Some agents title a call with the tool's id
+ * ("read_files: ..."), others with what it does ("ls -la episodes"); the latter
+ * would repeat the detail, so those calls are named by their kind instead.
+ */
+function toolName(tool: ToolItem): string {
+  const head = tool.title.split(':')[0].trim()
+  const isId = /^[\w.-]+$/.test(head) && !toolDetail(tool)?.startsWith(head)
+  if (!isId && tool.toolKind && KIND_NAMES[tool.toolKind]) return KIND_NAMES[tool.toolKind]
+  return toolLabel(tool.title)
+}
+
+/** One tool call, laid out like Claude Code: "⏺ Name(detail)" and its result under "⎿". */
+function ToolCall({ tool }: { tool: ToolItem }): React.JSX.Element {
   const [open, setOpen] = useState(false)
-  const foldable = tools.length > RUN_FULL
-  const shown = foldable && !open ? [...tools.slice(0, 3), tools[tools.length - 1]] : tools
+  const detail = toolDetail(tool)
+  const lines = resultLines(tool)
+  const hidden = lines.length - RESULT_PREVIEW
+  const shown = open || hidden <= 0 ? lines : lines.slice(0, RESULT_PREVIEW)
   return (
-    <div className="tool-rail">
-      {shown.map((tool, index) => (
-        <Fragment key={tool.id}>
-          {/* The fold toggle stays where it was clicked, in both states. */}
-          {foldable && index === 3 && (
-            <button className="tool-step more" onClick={() => setOpen((o) => !o)}>
-              {open ? 'Show fewer steps' : `+ ${tools.length - 4} more steps`}
+    <div className={`tool-call ${tool.status}`}>
+      <div className="tool-head">
+        <span className="bullet">●</span>
+        <span className="tool-title">
+          <span className="tool-name">{toolName(tool)}</span>
+          {detail && <span className="tool-detail">({detail})</span>}
+        </span>
+      </div>
+      <div className="tool-result">
+        <span className="elbow">⎿</span>
+        <div className="tool-lines">
+          {shown.map((line, index) => (
+            <div key={index} className={lineClass(line)}>
+              {line || ' '}
+            </div>
+          ))}
+          {hidden > 0 && (
+            <button className="tool-more" onClick={() => setOpen((o) => !o)}>
+              {open ? 'Show less' : `… +${hidden} line${hidden === 1 ? '' : 's'} (click to expand)`}
             </button>
           )}
-          <ToolStep tool={tool} />
-        </Fragment>
-      ))}
+        </div>
+      </div>
     </div>
   )
 }
 
-function ToolStep({ tool }: { tool: ToolItem }): React.JSX.Element {
-  const detail = toolDetail(tool)
+/** Claude Code's spinner glyphs, cycled while the agent works. */
+const SPINNER = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢']
+
+function Working(): React.JSX.Element {
+  const [frame, setFrame] = useState(0)
+  const [seconds, setSeconds] = useState(0)
+  useEffect(() => {
+    const started = Date.now()
+    const timer = setInterval(() => {
+      setFrame((f) => (f + 1) % SPINNER.length)
+      setSeconds(Math.floor((Date.now() - started) / 1000))
+    }, 120)
+    return () => clearInterval(timer)
+  }, [])
   return (
-    <div className={`tool-step ${tool.status}`}>
-      <span className="tool-name">
-        {toolLabel(tool.title)}
-        {detail && <span className="tool-detail"> {detail}</span>}
+    <div className="working">
+      <span className="bullet">{SPINNER[frame]}</span>
+      <span>
+        Working… <span className="working-time">({seconds}s)</span>
       </span>
     </div>
   )

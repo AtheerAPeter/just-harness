@@ -3,12 +3,22 @@ import { userInfo } from 'node:os'
 
 const MARKER = '__JUST_HARNESS_PATH__'
 
+let loading: Promise<void> | undefined
+
 /**
  * Apps launched from Finder/Dock inherit launchd's minimal PATH, so CLIs installed
  * via Homebrew, npm or curl scripts are not found. Read PATH from the user's
  * interactive login shell instead, the same way terminals see it.
+ *
+ * Read once, starting at launch without holding up the window. Await it before
+ * running a command found on PATH.
  */
 export function loadShellPath(): Promise<void> {
+  loading ??= readShellPath()
+  return loading
+}
+
+function readShellPath(): Promise<void> {
   const shell = process.env.SHELL || userInfo().shell || '/bin/zsh'
   return new Promise((resolve) => {
     execFile(
