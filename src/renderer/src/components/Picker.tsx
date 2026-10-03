@@ -105,6 +105,8 @@ export function Picker({
         title={title}
         onClick={toggle}
       >
+        {/* The group stays on the button: the same model can come from a free and a paid provider. */}
+        {current?.group && <span className="picker-group-name">{current.group}</span>}
         <span className="picker-label">{current?.name ?? placeholder ?? value}</span>
         <UpDownIcon width={10} height={10} />
       </button>
