@@ -24,6 +24,10 @@ export interface Chat {
   /** Selected values for the agent's session options, keyed by option id (model, mode, ...). */
   settings: Record<string, string>
   running: boolean
+  /** True while a permission request in this chat waits for the user. */
+  waiting?: boolean
+  /** The first line of the chat's last message, shown under its title in the sidebar. */
+  preview?: string
   /** Approve every permission request automatically (allow once). */
   bypassPermissions?: boolean
   /** Refuse any tool request that touches a path outside the project folder. */

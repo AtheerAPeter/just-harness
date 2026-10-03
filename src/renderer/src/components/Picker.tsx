@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { DownIcon } from './icons'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { CheckIcon, UpDownIcon } from './icons'
 
 export interface PickerValue {
   value: string
   name: string
   description?: string
   disabled?: boolean
+  /** Values with the same group are listed together under its name. */
+  group?: string
 }
 
 interface PickerProps {
@@ -37,7 +39,10 @@ export function Picker({
     const q = query.trim().toLowerCase()
     if (!q) return values
     return values.filter(
-      (v) => v.name.toLowerCase().includes(q) || v.value.toLowerCase().includes(q)
+      (v) =>
+        v.name.toLowerCase().includes(q) ||
+        v.value.toLowerCase().includes(q) ||
+        Boolean(v.group?.toLowerCase().includes(q))
     )
   }, [values, query])
 
@@ -101,7 +106,7 @@ export function Picker({
         onClick={toggle}
       >
         <span className="picker-label">{current?.name ?? placeholder ?? value}</span>
-        <DownIcon width={12} height={12} />
+        <UpDownIcon width={10} height={10} />
       </button>
       {open && (
         <div className="picker-menu" role="listbox">
@@ -125,20 +130,27 @@ export function Picker({
           >
             {filtered.length === 0 && <div className="picker-empty">No matches</div>}
             {filtered.map((v, index) => (
-              <button
-                type="button"
-                key={v.value}
-                data-index={index}
-                role="option"
-                aria-selected={v.value === value}
-                disabled={v.disabled}
-                className={`picker-item${index === active ? ' active' : ''}${v.value === value ? ' selected' : ''}`}
-                onMouseEnter={() => setActive(index)}
-                onClick={() => choose(v)}
-              >
-                <span>{v.name}</span>
-                {v.description && <small>{v.description}</small>}
-              </button>
+              <Fragment key={v.value}>
+                {v.group && v.group !== filtered[index - 1]?.group && (
+                  <div className="picker-group">{v.group}</div>
+                )}
+                <button
+                  type="button"
+                  data-index={index}
+                  role="option"
+                  aria-selected={v.value === value}
+                  disabled={v.disabled}
+                  className={`picker-item${index === active ? ' active' : ''}${v.value === value ? ' selected' : ''}`}
+                  onMouseEnter={() => setActive(index)}
+                  onClick={() => choose(v)}
+                >
+                  <span className="picker-text">
+                    <span>{v.name}</span>
+                    {v.description && <small>{v.description}</small>}
+                  </span>
+                  {v.value === value && <CheckIcon width={13} height={13} />}
+                </button>
+              </Fragment>
             ))}
           </div>
         </div>

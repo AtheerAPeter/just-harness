@@ -39,7 +39,11 @@ export default defineConfig({
       }
     },
     plugins: [react()],
-    // electron-vite leaves output unminified by default; the renderer loads faster minified.
-    build: { minify: true }
+    build: {
+      // electron-vite leaves output unminified by default; the renderer loads faster minified.
+      minify: true,
+      // Fonts stay files: the page's CSP allows fonts from 'self', not data: URLs.
+      assetsInlineLimit: (file) => (/\.woff2?$/.test(file) ? false : undefined)
+    }
   }
 })

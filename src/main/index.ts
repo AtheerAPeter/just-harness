@@ -1,12 +1,4 @@
-import {
-  app,
-  shell,
-  BrowserWindow,
-  ipcMain,
-  dialog,
-  nativeTheme,
-  systemPreferences
-} from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, nativeTheme } from 'electron'
 import { basename, join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import appIcon from '../../resources/icon.png?asset'
@@ -82,10 +74,6 @@ function createWindow(): BuiltinBrowser {
     mainWindow.loadFile(join(import.meta.dirname, '../renderer/index.html'))
   }
 
-  systemPreferences.on('accent-color-changed', (_event, color) =>
-    send('system:accent', `#${color}`)
-  )
-
   const browser = new BuiltinBrowser(
     mainWindow,
     (state) => send('browser:state', state),
@@ -112,9 +100,9 @@ function createWindow(): BuiltinBrowser {
   return browser
 }
 
-/** The window's color behind the page, matching --chat-bg in styles.css. */
+/** The window's color behind the page, matching --bg in styles.css. */
 function windowBackground(): string {
-  return nativeTheme.shouldUseDarkColors ? '#000000' : '#ffffff'
+  return nativeTheme.shouldUseDarkColors ? '#15171b' : '#f8f9fb'
 }
 
 /**
@@ -141,7 +129,6 @@ function registerIpc(browser: BuiltinBrowser): void {
   )
   ipcMain.handle('theme:set', (_e, theme: Theme) => setTheme(theme))
   ipcMain.handle('state:get', () => store.getState())
-  ipcMain.handle('system:accent', () => `#${systemPreferences.getAccentColor()}`)
 
   ipcMain.handle('project:add', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {

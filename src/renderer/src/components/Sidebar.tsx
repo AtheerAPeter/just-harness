@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ThemeToggle } from './ThemeToggle'
-import type { AppState } from '../../../shared/types'
-import { BookIcon, ChevronIcon, CloseIcon, FolderIcon, PencilIcon, PlusIcon } from './icons'
+import type { AppState, Chat } from '../../../shared/types'
+import { BookIcon, ChevronIcon, FolderIcon, FolderPlusIcon, MoreIcon, PlusIcon } from './icons'
 
 /** Chats listed per project before "Show more", and how many each click adds. */
 const CHAT_PAGE = 5
@@ -31,6 +31,7 @@ export function Sidebar({
   const [shown, setShown] = useState<Record<string, number>>({})
   /** The chat whose title is being edited in place. */
   const [renaming, setRenaming] = useState<string>()
+  const now = useNow()
 
   function toggle(projectId: string): void {
     setCollapsed((current) => {
@@ -43,21 +44,19 @@ export function Sidebar({
 
   return (
     <nav className="sidebar">
-      <div className="sidebar-drag" />
+      <div className="sidebar-top">
+        <button
+          className="icon-btn"
+          title="Open project folder (⌘O)"
+          onClick={() => window.api.addProject()}
+        >
+          <FolderPlusIcon />
+        </button>
+      </div>
       <div className="sidebar-section">
-        <div className="section-label">
-          Projects
-          <button
-            className="icon-btn small"
-            title="Add project folder"
-            onClick={() => window.api.addProject()}
-          >
-            <PlusIcon width={14} height={14} />
-          </button>
-        </div>
         {state.projects.length === 0 && (
           <button className="add-project" onClick={() => window.api.addProject()}>
-            <FolderIcon /> Open a project folder
+            <FolderPlusIcon /> Open a project folder
           </button>
         )}
         {state.projects.map((project) => {
@@ -73,33 +72,33 @@ export function Sidebar({
           return (
             <div key={project.id} className="project">
               <div
-                className={`project-row${project.id === selectedProjectId ? ' current' : ''}`}
+                className={`project-row${project.id === selectedProjectId ? ' current' : ''}${isCollapsed ? ' collapsed' : ''}`}
                 title={project.path}
                 onClick={() => toggle(project.id)}
               >
-                <ChevronIcon
-                  width={12}
-                  height={12}
-                  className={`chevron${isCollapsed ? '' : ' open'}`}
-                />
-                <FolderIcon width={15} height={15} className="project-icon" />
+                <FolderIcon width={14} height={14} className="project-icon" />
                 <span className="project-name">{project.name}</span>
-                <button
-                  className="icon-btn small hover-only"
-                  title="Remove project (files stay on disk)"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (
-                      confirm(
-                        `Remove "${project.name}" and its chats from Just Harness? Files on disk are not touched.`
-                      )
-                    ) {
-                      window.api.removeProject(project.id)
+                <span className="project-count">{chats.length}</span>
+                <ChevronIcon width={10} height={10} className="chevron" />
+                <span className="spacer" />
+                <RowMenu
+                  label="Project options"
+                  items={[
+                    {
+                      name: 'Remove project',
+                      danger: true,
+                      onSelect: () => {
+                        if (
+                          confirm(
+                            `Remove "${project.name}" and its chats from Just Harness? Files on disk are not touched.`
+                          )
+                        ) {
+                          window.api.removeProject(project.id)
+                        }
+                      }
                     }
-                  }}
-                >
-                  <CloseIcon width={13} height={13} />
-                </button>
+                  ]}
+                />
                 <button
                   className="icon-btn small"
                   title="New chat"
@@ -116,44 +115,41 @@ export function Sidebar({
                   <div
                     key={chat.id}
                     className={`chat-row${view === 'chat' && chat.id === selectedChatId ? ' selected' : ''}`}
+                    title={chat.waiting ? 'Waiting for approval' : chat.preview || undefined}
                     onClick={() => onSelectChat(chat.id)}
                   >
-                    {chat.running && <span className="running-dot" />}
-                    {renaming === chat.id ? (
-                      <RenameField
-                        title={chat.title}
-                        onDone={(title) => {
-                          setRenaming(undefined)
-                          if (title !== undefined && title.trim() && title !== chat.title) {
-                            window.api.renameChat(chat.id, title)
+                    <span
+                      className={`chat-dot${chat.waiting ? ' waiting' : chat.running ? ' running' : ''}`}
+                    />
+                    <div className="chat-line">
+                      {renaming === chat.id ? (
+                        <RenameField
+                          title={chat.title}
+                          onDone={(title) => {
+                            setRenaming(undefined)
+                            if (title !== undefined && title.trim() && title !== chat.title) {
+                              window.api.renameChat(chat.id, title)
+                            }
+                          }}
+                        />
+                      ) : (
+                        <span className="chat-title" onDoubleClick={() => setRenaming(chat.id)}>
+                          {chat.title}
+                        </span>
+                      )}
+                      <ChatStatus chat={chat} now={now} />
+                      <RowMenu
+                        label="Chat options"
+                        items={[
+                          { name: 'Rename', onSelect: () => setRenaming(chat.id) },
+                          {
+                            name: 'Delete',
+                            danger: true,
+                            onSelect: () => window.api.deleteChat(chat.id)
                           }
-                        }}
+                        ]}
                       />
-                    ) : (
-                      <span className="chat-title" onDoubleClick={() => setRenaming(chat.id)}>
-                        {chat.title}
-                      </span>
-                    )}
-                    <button
-                      className="icon-btn small hover-only"
-                      title="Rename chat"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setRenaming(chat.id)
-                      }}
-                    >
-                      <PencilIcon width={12} height={12} />
-                    </button>
-                    <button
-                      className="icon-btn small hover-only"
-                      title="Delete chat"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        window.api.deleteChat(chat.id)
-                      }}
-                    >
-                      <CloseIcon width={13} height={13} />
-                    </button>
+                    </div>
                   </div>
                 ))}
               {!isCollapsed && (chats.length > limit || limit > CHAT_PAGE) && (
@@ -230,3 +226,124 @@ function RenameField({
     />
   )
 }
+
+/** When the chat last changed; running and waiting chats show their dot instead. */
+function ChatStatus({ chat, now }: { chat: Chat; now: number }): React.JSX.Element | null {
+  if (chat.waiting || chat.running) return null
+  return <span className="chat-status chat-time">{relativeTime(chat.updatedAt, now)}</span>
+}
+
+/** The current time, updated every minute so relative times stay right. */
+function useNow(): number {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000)
+    return () => clearInterval(timer)
+  }, [])
+  return now
+}
+
+const DAY = 86_400_000
+
+/** "now", "5m", "3h" today, then "Yesterday", a weekday, or a date, like Mail. */
+function relativeTime(time: number, now: number): string {
+  const minutes = Math.floor((now - time) / 60_000)
+  if (minutes < 1) return 'now'
+  if (minutes < 60) return `${minutes}m`
+  const startOfToday = new Date(now).setHours(0, 0, 0, 0)
+  if (time >= startOfToday) return `${Math.floor(minutes / 60)}h`
+  if (time >= startOfToday - DAY) return 'Yesterday'
+  const date = new Date(time)
+  if (time >= startOfToday - 6 * DAY)
+    return date.toLocaleDateString(undefined, { weekday: 'short' })
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(date.getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {})
+  })
+}
+
+interface RowMenuItem {
+  name: string
+  danger?: boolean
+  onSelect: () => void
+}
+
+/**
+ * A row's ⋮ button and its menu. The menu is fixed to the window, so the
+ * scrolling sidebar cannot clip it; near the bottom it opens upward.
+ */
+function RowMenu({ label, items }: { label: string; items: RowMenuItem[] }): React.JSX.Element {
+  const [at, setAt] = useState<React.CSSProperties>()
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!at) return
+    const onPointer = (event: PointerEvent): void => {
+      if (!rootRef.current?.contains(event.target as Node)) setAt(undefined)
+    }
+    // Capture phase, and handled: closing the menu must not also stop the agent.
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setAt(undefined)
+    }
+    document.addEventListener('pointerdown', onPointer)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointer)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [at])
+
+  function toggle(button: HTMLElement): void {
+    if (at) return setAt(undefined)
+    const rect = button.getBoundingClientRect()
+    const right = window.innerWidth - rect.right
+    const roomBelow = window.innerHeight - rect.bottom
+    setAt(
+      roomBelow > MENU_ROOM
+        ? { top: rect.bottom + 4, right }
+        : { bottom: window.innerHeight - rect.top + 4, right }
+    )
+  }
+
+  return (
+    <div
+      className={`row-menu${at ? ' open' : ''}`}
+      ref={rootRef}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        className="icon-btn small"
+        title={label}
+        aria-haspopup="menu"
+        aria-expanded={Boolean(at)}
+        onClick={(e) => toggle(e.currentTarget)}
+      >
+        <MoreIcon width={14} height={14} />
+      </button>
+      {at && (
+        <div className="menu" role="menu" style={at}>
+          {items.map((item) => (
+            <button
+              key={item.name}
+              role="menuitem"
+              className={item.danger ? 'danger' : undefined}
+              autoFocus={item === items[0]}
+              onClick={() => {
+                setAt(undefined)
+                item.onSelect()
+              }}
+            >
+              {item.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Space a row menu needs below its button to open downward. */
+const MENU_ROOM = 120

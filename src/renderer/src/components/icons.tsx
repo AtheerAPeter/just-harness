@@ -36,11 +36,6 @@ export const ChevronIcon = (p: IconProps): React.JSX.Element => (
     <path d="m9 6 6 6-6 6" />
   </Icon>
 )
-export const DownIcon = (p: IconProps): React.JSX.Element => (
-  <Icon {...p}>
-    <path d="m6 9 6 6 6-6" />
-  </Icon>
-)
 export const CloseIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
     <path d="M18 6 6 18M6 6l12 12" />
@@ -111,11 +106,6 @@ export const MoonIcon = (p: IconProps): React.JSX.Element => (
     <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" />
   </Icon>
 )
-export const PencilIcon = (p: IconProps): React.JSX.Element => (
-  <Icon {...p}>
-    <path d="M4 20h4L19 9l-4-4L4 16z" />
-  </Icon>
-)
 export const FileIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
     <path d="M6 3h8l4 4v14H6z" />
@@ -142,5 +132,30 @@ export const SearchIcon = (p: IconProps): React.JSX.Element => (
 export const ChatIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
     <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
+  </Icon>
+)
+export const FolderPlusIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    <path d="M12 10.5v5M9.5 13h5" />
+  </Icon>
+)
+/** The double chevron of a macOS pop-up button. */
+export const UpDownIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <path d="m8 9 4-4 4 4M8 15l4 4 4-4" />
+  </Icon>
+)
+export const CheckIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <path d="m5 12.5 4.5 4.5L19 7.5" />
+  </Icon>
+)
+/** Vertical three dots: a row's options menu. */
+export const MoreIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <circle cx="12" cy="5.5" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="18.5" r="1.4" fill="currentColor" stroke="none" />
   </Icon>
 )

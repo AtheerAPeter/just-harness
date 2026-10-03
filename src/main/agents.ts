@@ -25,6 +25,7 @@ import { resolveProjectFile } from './files'
 import { formatRaw, limitOutput } from './tool-output'
 import { loadShellPath } from './shell-env'
 import { withTimeout } from './page-driver'
+import { chatPreview } from './preview'
 
 const COMMANDS: Record<AgentId, { command: string; args: string[] }> = {
   opencode: { command: 'opencode', args: ['acp'] },
@@ -682,6 +683,15 @@ class AgentProcess {
 
   private emit(chatId: string, item: ChatItem): void {
     this.events.item(chatId, store.upsertItem(chatId, item))
+    if (item.kind === 'permission') this.updateWaiting(chatId)
+  }
+
+  /** Marks the chat as waiting while any of its permission requests is unanswered. */
+  private updateWaiting(chatId: string): void {
+    const waiting = [...this.permissions.values()].some((p) => p.chatId === chatId)
+    if (Boolean(store.getChat(chatId).waiting) === waiting) return
+    store.updateChat(chatId, { waiting })
+    this.events.stateChanged()
   }
 
   resolvePermissionItem(chatId: string, id: string, resolved: string, auto = false): void {
@@ -713,8 +723,11 @@ class AgentProcess {
       this.emit(chatId, { ...item, resolved: autoOption, auto: true })
       return Promise.resolve({ outcome: { outcome: 'selected', optionId: autoOption } })
     }
-    this.emit(chatId, item)
-    return new Promise((resolve) => this.permissions.set(id, { chatId, resolve }))
+    // Registered before the item is shown, so the chat counts as waiting.
+    return new Promise((resolve) => {
+      this.permissions.set(id, { chatId, resolve })
+      this.emit(chatId, item)
+    })
   }
 
   private onUpdate(params: acp.SessionNotification): void {
@@ -1138,6 +1151,7 @@ export class AgentManager {
           : {})
       })
     )
+    store.updateChat(chatId, { preview: chatPreview(store.getMessages(chatId)) })
     this.events.stateChanged()
 
     let outcome: TurnOutcome = 'failed'
@@ -1186,7 +1200,11 @@ export class AgentManager {
     } finally {
       if (store.getState().chats.some((c) => c.id === chatId)) {
         this.processes[chat.agent].endTurn(chatId, outcome)
-        store.updateChat(chatId, { running: false, updatedAt: Date.now() })
+        store.updateChat(chatId, {
+          running: false,
+          updatedAt: Date.now(),
+          preview: chatPreview(store.getMessages(chatId))
+        })
         this.events.stateChanged()
       }
     }

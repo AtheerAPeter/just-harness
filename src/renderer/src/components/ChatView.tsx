@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentCommand,
   AgentId,
@@ -10,7 +10,7 @@ import type {
 } from '../../../shared/types'
 import { renderMarkdown } from '../lib/markdown'
 import { Composer } from './Composer'
-import { ChevronIcon, FileIcon, LockIcon } from './icons'
+import { CheckIcon, FileIcon, LockIcon } from './icons'
 
 interface ChatViewProps {
   chat: Chat
@@ -34,6 +34,8 @@ export function ChatView({
   const [skills, setSkills] = useState<Skill[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
+  const plan = useMemo(() => items.findLast((i) => i.kind === 'plan'), [items])
+  const replies = useMemo(() => finalReplies(items, chat.running), [items, chat.running])
 
   useEffect(() => {
     let cancelled = false
@@ -140,12 +142,15 @@ export function ChatView({
             </div>
           )}
           {items.map((item) => (
-            <Item key={item.id} item={item} chatId={chat.id} />
+            <Item key={item.id} item={item} chatId={chat.id} reply={replies.has(item.id)} />
           ))}
-          {chat.running && <Working />}
+          {chat.running && !chat.waiting && <Working />}
         </div>
       </div>
       <div className="composer-wrap">
+        {plan?.entries.some((e) => e.status !== 'completed') && (
+          <TodoStrip entries={plan.entries} />
+        )}
         <Composer
           chat={chat}
           statuses={statuses}
@@ -163,19 +168,45 @@ export function ChatView({
   )
 }
 
+type ToolItem = Extract<ChatItem, { kind: 'tool' }>
+
+/**
+ * The text that closes each finished turn: the agent's messages after its last
+ * step. The timeline ends above them. A turn still running has no closing text yet.
+ */
+function finalReplies(items: ChatItem[], running: boolean): Set<string> {
+  const replies = new Set<string>()
+  let trailing = !running
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]
+    if (item.kind === 'user') trailing = true
+    else if (trailing && item.kind === 'text') replies.add(item.id)
+    // Requests bypass mode approved are not shown, so they do not end the reply.
+    else if (!(item.kind === 'permission' && item.auto)) trailing = false
+  }
+  return replies
+}
+type PlanEntry = Extract<ChatItem, { kind: 'plan' }>['entries'][number]
+
+/**
+ * Every item is a step on the timeline: a node on the line at the left, then the
+ * step itself. Tool calls take one row: what they did, on what, and the result.
+ */
 const Item = memo(function Item({
   item,
-  chatId
+  chatId,
+  reply
 }: {
   item: ChatItem
   chatId: string
+  /** The agent's closing answer: shown under the timeline, off the line. */
+  reply: boolean
 }): React.JSX.Element {
   switch (item.kind) {
     case 'user':
       return (
-        <div className="msg-user">
-          <span className="bullet">&gt;</span>
-          <div className="msg-body">
+        <div className="step user">
+          <div className="step-body">
             {item.text}
             {item.attachments && (
               <div className="msg-attachments">
@@ -192,10 +223,9 @@ const Item = memo(function Item({
       )
     case 'text':
       return (
-        <div className="msg-text">
-          <span className="bullet">●</span>
+        <div className={reply ? 'step reply' : 'step say'}>
           <div
-            className="msg-body markdown"
+            className="step-body markdown"
             dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
           />
         </div>
@@ -205,95 +235,116 @@ const Item = memo(function Item({
       // visible; longer ones are the model's raw reasoning and fold away.
       if (item.text.length <= THOUGHT_INLINE_MAX && !item.text.trim().includes('\n')) {
         return (
-          <div className="msg-thought">
-            <span className="bullet">✻</span>
-            <div className="msg-body">{item.text}</div>
+          <div className="step think">
+            <div className="step-body">{item.text}</div>
           </div>
         )
       }
-      return (
-        <Collapsible className="msg-thought-block" summary="✻ Thinking…">
-          <div
-            className="markdown thought-body"
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
-          />
-        </Collapsible>
-      )
+      return <Thinking text={item.text} />
     case 'tool':
-      return <ToolCall tool={item} />
+      return <ToolStep tool={item} />
     case 'plan':
-      return (
-        <div className="msg-plan">
-          <div className="tool-head">
-            <span className="bullet">●</span>
-            <span className="tool-name">Update Todos</span>
-          </div>
-          <div className="tool-result">
-            <span className="elbow">⎿</span>
-            <div>
-              {item.entries.map((entry, index) => (
-                <div key={index} className={`plan-entry ${entry.status}`}>
-                  <span>{entry.status === 'completed' ? '☒' : '☐'}</span>
-                  {entry.content}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )
-    case 'permission':
+      return <PlanStep entries={item.entries} />
+    case 'permission': {
       // Bypass mode approved it; nothing to show.
       if (item.auto) return <></>
       if (item.resolved) {
         const choice = item.options.find((o) => o.optionId === item.resolved)
         const allowed = choice?.kind.startsWith('allow')
         return (
-          <div className="msg-tool">
-            {item.resolved === 'cancelled' ? 'Cancelled' : allowed ? 'Allowed' : 'Denied'}{' '}
-            {toolLabel(item.title)}
+          <div className="step resolved">
+            <div className="step-line">
+              <span className="step-kind">
+                {item.resolved === 'cancelled' ? 'Cancelled' : allowed ? 'Allowed' : 'Denied'}
+              </span>
+              <span className="step-target">{toolLabel(item.title)}</span>
+            </div>
           </div>
         )
       }
+      const args = item.title.includes(':') ? item.title.slice(item.title.indexOf(':') + 1) : ''
+      // Refusing on the left, the usual answer on the far right.
+      const options = [...item.options].sort((a, b) => OPTION_ORDER[a.kind] - OPTION_ORDER[b.kind])
       return (
-        <div className="msg-permission">
-          <div className="permission-title">Allow {toolLabel(item.title)}?</div>
-          {item.outside && (
-            <div className="permission-note">
-              <LockIcon width={12} height={12} /> Outside the project: {item.outside}
+        <div className="step ask">
+          <div className="ask-box">
+            <div className="ask-text">
+              <div className="ask-question">
+                Allow <span className="ask-tool">{toolLabel(item.title)}</span>?
+              </div>
+              {args.trim() && <div className="ask-args">{args.trim()}</div>}
+              {item.outside && (
+                <div className="permission-note">
+                  <LockIcon width={12} height={12} /> Outside the project: {item.outside}
+                </div>
+              )}
             </div>
-          )}
-          <div className="permission-actions">
-            {item.options.map((option) => (
-              <button
-                key={option.optionId}
-                className={option.kind.startsWith('allow') ? 'btn primary' : 'btn'}
-                onClick={() => window.api.resolvePermission(chatId, item.id, option.optionId)}
-              >
-                {option.name}
-              </button>
-            ))}
+            <div className="ask-actions">
+              {options.map((option, index) => (
+                <button
+                  key={option.optionId}
+                  className={index === options.length - 1 ? 'btn primary' : 'btn'}
+                  onClick={() => window.api.resolvePermission(chatId, item.id, option.optionId)}
+                >
+                  {option.name}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )
+    }
     case 'error':
-      return <div className="msg-error">{item.text}</div>
+      return (
+        <div className="step error">
+          <div className="step-body">{item.text}</div>
+        </div>
+      )
     case 'notice':
-      return <div className="msg-notice">{item.text}</div>
+      return (
+        <div className="step notice">
+          <div className="step-body">{item.text}</div>
+        </div>
+      )
   }
 })
 
-/**
- * A short name for a tool call: drops arguments (agents put them after ":") and
- * MCP server prefixes, e.g. "harness_browser__click: {...}" -> "browser · click".
- */
+/** Where each kind of permission answer sits in the row of buttons. */
+const OPTION_ORDER: Record<string, number> = {
+  reject_always: 0,
+  reject_once: 1,
+  allow_always: 2,
+  allow_once: 3
+}
+
 /** Thoughts up to this length on one line are shown inline instead of folded. */
 const THOUGHT_INLINE_MAX = 300
 
+/** Output lines shown under an open step before the rest folds away. */
+const OUTPUT_PREVIEW = 12
+
+const BROWSER_TOOL = /^harness_browser_{1,2}(\w+)/
+
+/**
+ * A short name for a tool call: drops arguments (agents put them after ":") and
+ * MCP server prefixes, e.g. "harness_browser__click: {...}" -> "Browser · click".
+ */
 function toolLabel(title: string): string {
   const name = title.split(':')[0].trim()
   const mcp = name.match(/^harness_(\w+?)_{1,2}(\w+)$/)
-  const label = mcp ? `${humanize(mcp[1])} · ${humanize(mcp[2])}` : humanize(name)
+  // Snake-case tool ids read better humanized; commands and paths stay as typed.
+  const label = mcp
+    ? `${humanize(mcp[1])} · ${humanize(mcp[2])}`
+    : /^[a-z]+(_[a-z]+)+$/i.test(name)
+      ? humanize(name)
+      : shortPath(name)
   return label.length > 60 ? `${label.slice(0, 59)}…` : label
+}
+
+/** Absolute paths keep their informative end: ".../05-buying-clothes/story.js". */
+function shortPath(text: string): string {
+  const parts = text.split('/')
+  return text.startsWith('/') && parts.length > 3 ? `…/${parts.slice(-2).join('/')}` : text
 }
 
 /** "fetch_web_content" -> "Fetch web content" */
@@ -301,11 +352,6 @@ function humanize(name: string): string {
   const words = name.replace(/[_.]+/g, ' ').trim()
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
-
-type ToolItem = Extract<ChatItem, { kind: 'tool' }>
-
-/** Result lines shown under a tool call before the rest folds away. */
-const RESULT_PREVIEW = 3
 
 /** A short detail for a call: the URL, path, command or query it acted on. */
 function toolDetail(tool: ToolItem): string | undefined {
@@ -334,10 +380,7 @@ function toolDetail(tool: ToolItem): string | undefined {
     // Cline lists files as objects: {"files": [{"path": "..."}]}.
     if (first && typeof first === 'object') first = (first as Record<string, unknown>).path
     if (typeof first === 'string' && first) {
-      // Absolute paths keep their informative end: ".../05-buying-clothes/story.js".
-      const parts = first.split('/')
-      const text =
-        first.startsWith('/') && parts.length > 3 ? `…/${parts.slice(-2).join('/')}` : first
+      const text = shortPath(first)
       return text.length > 80 ? `${text.slice(0, 79)}…` : text
     }
   }
@@ -363,24 +406,13 @@ function outputResults(output: string): string[] {
   return [output]
 }
 
-/** The lines under "⎿": a summary for reads, otherwise the output itself. */
-function resultLines(tool: ToolItem): string[] {
+/** The call's output as lines, or none. */
+function outputLines(tool: ToolItem): string[] {
   const output = tool.output?.replace(/\s+$/, '')
-  if (!output) {
-    if (tool.status === 'pending' || tool.status === 'in_progress') return ['Running…']
-    if (tool.status === 'interrupted') return ['Interrupted']
-    return [tool.status === 'failed' ? 'Failed' : 'Done']
-  }
-  const results = outputResults(output)
-  if (tool.toolKind === 'read' && tool.status === 'completed') {
-    if (results.length > 1) return [`Read ${results.length} files`]
-    const count = results[0].split('\n').length
-    return [`Read ${count} line${count === 1 ? '' : 's'}`]
-  }
-  return results.join('\n').split('\n')
+  return output ? outputResults(output).join('\n').split('\n') : []
 }
 
-/** Diff lines get Claude Code's red/green rows. */
+/** Diff lines get red and green rows. */
 function lineClass(line: string): string | undefined {
   if (line.startsWith('--- ')) return 'diff-file'
   if (line.startsWith('+ ')) return 'diff-add'
@@ -388,105 +420,194 @@ function lineClass(line: string): string | undefined {
   return undefined
 }
 
-/** Claude Code's names for the ACP tool kinds. */
-const KIND_NAMES: Record<string, string> = {
+/** The word in the kind column for each ACP tool kind. */
+const KIND_WORDS: Record<string, string> = {
   read: 'Read',
-  edit: 'Update',
+  edit: 'Edit',
   delete: 'Delete',
   move: 'Move',
   search: 'Search',
-  execute: 'Bash',
+  execute: 'Run',
   fetch: 'Fetch'
 }
 
-/**
- * The name shown before "(detail)". Some agents title a call with the tool's id
- * ("read_files: ..."), others with what it does ("ls -la episodes"); the latter
- * would repeat the detail, so those calls are named by their kind instead.
- */
-function toolName(tool: ToolItem): string {
-  const head = tool.title.split(':')[0].trim()
-  const isId = /^[\w.-]+$/.test(head) && !toolDetail(tool)?.startsWith(head)
-  if (!isId && tool.toolKind && KIND_NAMES[tool.toolKind]) return KIND_NAMES[tool.toolKind]
-  return toolLabel(tool.title)
+const isRunning = (tool: ToolItem): boolean =>
+  tool.status === 'pending' || tool.status === 'in_progress'
+
+/** The kind column and what the call acted on. */
+function toolKindAndTarget(tool: ToolItem): [string, string] {
+  const detail = toolDetail(tool)
+  const browser = tool.title.match(BROWSER_TOOL)
+  if (browser) return ['Browser', [humanize(browser[1]), detail].filter(Boolean).join(' ')]
+  const kind = (tool.toolKind && KIND_WORDS[tool.toolKind]) || 'Tool'
+  return [kind, detail ?? toolLabel(tool.title)]
 }
 
-/** One tool call, laid out like Claude Code: "⏺ Name(detail)" and its result under "⎿". */
-function ToolCall({ tool }: { tool: ToolItem }): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  const detail = toolDetail(tool)
-  const lines = resultLines(tool)
-  const hidden = lines.length - RESULT_PREVIEW
-  const shown = open || hidden <= 0 ? lines : lines.slice(0, RESULT_PREVIEW)
+/** The right-hand column: what came of the call. */
+function ToolResult({ tool, lines }: { tool: ToolItem; lines: string[] }): React.JSX.Element {
+  if (isRunning(tool)) return <span className="spinner" />
+  if (tool.status === 'failed') return <span className="result-bad">failed</span>
+  if (tool.status === 'interrupted') return <>interrupted</>
+  if (tool.toolKind === 'edit') {
+    const added = lines.filter((l) => lineClass(l) === 'diff-add').length
+    const removed = lines.filter((l) => lineClass(l) === 'diff-del').length
+    if (added || removed)
+      return (
+        <>
+          {added > 0 && <span className="result-add">+{added}</span>}{' '}
+          {removed > 0 && <span className="result-del">−{removed}</span>}
+        </>
+      )
+  }
+  if (tool.toolKind === 'read') {
+    const files = tool.output ? outputResults(tool.output).length : 0
+    if (files > 1) return <>{files} files</>
+  }
+  if (lines.length === 0) return <>done</>
   return (
-    <div className={`tool-call ${tool.status}`}>
-      <div className="tool-head">
-        <span className="bullet">●</span>
-        <span className="tool-title">
-          <span className="tool-name">{toolName(tool)}</span>
-          {detail && <span className="tool-detail">({detail})</span>}
+    <>
+      {lines.length} line{lines.length === 1 ? '' : 's'}
+    </>
+  )
+}
+
+/** One tool call. Edits show their diff; other output opens on click. */
+function ToolStep({ tool }: { tool: ToolItem }): React.JSX.Element {
+  const lines = outputLines(tool)
+  const isDiff = lines.some((l) => lineClass(l) === 'diff-add' || lineClass(l) === 'diff-del')
+  const [open, setOpen] = useState(isDiff)
+  const [all, setAll] = useState(false)
+  const [kind, target] = toolKindAndTarget(tool)
+  // A read's output is the file itself, already summed up as its line count.
+  const expandable = lines.length > 0 && tool.toolKind !== 'read'
+  const hidden = lines.length - OUTPUT_PREVIEW
+  const shown = all || hidden <= 0 ? lines : lines.slice(0, OUTPUT_PREVIEW)
+  return (
+    <div className={`step tool ${tool.status}`}>
+      <button
+        className="step-line"
+        disabled={!expandable}
+        aria-expanded={expandable ? open : undefined}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="step-kind">{kind}</span>
+        <span className="step-target">{target}</span>
+        <span className="step-result">
+          <ToolResult tool={tool} lines={lines} />
         </span>
-      </div>
-      <div className="tool-result">
-        <span className="elbow">⎿</span>
-        <div className="tool-lines">
+      </button>
+      {expandable && open && (
+        <div className="step-output">
           {shown.map((line, index) => (
             <div key={index} className={lineClass(line)}>
               {line || ' '}
             </div>
           ))}
           {hidden > 0 && (
-            <button className="tool-more" onClick={() => setOpen((o) => !o)}>
-              {open ? 'Show less' : `… +${hidden} line${hidden === 1 ? '' : 's'} (click to expand)`}
+            <button className="step-more" onClick={() => setAll((a) => !a)}>
+              {all ? 'Show less' : `Show ${hidden} more line${hidden === 1 ? '' : 's'}`}
             </button>
           )}
         </div>
-      </div>
+      )}
     </div>
   )
 }
 
-/** Claude Code's spinner glyphs, cycled while the agent works. */
-const SPINNER = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢']
+/** Long reasoning, folded to one row. */
+function Thinking({ text }: { text: string }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="step think">
+      <button className="step-line" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span className="step-kind">Thinking</span>
+        <span className="step-target step-prose">{open ? '' : text.split('\n')[0]}</span>
+      </button>
+      {open && (
+        <div
+          className="step-output markdown thought-body"
+          dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }}
+        />
+      )}
+    </div>
+  )
+}
+
+function TodoList({ entries }: { entries: PlanEntry[] }): React.JSX.Element {
+  return (
+    <div className="todo-list">
+      {entries.map((entry, index) => (
+        <div key={index} className={`todo ${entry.status}`}>
+          <span className="todo-box">
+            {entry.status === 'completed' && <CheckIcon width={10} height={10} />}
+          </span>
+          {entry.content}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** A todo update on the timeline: one row with the current item, the list on click. */
+function PlanStep({ entries }: { entries: PlanEntry[] }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const done = entries.filter((e) => e.status === 'completed').length
+  const current = entries.find((e) => e.status !== 'completed') ?? entries[entries.length - 1]
+  return (
+    <div className="step plan">
+      <button className="step-line" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span className="step-kind">Todos</span>
+        <span className="step-target step-prose">{current?.content}</span>
+        <span className="step-result">
+          {done} of {entries.length}
+        </span>
+      </button>
+      {open && (
+        <div className="step-output plain">
+          <TodoList entries={entries} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The chat's open todos, pinned above the composer while the agent works through them. */
+function TodoStrip({ entries }: { entries: PlanEntry[] }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const done = entries.filter((e) => e.status === 'completed').length
+  const next =
+    entries.find((e) => e.status === 'in_progress') ?? entries.find((e) => e.status !== 'completed')
+  return (
+    <div className={`todo-strip${open ? ' open' : ''}`}>
+      {open && <TodoList entries={entries} />}
+      <button className="todo-bar" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span className="todo-label">Todos</span>
+        <span className="todo-bars">
+          {entries.map((entry, index) => (
+            <i key={index} className={entry.status} />
+          ))}
+        </span>
+        <span>
+          {done} of {entries.length}
+        </span>
+        {next && <span className="todo-next">Next: {next.content}</span>}
+      </button>
+    </div>
+  )
+}
 
 function Working(): React.JSX.Element {
-  const [frame, setFrame] = useState(0)
   const [seconds, setSeconds] = useState(0)
   useEffect(() => {
     const started = Date.now()
-    const timer = setInterval(() => {
-      setFrame((f) => (f + 1) % SPINNER.length)
-      setSeconds(Math.floor((Date.now() - started) / 1000))
-    }, 120)
+    const timer = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000)
     return () => clearInterval(timer)
   }, [])
   return (
-    <div className="working">
-      <span className="bullet">{SPINNER[frame]}</span>
-      <span>
-        Working… <span className="working-time">({seconds}s · esc to stop)</span>
-      </span>
-    </div>
-  )
-}
-
-function Collapsible({
-  className,
-  summary,
-  children
-}: {
-  className: string
-  summary: React.ReactNode
-  children: React.ReactNode
-}): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className={`${className} collapsible${open ? ' open' : ''}`}>
-      <button className="collapsible-summary" onClick={() => setOpen((o) => !o)}>
-        <ChevronIcon width={12} height={12} className="chevron" />
-        {summary}
-      </button>
-      {open && <div className="collapsible-body">{children}</div>}
+    <div className="step working">
+      <div className="step-body">
+        Working… <span className="working-time">{seconds}s, Esc to stop</span>
+      </div>
     </div>
   )
 }

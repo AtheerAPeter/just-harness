@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, existsSync 
 import { join } from 'node:path'
 import type { AppState, Chat, ChatItem, Project, Theme } from '../shared/types'
 import { cleanStoredOutput } from './tool-output'
+import { chatPreview } from './preview'
 
 const dataDir = join(app.getPath('userData'), 'data')
 const chatsDir = join(dataDir, 'chats')
@@ -24,8 +25,11 @@ function writeJson(path: string, value: unknown): void {
 
 const state: AppState = readJson<AppState>(statePath, { projects: [], chats: [] })
 for (const chat of state.chats) {
-  // Nothing can be running right after launch.
+  // Nothing can be running or waiting right after launch.
   chat.running = false
+  chat.waiting = false
+  // Chats from before sidebar previews get theirs once; it is saved from then on.
+  chat.preview ??= chatPreview(readJson<ChatItem[]>(join(chatsDir, `${chat.id}.json`), []))
   // Before tabs, a chat's browser kept one page.
   const legacy = chat as Chat & { browserUrl?: string }
   if (legacy.browserUrl) {

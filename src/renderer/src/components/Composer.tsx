@@ -9,7 +9,7 @@ import {
   type Skill,
   type Attachment
 } from '../../../shared/types'
-import { Picker } from './Picker'
+import { Picker, type PickerValue } from './Picker'
 import { CompletionMenu, type CompletionItem } from './CompletionMenu'
 import { CloseIcon, FileIcon, PaperclipIcon, SendIcon, StopIcon } from './icons'
 
@@ -255,7 +255,11 @@ export function Composer({
         value={text}
         rows={1}
         placeholder={
-          chat.running ? 'Working…' : `Ask ${AGENTS.find((a) => a.id === chat.agent)?.label}…`
+          chat.waiting
+            ? 'Waiting for your answer above'
+            : chat.running
+              ? 'Working…'
+              : `Ask ${AGENTS.find((a) => a.id === chat.agent)?.label}…`
         }
         onChange={(e) => {
           setText(e.target.value)
@@ -323,7 +327,7 @@ export function Composer({
             key={option.id}
             title={option.name}
             value={option.currentValue}
-            values={option.values}
+            values={option.category === 'model' ? byProvider(option.values) : option.values}
             onChange={(v) => onOptionChange(option.id, v)}
           />
         ))}
@@ -362,14 +366,30 @@ export function Composer({
             title="Stop (Esc)"
             onClick={() => window.api.cancel(chat.id)}
           >
-            <StopIcon />
+            <StopIcon width={14} height={14} />
           </button>
         ) : (
           <button className="send-button" title="Send (Enter)" disabled={!canSend} onClick={submit}>
-            <SendIcon />
+            <SendIcon width={15} height={15} />
           </button>
         )}
       </div>
     </div>
   )
+}
+
+/**
+ * Model names arrive as "provider/model" (sometimes "provider/provider/model").
+ * The list groups them under the provider and shows the model's own name.
+ */
+function byProvider(values: AgentOption['values']): PickerValue[] {
+  // Providers keep the order they first appear in; each gathers its models.
+  const groups = new Map<string, PickerValue[]>()
+  for (const v of values) {
+    const parts = v.name.split('/')
+    const group = parts.length > 1 ? parts[0] : ''
+    const item = parts.length > 1 ? { ...v, group, name: parts[parts.length - 1] } : v
+    groups.set(group, [...(groups.get(group) ?? []), item])
+  }
+  return [...groups.values()].flat()
 }

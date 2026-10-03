@@ -30,9 +30,6 @@ function on<Args extends unknown[]>(
 
 const api = {
   getState: (): Promise<AppState> => ipcRenderer.invoke('state:get'),
-  /** The macOS accent color as #rrggbbaa. */
-  getAccentColor: (): Promise<string> => ipcRenderer.invoke('system:accent'),
-  onAccentColor: (listener: (color: string) => void) => on('system:accent', listener),
   onState: (listener: (state: AppState) => void) => on('state:changed', listener),
   onMenu: (listener: (command: MenuCommand) => void) => on('menu', listener),
   setTheme: (theme: Theme): Promise<void> => ipcRenderer.invoke('theme:set', theme),

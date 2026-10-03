@@ -40,18 +40,11 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     window.api.getState().then(setState)
-    const applyAccent = (color: string): void =>
-      document.documentElement.style.setProperty('--accent', color)
-    window.api.getAccentColor().then(applyAccent)
-    const offAccent = window.api.onAccentColor(applyAccent)
     const offState = window.api.onState(setState)
     for (const { id } of AGENTS) {
       window.api.agentStatus(id).then((status) => setStatuses((c) => ({ ...c, [id]: status })))
     }
-    return () => {
-      offAccent()
-      offState()
-    }
+    return offState
   }, [])
 
   useEffect(() => writePref('selectedChat', selectedChatId), [selectedChatId])
@@ -149,9 +142,17 @@ export default function App(): React.JSX.Element {
             <SidebarIcon />
           </button>
           <div className="topbar-title">
+            {project && (view === 'skills' || chat) && (
+              <span className="crumb">{project.name} / </span>
+            )}
             {view === 'skills' ? 'Skills' : chat ? chat.title : 'Just Harness'}
-            {view === 'chat' && project && chat && <span className="muted"> · {project.name}</span>}
           </div>
+          {view === 'chat' && chat?.waiting && (
+            <span className="status-chip waiting">Waiting for you</span>
+          )}
+          {view === 'chat' && chat?.running && !chat.waiting && (
+            <span className="status-chip running">Working</span>
+          )}
           <button
             className={`icon-btn${browserOpen ? ' on' : ''}`}
             title="Toggle browser (⌘B)"
