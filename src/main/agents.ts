@@ -24,6 +24,7 @@ import { listSkills } from './skills'
 import { resolveProjectFile } from './files'
 import { formatRaw, limitOutput } from './tool-output'
 import { loadShellPath } from './shell-env'
+import { withTimeout } from './page-driver'
 
 const COMMANDS: Record<AgentId, { command: string; args: string[] }> = {
   opencode: { command: 'opencode', args: ['acp'] },
@@ -35,6 +36,28 @@ const COMMANDS: Record<AgentId, { command: string; args: string[] }> = {
  * hold 200+ MB each; chats reconnect with session/load when used again.
  */
 const IDLE_STOP_MS = 5 * 60_000
+
+/**
+ * How long Stop waits for the agent to end the turn. An agent that has not by
+ * then is stuck, so it is restarted; its chats reload their sessions.
+ */
+const CANCEL_TIMEOUT_MS = 10_000
+
+/** How long opening a chat (starting the agent, loading the session) may take. */
+const OPEN_TIMEOUT_MS = 90_000
+
+/** How long a stopped agent gets to exit before it is killed. */
+const KILL_GRACE_MS = 2_000
+
+/** How much of an agent's stderr is kept, to explain a crash. */
+const STDERR_KEPT = 4096
+const STDERR_SHOWN_LINES = 12
+
+/** The command that signs each agent in, for its "authentication required" error. */
+const LOGIN_COMMANDS: Record<AgentId, string> = {
+  opencode: 'opencode auth login',
+  cline: 'cline auth'
+}
 
 /**
  * The ACP SDK at runtime. It takes ~150 ms to load, so it is imported when the
@@ -156,6 +179,19 @@ export function browserId(chatId: string): string {
 /** ACP's error code for an unknown session (RequestError.resourceNotFound). */
 const RESOURCE_NOT_FOUND = -32002
 
+/** ACP's error code for "authentication required" (RequestError.authRequired). */
+const AUTH_REQUIRED = -32000
+
+/** How a turn ended, for what is shown about it afterwards. */
+type TurnOutcome = 'done' | 'stopped' | 'failed'
+
+/** The last line of a provider-retry notice, by how the turn ended. */
+const RETRY_OUTCOMES: Record<TurnOutcome, string> = {
+  done: 'A retry got through.',
+  stopped: 'Stopped while retrying.',
+  failed: 'Retrying did not help.'
+}
+
 /** Chats always run in the agent's build mode; plan mode is not offered. */
 const BUILD_MODE: Record<AgentId, string> = { opencode: 'build', cline: 'act' }
 
@@ -171,8 +207,23 @@ export interface AgentEvents {
   stateChanged(): void
 }
 
+/** One started agent process. A stuck one is replaced while it is still exiting. */
+interface Run {
+  child: ChildProcess
+  connection: acp.ClientConnection
+  /** Resolves with why the process ended, once it has. */
+  exited: Promise<string>
+  /** Why it is being stopped, told to the turns it ends. Unset for a crash. */
+  exitReason?: string
+  /** The end of its stderr, to explain a crash. */
+  stderr: string
+}
+
 class AgentProcess {
-  private child?: ChildProcess
+  /** The latest process; `connection` is set once it has initialized. */
+  private run?: Run
+  /** The latest process, kept after it exits so its failed requests can say why. */
+  private lastRun?: Run
   private connection?: acp.ClientConnection
   private starting?: Promise<acp.ClientConnection>
   private initResult?: acp.InitializeResponse
@@ -191,6 +242,12 @@ class AgentProcess {
    * them before the session/new response tells us which chat the session is for.
    */
   private commands = new Map<string, AgentCommand[]>()
+  /** Stops a prompt still waiting for its session, per chat; see prompt(). */
+  private stopBeforeSend = new Map<string, () => void>()
+  /** The notice reporting provider retries in the current turn, per chat. */
+  private retryNotices = new Map<string, { id: string; message: string }>()
+  /** Turns the agent is working on, per chat, so Stop can tell when one outlives it. */
+  private turns = new Map<string, symbol>()
   private activePrompts = 0
   private idleTimer?: NodeJS.Timeout
 
@@ -202,7 +259,12 @@ class AgentProcess {
 
   async connect(): Promise<acp.ClientConnection> {
     if (this.connection) return this.connection
-    this.starting ??= this.start().finally(() => (this.starting = undefined))
+    if (!this.starting) {
+      const starting = this.start().finally(() => {
+        if (this.starting === starting) this.starting = undefined
+      })
+      this.starting = starting
+    }
     return this.starting
   }
 
@@ -219,7 +281,6 @@ class AgentProcess {
       child.once('spawn', resolve)
       child.once('error', reject)
     })
-    child.stderr!.on('data', (data) => console.error(`[${this.agent}] ${String(data).trimEnd()}`))
 
     const stream = ndJsonStream(
       Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>,
@@ -230,18 +291,35 @@ class AgentProcess {
       .onRequest(methods.client.session.requestPermission, (ctx) => this.onPermission(ctx.params))
       .connect(stream)
 
+    let ended: (message: string) => void = () => undefined
+    const run: Run = {
+      child,
+      connection,
+      exited: new Promise((resolve) => (ended = resolve)),
+      stderr: ''
+    }
+    child.stderr!.on('data', (data) => {
+      console.error(`[${this.agent}] ${String(data).trimEnd()}`)
+      run.stderr = (run.stderr + String(data)).slice(-STDERR_KEPT)
+    })
     child.once('exit', (code, signal) => {
       console.error(`[${this.agent}] exited (${signal ?? code})`)
-      connection.close(new Error(`${this.agent} exited`))
-      this.onExit()
+      const message = this.exitMessage(run, code, signal)
+      connection.close(new Error(message))
+      // A replaced process (stuck while starting) owns none of the current state.
+      if (this.run === run) this.onExit()
+      ended(message)
     })
+    this.run = run
+    this.lastRun = run
 
-    this.child = child
-    this.initResult = await connection.agent.request(methods.agent.initialize, {
+    const initResult = await connection.agent.request(methods.agent.initialize, {
       protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: {},
       clientInfo: { name: 'just-harness', version: '1.0.0' }
     })
+    if (this.run !== run) throw new Error(`${this.agent} was restarted.`)
+    this.initResult = initResult
     this.connection = connection
     this.scheduleIdleStop()
     return connection
@@ -258,7 +336,7 @@ class AgentProcess {
 
   private onExit(): void {
     clearTimeout(this.idleTimer)
-    this.child = undefined
+    this.run = undefined
     this.connection = undefined
     this.liveSessions.clear()
     this.loadingSessions.clear()
@@ -269,21 +347,26 @@ class AgentProcess {
         this.resolvePermissionItem(pending.chatId, id, 'cancelled')
       }
     }
-    for (const chatId of this.sessionChats.values()) {
-      if (store.getState().chats.some((c) => c.id === chatId && c.running)) {
-        store.updateChat(chatId, { running: false })
-        this.emit(chatId, {
-          kind: 'error',
-          id: crypto.randomUUID(),
-          text: `${this.agent} stopped unexpectedly.`
-        })
-      }
-    }
     this.events.stateChanged()
   }
 
-  stop(): void {
-    this.child?.kill()
+  private exitMessage(run: Run, code: number | null, signal: NodeJS.Signals | null): string {
+    if (run.exitReason) return run.exitReason
+    const how = signal ? `was ended by ${signal}` : `exited with code ${code}`
+    const output = stderrExcerpt(run.stderr)
+    return `${this.agent} stopped unexpectedly: it ${how}.${output ? `\n\nIts last output:\n${output}` : ''}`
+  }
+
+  stop(reason = `${this.agent} was stopped.`): void {
+    const run = this.run
+    if (!run) return
+    run.exitReason = reason
+    const { child } = run
+    child.kill()
+    // A stuck agent can ignore SIGTERM.
+    setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    }, KILL_GRACE_MS).unref()
   }
 
   /**
@@ -323,7 +406,20 @@ class AgentProcess {
     if (this.isLive(sessionId)) return Promise.resolve(sessionId)
     let pending = this.opening.get(chatId)
     if (!pending) {
-      pending = this.openSession(chatId).finally(() => {
+      // Without a limit, an open that never answers would hold every later
+      // message in this chat. Giving up stops the open at its next step.
+      const abandoned = new AbortController()
+      pending = withTimeout(this.openSession(chatId, abandoned.signal), OPEN_TIMEOUT_MS, () => {
+        abandoned.abort()
+        const message = `${this.agent} did not open this chat within ${OPEN_TIMEOUT_MS / 1000} seconds.`
+        // Stuck while starting: every chat would wait on the same start. Kill it
+        // and let go of it, so the next message starts a fresh process.
+        if (!this.connection) {
+          this.stop(`${message} It was restarted.`)
+          this.starting = undefined
+        }
+        return new Error(`${message} Send your message again to retry.`)
+      }).finally(() => {
         this.opening.delete(chatId)
         this.scheduleIdleStop()
       })
@@ -332,9 +428,11 @@ class AgentProcess {
     return pending
   }
 
-  private async openSession(chatId: string): Promise<string> {
+  private async openSession(chatId: string, signal: AbortSignal): Promise<string> {
     const connection = await this.connect()
     const { methods } = await loadSdk()
+    signal.throwIfAborted()
+    const requestOptions = { cancellationSignal: signal }
     const chat = store.getChat(chatId)
     const cwd = store.getProject(chat.projectId).path
     // Agents that take HTTP MCP servers over ACP get the browser tools here. Cline's
@@ -347,21 +445,26 @@ class AgentProcess {
 
     let sessionId: string
     let configOptions: acp.SessionConfigOption[] | null | undefined
-    const loaded = chat.sessionId
-      ? await this.loadSession(chatId, chat.sessionId, cwd, mcpServers)
+    // `chat` is the live store record, so its sessionId changes below; keep the one it had.
+    const previousSessionId = chat.sessionId
+    const loaded = previousSessionId
+      ? await this.loadSession(chatId, previousSessionId, cwd, mcpServers, signal)
       : undefined
-    if (chat.sessionId && loaded) {
-      sessionId = chat.sessionId
+    signal.throwIfAborted()
+    if (previousSessionId && loaded) {
+      sessionId = previousSessionId
       configOptions = loaded.configOptions
     } else {
-      const created = await connection.agent.request(methods.agent.session.new, {
-        cwd,
-        mcpServers
-      })
+      const created = await connection.agent.request(
+        methods.agent.session.new,
+        { cwd, mcpServers },
+        requestOptions
+      )
+      signal.throwIfAborted()
       sessionId = created.sessionId
       configOptions = created.configOptions
       store.updateChat(chatId, { sessionId })
-      if (chat.sessionId && store.getMessages(chatId).some((i) => i.kind === 'user')) {
+      if (previousSessionId && store.getMessages(chatId).some((i) => i.kind === 'user')) {
         this.emit(chatId, {
           kind: 'error',
           id: crypto.randomUUID(),
@@ -386,11 +489,12 @@ class AgentProcess {
       const value = wanted[option.id]
       if (!value || value === option.currentValue) continue
       if (!option.values.some((v) => v.value === value)) continue
-      const response = await connection.agent.request(methods.agent.session.setConfigOption, {
-        sessionId,
-        configId: option.id,
-        value
-      })
+      const response = await connection.agent.request(
+        methods.agent.session.setConfigOption,
+        { sessionId, configId: option.id, value },
+        requestOptions
+      )
+      signal.throwIfAborted()
       configOptions = response.configOptions
       options = normalizeOptions(configOptions)
     }
@@ -407,7 +511,8 @@ class AgentProcess {
     chatId: string,
     sessionId: string,
     cwd: string,
-    mcpServers: acp.McpServer[]
+    mcpServers: acp.McpServer[],
+    signal: AbortSignal
   ): Promise<acp.LoadSessionResponse | undefined> {
     if (!this.initResult?.agentCapabilities?.loadSession) return undefined
     const connection = await this.connect()
@@ -415,11 +520,11 @@ class AgentProcess {
     this.sessionChats.set(sessionId, chatId)
     this.loadingSessions.add(sessionId)
     try {
-      return await connection.agent.request(methods.agent.session.load, {
-        sessionId,
-        cwd,
-        mcpServers
-      })
+      return await connection.agent.request(
+        methods.agent.session.load,
+        { sessionId, cwd, mcpServers },
+        { cancellationSignal: signal }
+      )
     } catch (error) {
       if (error instanceof RequestError && error.code === RESOURCE_NOT_FOUND) {
         this.sessionChats.delete(sessionId)
@@ -479,21 +584,78 @@ class AgentProcess {
   ): Promise<acp.PromptResponse> {
     this.activePrompts++
     clearTimeout(this.idleTimer)
+    this.retryNotices.delete(chatId)
+    const turn = Symbol(chatId)
+    let stopped = false
+    const stop = new Promise<undefined>((resolve) =>
+      this.stopBeforeSend.set(chatId, () => {
+        stopped = true
+        resolve(undefined)
+      })
+    )
     try {
-      const sessionId = await this.ensureSession(chatId)
+      // Opening the session can take a while (starting the agent, loading a long
+      // chat). Stop must not wait for it: the session keeps opening, unused.
+      const sessionId = await Promise.race([this.ensureSession(chatId), stop])
+      if (!sessionId) return { stopReason: 'cancelled' }
       const connection = await this.connect()
       const { methods } = await loadSdk()
+      if (stopped) return { stopReason: 'cancelled' }
+      this.stopBeforeSend.delete(chatId)
+      this.turns.set(chatId, turn)
       return await connection.agent.request(methods.agent.session.prompt, {
         sessionId,
         prompt: [{ type: 'text', text }, ...attachments]
       })
+    } catch (error) {
+      throw await this.explain(error)
     } finally {
+      this.stopBeforeSend.delete(chatId)
+      if (this.turns.get(chatId) === turn) this.turns.delete(chatId)
       this.activePrompts--
       this.scheduleIdleStop()
     }
   }
 
+  /**
+   * A dying agent closes its pipes before it is seen to exit, so requests fail
+   * with a bare "connection closed". Wait briefly for the exit to say why.
+   */
+  async explain(error: unknown): Promise<unknown> {
+    const run = this.lastRun
+    if (!run?.connection.signal.aborted) return error
+    return withTimeout(
+      run.exited.then((message) => new Error(message)),
+      KILL_GRACE_MS,
+      () => new Error()
+    ).catch(() => error)
+  }
+
+  /**
+   * Close out a finished turn: tool calls the agent left open will not finish,
+   * and a provider-retry notice says how the retries ended.
+   */
+  endTurn(chatId: string, outcome: TurnOutcome): void {
+    for (const item of store.getMessages(chatId)) {
+      if (item.kind === 'tool' && (item.status === 'pending' || item.status === 'in_progress')) {
+        this.emit(chatId, { ...item, status: 'interrupted' })
+      }
+    }
+    const notice = this.retryNotices.get(chatId)
+    if (notice) {
+      this.retryNotices.delete(chatId)
+      this.emit(chatId, {
+        kind: 'notice',
+        id: notice.id,
+        text: `The provider failed: ${notice.message} ${RETRY_OUTCOMES[outcome]}`
+      })
+    }
+  }
+
   async cancel(chatId: string): Promise<void> {
+    // Not sent to the agent yet: drop it here. Once sent, session/cancel stops it.
+    const stopBeforeSend = this.stopBeforeSend.get(chatId)
+    if (stopBeforeSend) return stopBeforeSend()
     const sessionId = store.getChat(chatId).sessionId
     const connection = this.connection
     if (!connection || !this.isLive(sessionId)) return
@@ -506,6 +668,16 @@ class AgentProcess {
       }
     }
     await connection.agent.notify(methods.agent.session.cancel, { sessionId })
+    // The agent must end the turn now. One that does not is stuck: restarting
+    // it ends the turn, and the next message reloads the session.
+    const turn = this.turns.get(chatId)
+    if (!turn) return
+    setTimeout(() => {
+      if (this.turns.get(chatId) !== turn) return
+      this.stop(
+        `${this.agent} did not stop within ${CANCEL_TIMEOUT_MS / 1000} seconds, so it was restarted. Send your message again to continue.`
+      )
+    }, CANCEL_TIMEOUT_MS)
   }
 
   private emit(chatId: string, item: ChatItem): void {
@@ -614,12 +786,39 @@ class AgentProcess {
           store.updateChat(chatId, { title: update.title })
           this.events.stateChanged()
         }
+        const retry = providerRetry(update._meta)
+        if (retry) {
+          // Without this the turn looks dead while the agent waits to retry.
+          const id = this.retryNotices.get(chatId)?.id ?? crypto.randomUUID()
+          this.retryNotices.set(chatId, { id, message: retry.message })
+          this.emit(chatId, {
+            kind: 'notice',
+            id,
+            text: `The provider failed: ${retry.message} Retrying (attempt ${retry.attempt})…`
+          })
+        }
         return
       }
       default:
         return
     }
   }
+}
+
+/**
+ * A retry the agent scheduled after a provider error. Opencode reports them as
+ * session_info_update with `_meta["opencode/retry"]`: {attempt, nextRetryAt,
+ * error: {type, message}}, and null once the retry starts. Cline reports none.
+ */
+function providerRetry(
+  meta: Record<string, unknown> | null | undefined
+): { attempt: number; message: string } | undefined {
+  const retry = meta?.['opencode/retry'] as
+    { attempt?: unknown; error?: { message?: unknown } | string } | null | undefined
+  if (!retry || typeof retry.attempt !== 'number') return undefined
+  const error = typeof retry.error === 'string' ? retry.error : retry.error?.message
+  const message = typeof error === 'string' && error.trim() ? error.trim() : 'unknown error.'
+  return { attempt: retry.attempt, message: /[.!?]$/.test(message) ? message : `${message}.` }
 }
 
 /** Paths that are never "outside": shell plumbing like 2>/dev/null. */
@@ -721,12 +920,36 @@ async function cliVersion(agent: AgentId): Promise<string | undefined> {
   })
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: unknown, agent: AgentId): string {
   if (sdk && error instanceof sdk.RequestError) {
+    // Opencode reports a provider that refuses the request (not signed in, a
+    // model the plan or country does not include) as this error, without the reason.
+    if (error.code === AUTH_REQUIRED) {
+      return `The provider refused access. If ${agent} is not signed in, run \`${LOGIN_COMMANDS[agent]}\` in a terminal; otherwise try another model.`
+    }
+    // Agents put their own text after JSON-RPC's generic "Internal error: ".
+    const message = error.message.replace(/^Internal error: (?=\S)/, '')
     const data = error.data as { message?: string } | undefined
-    return data?.message ? `${error.message}: ${data.message}` : error.message
+    return data?.message ? `${message}: ${data.message}` : message
   }
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * The end of an agent's stderr, to explain a crash: the last lines, with the
+ * home folder shortened and anything that looks like a credential hidden.
+ */
+function stderrExcerpt(text: string): string {
+  return text
+    .trim()
+    .split('\n')
+    .slice(-STDERR_SHOWN_LINES)
+    .join('\n')
+    .replaceAll(homedir(), '~')
+    .replace(
+      /(bearer\s+|(?:api[_-]?key|token|secret|password)["']?\s*[:=]\s*["']?)[^\s"',]+/gi,
+      '$1<hidden>'
+    )
 }
 
 export class AgentManager {
@@ -773,7 +996,8 @@ export class AgentManager {
         commands: agentProcess.getCommands(chatId)
       }
     } catch (error) {
-      return { options: [], commands: [], error: errorMessage(error) }
+      const reason = await agentProcess.explain(error)
+      return { options: [], commands: [], error: errorMessage(reason, agentProcess.agent) }
     }
   }
 
@@ -916,6 +1140,7 @@ export class AgentManager {
     )
     this.events.stateChanged()
 
+    let outcome: TurnOutcome = 'failed'
     try {
       let prompt = this.withBrowserId(
         chatId,
@@ -927,6 +1152,7 @@ export class AgentManager {
         blocks = []
       }
       const response = await this.processes[chat.agent].prompt(chatId, prompt, blocks)
+      outcome = response.stopReason === 'cancelled' ? 'stopped' : 'done'
       // opencode reports nothing while it compacts, so say when it is done.
       if (compact && response.stopReason === 'end_turn') {
         this.events.item(
@@ -954,11 +1180,12 @@ export class AgentManager {
         store.upsertItem(chatId, {
           kind: 'error',
           id: crypto.randomUUID(),
-          text: errorMessage(error)
+          text: errorMessage(error, chat.agent)
         })
       )
     } finally {
       if (store.getState().chats.some((c) => c.id === chatId)) {
+        this.processes[chat.agent].endTurn(chatId, outcome)
         store.updateChat(chatId, { running: false, updatedAt: Date.now() })
         this.events.stateChanged()
       }

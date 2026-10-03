@@ -106,6 +106,16 @@ export function ChatView({
     return () => window.removeEventListener('focus', load)
   }, [projectPath])
 
+  // Escape stops the agent, unless something else used the key first (a menu, a rename field).
+  useEffect(() => {
+    if (!chat.running) return
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && !e.defaultPrevented && !e.isComposing) window.api.cancel(chat.id)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [chat.id, chat.running])
+
   // Follow new output unless the user has scrolled up to read.
   useLayoutEffect(() => {
     const el = scrollRef.current
@@ -358,6 +368,7 @@ function resultLines(tool: ToolItem): string[] {
   const output = tool.output?.replace(/\s+$/, '')
   if (!output) {
     if (tool.status === 'pending' || tool.status === 'in_progress') return ['Running…']
+    if (tool.status === 'interrupted') return ['Interrupted']
     return [tool.status === 'failed' ? 'Failed' : 'Done']
   }
   const results = outputResults(output)
@@ -453,7 +464,7 @@ function Working(): React.JSX.Element {
     <div className="working">
       <span className="bullet">{SPINNER[frame]}</span>
       <span>
-        Working… <span className="working-time">({seconds}s)</span>
+        Working… <span className="working-time">({seconds}s · esc to stop)</span>
       </span>
     </div>
   )

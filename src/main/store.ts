@@ -114,6 +114,10 @@ export function getMessages(chatId: string): ChatItem[] {
     for (const item of items) {
       // A permission prompt cannot survive a restart: the agent process that asked is gone.
       if (item.kind === 'permission' && !item.resolved) item.resolved = 'cancelled'
+      // Nor a tool call that was still running when the app quit.
+      if (item.kind === 'tool' && (item.status === 'pending' || item.status === 'in_progress')) {
+        item.status = 'interrupted'
+      }
       // Earlier versions kept tool output whole, screenshots included; slim it once.
       if (item.kind === 'tool' && item.output) {
         const output = cleanStoredOutput(item.output)

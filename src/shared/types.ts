@@ -82,7 +82,8 @@ export interface AgentStatus {
   error?: string
 }
 
-export type ToolStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
+/** 'interrupted': the turn ended before the agent finished the call. */
+export type ToolStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'interrupted'
 
 export type ChatItem =
   | {

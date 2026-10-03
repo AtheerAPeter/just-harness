@@ -284,6 +284,8 @@ export function Composer({
             }
           }
           if (menuOpen && e.key === 'Escape') {
+            // Handled: closing the menu must not also stop the agent.
+            e.preventDefault()
             setMenuDismissed(`${caret}:${text}`)
             return
           }
@@ -357,7 +359,7 @@ export function Composer({
         {chat.running ? (
           <button
             className="send-button stop"
-            title="Stop"
+            title="Stop (Esc)"
             onClick={() => window.api.cancel(chat.id)}
           >
             <StopIcon />

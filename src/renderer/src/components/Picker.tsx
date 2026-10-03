@@ -75,8 +75,11 @@ export function Picker({
   }
 
   function onKeyDown(event: React.KeyboardEvent): void {
-    if (event.key === 'Escape') setOpen(false)
-    else if (event.key === 'ArrowDown') {
+    if (event.key === 'Escape') {
+      // Handled: closing the list must not also stop the agent.
+      event.preventDefault()
+      setOpen(false)
+    } else if (event.key === 'ArrowDown') {
       event.preventDefault()
       setActive((i) => Math.min(filtered.length - 1, i + 1))
     } else if (event.key === 'ArrowUp') {

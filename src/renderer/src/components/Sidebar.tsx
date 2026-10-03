@@ -221,7 +221,11 @@ function RenameField({
       onBlur={() => finish(value)}
       onKeyDown={(e) => {
         if (e.key === 'Enter') finish(value)
-        else if (e.key === 'Escape') finish(undefined)
+        else if (e.key === 'Escape') {
+          // Handled: cancelling the rename must not also stop the agent.
+          e.preventDefault()
+          finish(undefined)
+        }
       }}
     />
   )

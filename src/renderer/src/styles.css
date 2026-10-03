@@ -684,6 +684,11 @@ pre {
   color: var(--danger);
 }
 
+.tool-call.interrupted .bullet,
+.tool-call.interrupted .tool-lines {
+  color: var(--text-muted);
+}
+
 .tool-title {
   min-width: 0;
   overflow-wrap: anywhere;
