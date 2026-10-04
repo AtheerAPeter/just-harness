@@ -44,6 +44,24 @@ const IDLE_STOP_MS = 5 * 60_000
  */
 const CANCEL_TIMEOUT_MS = 10_000
 
+/**
+ * A turn the agent sends nothing in, not even a retry notice or a permission
+ * request, is silent because the provider or the process wedged. Streaming
+ * back again is impossible until the turn ends, so the process is restarted:
+ * the running turn ends with an error, and the chat reloads its session when
+ * the next message is sent. A permission prompt pauses the count (the user
+ * decides when the turn continues); every other message from the agent
+ * restarts it.
+ */
+const STALL_TIMEOUT_MS = stallTimeout()
+const STALL_CHECK_MS = Math.min(Math.floor(STALL_TIMEOUT_MS / 3), 30_000)
+
+/** The stall limit, overridable for testing. */
+function stallTimeout(): number {
+  const override = Number.parseInt(process.env.JUST_HARNESS_STALL_TIMEOUT_MS ?? '', 10)
+  return Number.isFinite(override) && override > 1000 ? override : 5 * 60_000
+}
+
 /** How long opening a chat (starting the agent, loading the session) may take. */
 const OPEN_TIMEOUT_MS = 90_000
 
@@ -249,6 +267,8 @@ class AgentProcess {
   private retryNotices = new Map<string, { id: string; message: string }>()
   /** Turns the agent is working on, per chat, so Stop can tell when one outlives it. */
   private turns = new Map<string, symbol>()
+  /** When each chat last got anything from its agent, for the stall watchdog. */
+  private activity = new Map<string, number>()
   private activePrompts = 0
   private idleTimer?: NodeJS.Timeout
 
@@ -604,18 +624,46 @@ class AgentProcess {
       if (stopped) return { stopReason: 'cancelled' }
       this.stopBeforeSend.delete(chatId)
       this.turns.set(chatId, turn)
-      return await connection.agent.request(methods.agent.session.prompt, {
+      // The turn's own clock: silence from now on is the agent's silence.
+      this.activity.set(chatId, Date.now())
+      const pending = connection.agent.request(methods.agent.session.prompt, {
         sessionId,
         prompt: [{ type: 'text', text }, ...attachments]
       })
+      const watchdog = setInterval(() => this.stopIfStalled(chatId, turn), STALL_CHECK_MS)
+      // A turn ends by the agent's response, its exit, or the stall watchdog;
+      // the watchdog must not outlive any of them.
+      return await pending.finally(() => clearInterval(watchdog))
     } catch (error) {
       throw await this.explain(error)
     } finally {
       this.stopBeforeSend.delete(chatId)
+      this.activity.delete(chatId)
       if (this.turns.get(chatId) === turn) this.turns.delete(chatId)
       this.activePrompts--
       this.scheduleIdleStop()
     }
+  }
+
+  /**
+   * A turn whose agent has sent nothing for ages is hanging: say so and
+   * restart the process. Killing the child closes the connection, which
+   * rejects the prompt request, which ends the turn with the reason.
+   */
+  private stopIfStalled(chatId: string, turn: symbol): void {
+    if (this.turns.get(chatId) !== turn) return
+    // An unanswered permission request means the agent is waiting for the user.
+    if ([...this.permissions.values()].some((p) => p.chatId === chatId)) return
+    const last = this.activity.get(chatId)
+    if (last === undefined || Date.now() - last <= STALL_TIMEOUT_MS) return
+    this.stop(
+      `${this.agent} sent nothing for ${STALL_TIMEOUT_MS / 1000} seconds, so it was restarted. Send your message again to continue.`
+    )
+  }
+
+  /** Note that the chat just got something from the agent (or for it), mid-turn. */
+  touchActivity(chatId: string): void {
+    this.activity.set(chatId, Date.now())
   }
 
   /**
@@ -704,6 +752,8 @@ class AgentProcess {
   ): Promise<acp.RequestPermissionResponse> {
     const chatId = this.sessionChats.get(params.sessionId)
     if (!chatId) return Promise.resolve({ outcome: { outcome: 'cancelled' } })
+    // The agent spoke, and its turn is paused on the answer.
+    this.touchActivity(chatId)
     const id = crypto.randomUUID()
     const item: Extract<ChatItem, { kind: 'permission' }> = {
       kind: 'permission',
@@ -731,6 +781,9 @@ class AgentProcess {
   }
 
   private onUpdate(params: acp.SessionNotification): void {
+    const chatId = this.sessionChats.get(params.sessionId)
+    // Any message from the agent, even one that is dropped, says it is alive.
+    if (chatId) this.touchActivity(chatId)
     if (params.update.sessionUpdate === 'available_commands_update') {
       const listed = params.update.availableCommands.map((c) => ({
         name: c.name,
@@ -741,12 +794,10 @@ class AgentProcess {
         ...UNLISTED_COMMANDS[this.agent].filter((c) => !listed.some((l) => l.name === c.name))
       ]
       this.commands.set(params.sessionId, commands)
-      const target = this.sessionChats.get(params.sessionId)
-      if (target) this.events.commands(target, commands)
+      if (chatId) this.events.commands(chatId, commands)
       return
     }
     if (this.loadingSessions.has(params.sessionId)) return
-    const chatId = this.sessionChats.get(params.sessionId)
     if (!chatId) return
     const update = params.update
 
@@ -1223,12 +1274,10 @@ export class AgentManager {
     if (!pending) return
     this.permissions.delete(permissionId)
     pending.resolve({ outcome: { outcome: 'selected', optionId } })
-    this.processes[store.getChat(chatId).agent].resolvePermissionItem(
-      chatId,
-      permissionId,
-      optionId,
-      auto
-    )
+    const agentProcess = this.processes[store.getChat(chatId).agent]
+    // The turn resumes past the answer: its silence clock restarts from here.
+    agentProcess.touchActivity(chatId)
+    agentProcess.resolvePermissionItem(chatId, permissionId, optionId, auto)
   }
 
   /** Turn bypass mode on or off. Turning it on also approves requests already waiting. */
