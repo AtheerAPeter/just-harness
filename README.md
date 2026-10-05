@@ -6,13 +6,13 @@
 
 <p align="center"><b>The basics are all you need.</b></p>
 
-<p align="center">A small macOS app for the <a href="https://opencode.ai">opencode</a> and <a href="https://cline.bot">Cline</a> coding agents: projects, chats, skills, and a built-in browser they can drive. Nothing else.</p>
+<p align="center">A small macOS app for the <a href="https://opencode.ai">opencode</a>, <a href="https://cline.bot">Cline</a> and <a href="https://commandcode.ai">Command Code</a> coding agents: projects, chats, skills, and a built-in browser they can drive. Nothing else.</p>
 
 <p align="center"><a href="https://github.com/AtheerAPeter/just-harness/releases/latest"><b>Download for macOS (Apple Silicon)</b></a></p>
 
 ---
 
-Just Harness has no model providers and no API keys of its own. It starts the CLIs you already have installed, talks to them over the [Agent Client Protocol](https://agentclientprotocol.com) (`opencode acp`, `cline --acp`), and shows whatever models they report. If a model works in your terminal, it works here.
+Just Harness has no model providers and no API keys of its own. It starts the CLIs you already have installed, talks to them over the [Agent Client Protocol](https://agentclientprotocol.com) (`opencode acp`, `cline --acp`, `cmd acp`), and shows whatever models they report. If a model works in your terminal, it works here.
 
 ## Keyboard shortcuts
 
@@ -39,6 +39,7 @@ Or download the `.dmg` from [Releases](https://github.com/AtheerAPeter/just-harn
 Apple Silicon only. You also need at least one agent installed and signed in:
 - opencode: `curl -fsSL https://opencode.ai/install | bash`, then `opencode auth login`
 - Cline: `npm i -g cline`, then `cline auth`
+- Command Code (1.74 or newer): `npm i -g command-code`, then `cmd login`
 
 The app finds the CLIs through your login shell's `PATH`, the same way your terminal does.
 
@@ -54,11 +55,11 @@ npx electron-vite build && npx electron-builder --mac dmg   # build the .app and
 
 ## How it works
 
-- `src/main/agents.ts` runs one ACP connection per agent CLI, maps chats to ACP sessions, and turns session updates into chat items.
+- `src/main/agents.ts` runs one ACP connection per agent CLI, maps chats to ACP sessions, and turns session updates into chat items. Command Code's ACP process serves a single folder, so it gets one connection per project.
 - `src/main/browser.ts` owns the browser panel, a `WebContentsView` on a persistent session partition, so cookies and logins are stored on disk.
 - `src/main/page-driver.ts` drives a page for agents over the DevTools protocol, with Playwright's in-page script for snapshots and element checks (the approach is adapted from ZCode's browser). `src/preload/page.ts` sends a page's alerts and confirms to the app.
-- `src/main/browser-mcp.ts` is an MCP server on `127.0.0.1` (bearer-token protected) that exposes the panel to agents. Opencode receives it through ACP; Cline's ACP mode ignores MCP servers sent by clients, so the app registers it with `cline mcp add`.
-- `src/main/skills.ts` reads skills from `.claude/skills`, `.opencode/skills`, `.agents/skills`, `.cline/skills` and their global equivalents.
+- `src/main/browser-mcp.ts` is an MCP server on `127.0.0.1` (bearer-token protected) that exposes the panel to agents. Opencode and Command Code receive it through ACP; Cline's ACP mode ignores MCP servers sent by clients, so the app registers it with `cline mcp add`.
+- `src/main/skills.ts` reads skills from `.claude/skills`, `.opencode/skills`, `.agents/skills`, `.cline/skills`, `.commandcode/skills` and their global equivalents.
 
 Chats, settings and the browser profile are stored in `~/Library/Application Support/Just Harness`. The agent sessions themselves are stored by each CLI.
 

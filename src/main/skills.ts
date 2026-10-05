@@ -15,26 +15,30 @@ import type { AgentId, Skill, SkillScope } from '../shared/types'
 
 /**
  * Where each CLI discovers skills (https://opencode.ai/docs/skills,
- * https://docs.cline.bot/customization/skills). New project skills go to
- * `.claude/skills`, which both read. There is no global folder both read, so
- * global skills go to `~/.claude/skills` and get a symlink in `~/.cline/skills`.
+ * https://docs.cline.bot/customization/skills, https://commandcode.ai/docs/skills).
+ * New project skills go to `.claude/skills`, which opencode and cline read. There
+ * is no global folder they all read, so global skills go to `~/.claude/skills`
+ * and get a symlink in `~/.cline/skills` and `~/.commandcode/skills`.
  */
 const home = homedir()
 const GLOBAL_DIRS: { dir: string; agents: AgentId[] }[] = [
   { dir: join(home, '.claude/skills'), agents: ['opencode'] },
   { dir: join(home, '.config/opencode/skills'), agents: ['opencode'] },
-  { dir: join(home, '.agents/skills'), agents: ['opencode'] },
-  { dir: join(home, '.cline/skills'), agents: ['cline'] }
+  { dir: join(home, '.agents/skills'), agents: ['opencode', 'commandcode'] },
+  { dir: join(home, '.cline/skills'), agents: ['cline'] },
+  { dir: join(home, '.commandcode/skills'), agents: ['commandcode'] }
 ]
 const PROJECT_DIRS: { dir: string; agents: AgentId[] }[] = [
   { dir: '.claude/skills', agents: ['opencode', 'cline'] },
   { dir: '.opencode/skills', agents: ['opencode'] },
-  { dir: '.agents/skills', agents: ['opencode'] },
+  { dir: '.agents/skills', agents: ['opencode', 'commandcode'] },
   { dir: '.cline/skills', agents: ['cline'] },
-  { dir: '.clinerules/skills', agents: ['cline'] }
+  { dir: '.clinerules/skills', agents: ['cline'] },
+  { dir: '.commandcode/skills', agents: ['commandcode'] }
 ]
 const PRIMARY_GLOBAL = GLOBAL_DIRS[0].dir
-const CLINE_GLOBAL = GLOBAL_DIRS[3].dir
+/** Global folders that get a symlink to each global skill the app creates. */
+const LINKED_GLOBALS = [GLOBAL_DIRS[3].dir, GLOBAL_DIRS[4].dir]
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
 function parseFrontmatter(content: string): { name?: string; description?: string } {
@@ -123,9 +127,11 @@ export function createSkill(name: string, scope: SkillScope, projectPath?: strin
   const file = join(dir, 'SKILL.md')
   writeFileSync(file, template(name))
   if (scope === 'global') {
-    mkdirSync(CLINE_GLOBAL, { recursive: true })
-    const link = join(CLINE_GLOBAL, name)
-    if (!existsSync(link)) symlinkSync(dir, link, 'dir')
+    for (const linked of LINKED_GLOBALS) {
+      mkdirSync(linked, { recursive: true })
+      const link = join(linked, name)
+      if (!existsSync(link)) symlinkSync(dir, link, 'dir')
+    }
   }
   return file
 }
@@ -140,12 +146,10 @@ export function deleteSkill(path: string, projectPath?: string): void {
   const dir = dirname(path)
   const name = dir.split('/').pop()!
   rmSync(dir, { recursive: true, force: true })
-  // Remove the cline symlink we created for global skills.
-  const link = join(CLINE_GLOBAL, name)
-  if (
-    dir.startsWith(PRIMARY_GLOBAL) &&
-    lstatSync(link, { throwIfNoEntry: false })?.isSymbolicLink()
-  ) {
-    rmSync(link)
+  // Remove the symlinks we created for global skills.
+  if (!dir.startsWith(PRIMARY_GLOBAL)) return
+  for (const linked of LINKED_GLOBALS) {
+    const link = join(linked, name)
+    if (lstatSync(link, { throwIfNoEntry: false })?.isSymbolicLink()) rmSync(link)
   }
 }

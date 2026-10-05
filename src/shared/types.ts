@@ -1,8 +1,9 @@
-export type AgentId = 'opencode' | 'cline'
+export type AgentId = 'opencode' | 'cline' | 'commandcode'
 
 export const AGENTS: { id: AgentId; label: string }[] = [
   { id: 'opencode', label: 'OpenCode' },
-  { id: 'cline', label: 'Cline' }
+  { id: 'cline', label: 'Cline' },
+  { id: 'commandcode', label: 'Command Code' }
 ]
 
 export interface Project {
@@ -76,6 +77,33 @@ export interface AgentCommand {
 export interface OpenChatResult {
   options: AgentOption[]
   commands: AgentCommand[]
+  error?: string
+}
+
+/**
+ * The options a model is picked from. Agents report them in the "model" category:
+ * the model list last, and before it the option the list depends on, if any
+ * (cline's provider).
+ */
+export function modelOptions(options: AgentOption[]): {
+  model?: AgentOption
+  source?: AgentOption
+} {
+  const listed = options.filter((o) => o.category === 'model')
+  return { model: listed.at(-1), source: listed.length > 1 ? listed.at(-2) : undefined }
+}
+
+/** One list of models an agent offers: all of them, or those of one of its providers. */
+export interface ModelSource {
+  /** The source option's value this list comes with (cline's provider); unset when there is one list. */
+  setting?: { optionId: string; value: string; name: string }
+  /** The model option, as the agent reports it with that setting. */
+  option: AgentOption
+}
+
+/** The models an agent offers, for picking one before a chat uses that agent. */
+export interface AgentModels {
+  sources: ModelSource[]
   error?: string
 }
 

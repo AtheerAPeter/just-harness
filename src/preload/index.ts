@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 import type {
   AgentCommand,
   Attachment,
+  AgentModels,
   AgentOption,
   OpenChatResult,
   AgentStatus,
@@ -73,6 +74,8 @@ const api = {
   onOptions: (listener: (chatId: string, options: AgentOption[]) => void) =>
     on('chat:options', listener),
   agentStatus: (agent: AgentId): Promise<AgentStatus> => ipcRenderer.invoke('agents:status', agent),
+  agentModels: (agent: AgentId, projectId: string): Promise<AgentModels> =>
+    ipcRenderer.invoke('agents:models', agent, projectId),
 
   browser: {
     setBounds: (rect: Rect | null): void => ipcRenderer.send('browser:setBounds', rect),
