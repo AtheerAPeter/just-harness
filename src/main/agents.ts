@@ -1,6 +1,6 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
-import { basename, extname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
+import { basename, extname, join } from 'node:path'
 import { statSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { app } from 'electron'
@@ -21,15 +21,32 @@ import type {
 } from '../shared/types'
 import { modelOptions, type ModelSource } from '../shared/types'
 import * as store from './store'
-import { browserMcpServer, BROWSER_GUIDANCE, SERVER_NAME as BROWSER_SERVER } from './browser-mcp'
+import {
+  browserId,
+  browserMcpServer,
+  BROWSER_GUIDANCE,
+  SERVER_NAME as BROWSER_SERVER
+} from './browser-mcp'
 import { listSkills } from './skills'
 import { resolveProjectFile } from './files'
 import { formatRaw, limitOutput } from './tool-output'
 import { loadShellPath } from './shell-env'
 import { withTimeout } from './page-driver'
+import {
+  bypassOption,
+  emitItem,
+  requestPermission,
+  type AgentEvents,
+  type Permissions
+} from './permissions'
 import { chatPreview } from './preview'
+import { HARNESS_AGENT, HarnessAgent } from './harness/agent'
+import { apiKey as commandCodeKey } from './harness/commandcode'
 
-const COMMANDS: Record<AgentId, { command: string; args: string[] }> = {
+/** Agents run as a CLI over ACP; the built-in harness is not one. */
+type AcpAgent = Exclude<AgentId, typeof HARNESS_AGENT>
+
+const COMMANDS: Record<AcpAgent, { command: string; args: string[] }> = {
   opencode: { command: 'opencode', args: ['acp'] },
   cline: { command: 'cline', args: ['--acp'] },
   commandcode: { command: 'cmd', args: ['acp'] }
@@ -85,7 +102,8 @@ const STDERR_SHOWN_LINES = 12
 const LOGIN_COMMANDS: Record<AgentId, string> = {
   opencode: 'opencode auth login',
   cline: 'cline auth',
-  commandcode: 'cmd login'
+  commandcode: 'cmd login',
+  'commandcode-api': 'cmd login'
 }
 
 /**
@@ -172,7 +190,7 @@ const TEXT_ONLY_PROMPTS = new Set<AgentId>(['cline'])
  * Commands an agent runs but does not list over ACP: opencode compacts the
  * session when a prompt starts with /compact.
  */
-const UNLISTED_COMMANDS: Record<AgentId, AgentCommand[]> = {
+const UNLISTED_COMMANDS: Record<AcpAgent, AgentCommand[]> = {
   opencode: [{ name: 'compact', description: 'Summarize older messages to free up context' }],
   cline: [],
   commandcode: []
@@ -180,6 +198,16 @@ const UNLISTED_COMMANDS: Record<AgentId, AgentCommand[]> = {
 
 /** A prompt asking to compact the conversation. */
 const COMPACT = /^\/compact(\s|$)/
+
+/** What /compact shows for agents that cannot compact on request. */
+const NO_COMPACTION: Partial<Record<AgentId, string>> = {
+  // Cline compacts on its own when its context fills up. Its ACP mode has no
+  // command for it: the text would reach the model as an ordinary message.
+  cline:
+    'Cline compacts the conversation on its own when its context fills up. It has no command to do it now.',
+  'commandcode-api':
+    'Command Code API does not compact conversations. Start a new chat when this one gets long.'
+}
 
 /** Pasted images have no file; save them so a path can be given to the agent. */
 const attachmentsDir = join(app.getPath('userData'), 'attachments')
@@ -201,11 +229,6 @@ async function withFilePaths(text: string, attachments: Attachment[]): Promise<s
   return `${text}\n\nAttached files (read them with your file tools):\n${paths.map((p) => `- ${p}`).join('\n')}`
 }
 
-/** The short browser ID agents are given for a chat: the start of its id. */
-export function browserId(chatId: string): string {
-  return chatId.slice(0, 8)
-}
-
 /** ACP's error code for an unknown session (RequestError.resourceNotFound). */
 const RESOURCE_NOT_FOUND = -32002
 
@@ -223,22 +246,33 @@ const RETRY_OUTCOMES: Record<TurnOutcome, string> = {
 }
 
 /** Chats always run in the agent's build mode; plan mode is not offered. */
-const BUILD_MODE: Record<AgentId, string> = {
+const BUILD_MODE: Record<AcpAgent, string> = {
   opencode: 'build',
   cline: 'act',
   commandcode: 'default'
 }
 
-interface PendingPermission {
-  chatId: string
-  resolve: (response: acp.RequestPermissionResponse) => void
-}
-
-export interface AgentEvents {
-  item(chatId: string, item: ChatItem): void
-  options(chatId: string, options: AgentOption[]): void
-  commands(chatId: string, commands: AgentCommand[]): void
-  stateChanged(): void
+/** What the manager needs from an agent: a CLI's ACP process, or the built-in harness. */
+interface AgentBackend {
+  readonly agent: AgentId
+  ensureSession(chatId: string): Promise<string>
+  getOptions(chatId: string): AgentOption[] | undefined
+  getCommands(chatId: string): AgentCommand[]
+  listModels(cwd: string): Promise<ModelSource[]>
+  applyOption(chatId: string, optionId: string, value: string): Promise<void>
+  release(chatId: string): Promise<void>
+  prompt(
+    chatId: string,
+    text: string,
+    attachments?: acp.ContentBlock[]
+  ): Promise<acp.PromptResponse>
+  endTurn(chatId: string, outcome: TurnOutcome): void
+  cancel(chatId: string): Promise<void>
+  explain(error: unknown): Promise<unknown>
+  /** The turn is alive (a permission was answered); agents without a turn watchdog leave it out. */
+  touchActivity?(chatId: string): void
+  resolvePermissionItem(chatId: string, id: string, resolved: string, auto?: boolean): void
+  stop(): void
 }
 
 /** One started agent process. A stuck one is replaced while it is still exiting. */
@@ -253,7 +287,7 @@ interface Run {
   stderr: string
 }
 
-class AgentProcess {
+class AgentProcess implements AgentBackend {
   /** The latest process; `connection` is set once it has initialized. */
   private run?: Run
   /** The latest process, kept after it exits so its failed requests can say why. */
@@ -291,9 +325,9 @@ class AgentProcess {
   private idleTimer?: NodeJS.Timeout
 
   constructor(
-    readonly agent: AgentId,
+    readonly agent: AcpAgent,
     private readonly events: AgentEvents,
-    private readonly permissions: Map<string, PendingPermission>,
+    private readonly permissions: Permissions,
     /** Set when this process serves only one project (see PROCESS_PER_PROJECT). */
     readonly projectId?: string
   ) {}
@@ -841,16 +875,7 @@ class AgentProcess {
   }
 
   private emit(chatId: string, item: ChatItem): void {
-    this.events.item(chatId, store.upsertItem(chatId, item))
-    if (item.kind === 'permission') this.updateWaiting(chatId)
-  }
-
-  /** Marks the chat as waiting while any of its permission requests is unanswered. */
-  private updateWaiting(chatId: string): void {
-    const waiting = [...this.permissions.values()].some((p) => p.chatId === chatId)
-    if (Boolean(store.getChat(chatId).waiting) === waiting) return
-    store.updateChat(chatId, { waiting })
-    this.events.stateChanged()
+    emitItem(this.events, this.permissions, chatId, item)
   }
 
   resolvePermissionItem(chatId: string, id: string, resolved: string, auto = false): void {
@@ -865,30 +890,7 @@ class AgentProcess {
     if (!chatId) return Promise.resolve({ outcome: { outcome: 'cancelled' } })
     // The agent spoke, and its turn is paused on the answer.
     this.touchActivity(chatId)
-    const id = crypto.randomUUID()
-    const item: Extract<ChatItem, { kind: 'permission' }> = {
-      kind: 'permission',
-      id,
-      title: params.toolCall.title ?? 'Tool call',
-      options: params.options.map((o) => ({ optionId: o.optionId, name: o.name, kind: o.kind }))
-    }
-    const chat = store.getChat(chatId)
-    // Project-only mode: anything outside the project always goes to the user,
-    // bypass or not, with the agent's own options (including "always").
-    const outside = chat.projectOnly
-      ? outsidePath(store.getProject(chat.projectId).path, params.toolCall)
-      : undefined
-    if (outside) item.outside = outside
-    const autoOption = chat.bypassPermissions && !outside ? bypassOption(item.options) : undefined
-    if (autoOption) {
-      this.emit(chatId, { ...item, resolved: autoOption, auto: true })
-      return Promise.resolve({ outcome: { outcome: 'selected', optionId: autoOption } })
-    }
-    // Registered before the item is shown, so the chat counts as waiting.
-    return new Promise((resolve) => {
-      this.permissions.set(id, { chatId, resolve })
-      this.emit(chatId, item)
-    })
+    return requestPermission(this.events, this.permissions, chatId, params.toolCall, params.options)
   }
 
   private onUpdate(params: acp.SessionNotification): void {
@@ -996,47 +998,6 @@ function providerRetry(
   return { attempt: retry.attempt, message: /[.!?]$/.test(message) ? message : `${message}.` }
 }
 
-/** Paths that are never "outside": shell plumbing like 2>/dev/null. */
-const HARMLESS_PATHS = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/stdin'])
-
-/**
- * For project-only mode: the first path a tool request touches outside the
- * project, if any. Looks at the locations the agent declares and at absolute or
- * ~ paths anywhere in the tool's arguments, including shell commands. URLs are
- * not paths (the "/" there follows ":"), so they are ignored.
- */
-function outsidePath(projectPath: string, toolCall: acp.ToolCallUpdate): string | undefined {
-  const candidates = (toolCall.locations ?? []).map((l) => l.path)
-  const scan = (value: unknown): void => {
-    if (typeof value === 'string') {
-      for (const [, path] of value.matchAll(/(?:^|[\s"'=(])((?:~|\/)[^\s"'`;|&<>()]*)/g)) {
-        candidates.push(path)
-      }
-    } else if (value && typeof value === 'object') {
-      for (const inner of Object.values(value)) scan(inner)
-    }
-  }
-  scan(toolCall.rawInput)
-  for (const candidate of candidates) {
-    if (HARMLESS_PATHS.has(candidate)) continue
-    const absolute = resolvePath(projectPath, candidate.replace(/^~(?=\/|$)/, homedir()))
-    const rel = relative(projectPath, absolute)
-    if (rel.startsWith('..') || isAbsolute(rel)) return candidate
-  }
-  return undefined
-}
-
-/**
- * The option bypass mode picks: allow once, so no lasting rule is written into
- * the agent's own config. Falls back to allow always when that is all there is.
- */
-function bypassOption(options: { optionId: string; kind: string }[]): string | undefined {
-  return (
-    options.find((o) => o.kind === 'allow_once')?.optionId ??
-    options.find((o) => o.kind === 'allow_always')?.optionId
-  )
-}
-
 function formatToolContent(content: acp.ToolCallContent[] | null | undefined): string | undefined {
   if (!content?.length) return undefined
   const parts = content.map((c) => {
@@ -1086,7 +1047,7 @@ function normalizeOptions(configOptions: acp.SessionConfigOption[]): AgentOption
   })
 }
 
-async function cliVersion(agent: AgentId): Promise<string | undefined> {
+async function cliVersion(agent: AcpAgent): Promise<string | undefined> {
   await loadShellPath()
   return new Promise((resolve) => {
     execFile(COMMANDS[agent].command, ['--version'], { timeout: 10_000 }, (error, stdout) =>
@@ -1128,24 +1089,29 @@ function stderrExcerpt(text: string): string {
 }
 
 export class AgentManager {
-  private readonly permissions = new Map<string, PendingPermission>()
+  private readonly permissions: Permissions = new Map()
   /** Started on first use: one per agent, or per agent and project (see PROCESS_PER_PROJECT). */
   private readonly processes = new Map<string, AgentProcess>()
   private readonly statuses = new Map<AgentId, Promise<AgentStatus>>()
+  /** Command Code through its Provider API, run in this process: one for all chats. */
+  private readonly harness: HarnessAgent
 
   constructor(
     private readonly events: AgentEvents,
     /** The page open in the built-in browser, for `@browser` messages. */
     private readonly browserPage: (chatId: string) => BrowserState | undefined
-  ) {}
+  ) {
+    this.harness = new HarnessAgent(events, this.permissions)
+  }
 
-  /** The process the chat runs in. */
-  private processFor(chatId: string): AgentProcess {
+  /** The agent the chat runs in. */
+  private processFor(chatId: string): AgentBackend {
     const { agent, projectId } = store.getChat(chatId)
     return this.process(agent, projectId)
   }
 
-  private process(agent: AgentId, projectId: string): AgentProcess {
+  private process(agent: AgentId, projectId: string): AgentBackend {
+    if (agent === HARNESS_AGENT) return this.harness
     const perProject = PROCESS_PER_PROJECT.has(agent)
     const key = perProject ? `${agent}:${projectId}` : agent
     let agentProcess = this.processes.get(key)
@@ -1163,6 +1129,18 @@ export class AgentManager {
 
   /** Whether the CLI is installed, and its version. */
   status(agent: AgentId): Promise<AgentStatus> {
+    // The harness needs only Command Code's key; it is looked up each time, so signing in shows at once.
+    if (agent === HARNESS_AGENT) {
+      return commandCodeKey().then((key) =>
+        key
+          ? { agent, available: true, version: 'Provider API' }
+          : {
+              agent,
+              available: false,
+              error: 'Command Code is not signed in: run `cmd login` in a terminal.'
+            }
+      )
+    }
     let cached = this.statuses.get(agent)
     if (!cached) {
       cached = cliVersion(agent).then((version) =>
@@ -1266,6 +1244,10 @@ export class AgentManager {
     const where = page?.url
       ? ` It currently shows ${page.url}${page.title ? ` ("${page.title}")` : ''}.`
       : ''
+    // The harness has the guidance in its system prompt already.
+    if (store.getChat(chatId).agent === HARNESS_AGENT) {
+      return `${text}\n\n@browser: use the browser tools for this.${where}`
+    }
     return `${text}\n\n@browser: use the ${BROWSER_SERVER} tools for this.${where} ${BROWSER_GUIDANCE}`
   }
 
@@ -1312,16 +1294,11 @@ export class AgentManager {
     const chat = store.getChat(chatId)
     if (chat.running) throw new Error('This chat is already running.')
     const compact = COMPACT.test(text.trim())
-    // Cline compacts on its own when its context fills up. Its ACP mode has no
-    // command for it: the text would reach the model as an ordinary message.
-    if (compact && chat.agent === 'cline') {
+    const noCompaction = compact ? NO_COMPACTION[chat.agent] : undefined
+    if (noCompaction) {
       for (const item of [
         { kind: 'user', id: crypto.randomUUID(), text },
-        {
-          kind: 'notice',
-          id: crypto.randomUUID(),
-          text: 'Cline compacts the conversation on its own when its context fills up. It has no command to do it now.'
-        }
+        { kind: 'notice', id: crypto.randomUUID(), text: noCompaction }
       ] as const) {
         this.events.item(chatId, store.upsertItem(chatId, item))
       }
@@ -1351,10 +1328,9 @@ export class AgentManager {
 
     let outcome: TurnOutcome = 'failed'
     try {
-      let prompt = this.withBrowserId(
-        chatId,
-        this.expandBrowserTag(chatId, this.expandSkill(chatId, text))
-      )
+      let prompt = this.expandBrowserTag(chatId, this.expandSkill(chatId, text))
+      // The harness passes each chat's browser ID to the tools itself.
+      if (chat.agent !== HARNESS_AGENT) prompt = this.withBrowserId(chatId, prompt)
       let blocks = [...this.fileLinks(chatId, text), ...(await attachmentBlocks(attachments))]
       if (TEXT_ONLY_PROMPTS.has(chat.agent)) {
         prompt = await withFilePaths(prompt, attachments)
@@ -1420,7 +1396,7 @@ export class AgentManager {
     pending.resolve({ outcome: { outcome: 'selected', optionId } })
     const agentProcess = this.processFor(chatId)
     // The turn resumes past the answer: its silence clock restarts from here.
-    agentProcess.touchActivity(chatId)
+    agentProcess.touchActivity?.(chatId)
     agentProcess.resolvePermissionItem(chatId, permissionId, optionId, auto)
   }
 
@@ -1439,5 +1415,6 @@ export class AgentManager {
 
   stopAll(): void {
     for (const agentProcess of this.processes.values()) agentProcess.stop()
+    this.harness.stop()
   }
 }

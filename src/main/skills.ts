@@ -24,17 +24,17 @@ const home = homedir()
 const GLOBAL_DIRS: { dir: string; agents: AgentId[] }[] = [
   { dir: join(home, '.claude/skills'), agents: ['opencode'] },
   { dir: join(home, '.config/opencode/skills'), agents: ['opencode'] },
-  { dir: join(home, '.agents/skills'), agents: ['opencode', 'commandcode'] },
+  { dir: join(home, '.agents/skills'), agents: ['opencode', 'commandcode', 'commandcode-api'] },
   { dir: join(home, '.cline/skills'), agents: ['cline'] },
-  { dir: join(home, '.commandcode/skills'), agents: ['commandcode'] }
+  { dir: join(home, '.commandcode/skills'), agents: ['commandcode', 'commandcode-api'] }
 ]
 const PROJECT_DIRS: { dir: string; agents: AgentId[] }[] = [
-  { dir: '.claude/skills', agents: ['opencode', 'cline'] },
+  { dir: '.claude/skills', agents: ['opencode', 'cline', 'commandcode-api'] },
   { dir: '.opencode/skills', agents: ['opencode'] },
-  { dir: '.agents/skills', agents: ['opencode', 'commandcode'] },
+  { dir: '.agents/skills', agents: ['opencode', 'commandcode', 'commandcode-api'] },
   { dir: '.cline/skills', agents: ['cline'] },
   { dir: '.clinerules/skills', agents: ['cline'] },
-  { dir: '.commandcode/skills', agents: ['commandcode'] }
+  { dir: '.commandcode/skills', agents: ['commandcode', 'commandcode-api'] }
 ]
 const PRIMARY_GLOBAL = GLOBAL_DIRS[0].dir
 /** Global folders that get a symlink to each global skill the app creates. */
