@@ -31,6 +31,7 @@ function on<Args extends unknown[]>(
 
 const api = {
   getState: (): Promise<AppState> => ipcRenderer.invoke('state:get'),
+  appVersion: (): Promise<string> => ipcRenderer.invoke('app:version'),
   onState: (listener: (state: AppState) => void) => on('state:changed', listener),
   onMenu: (listener: (command: MenuCommand) => void) => on('menu', listener),
   setTheme: (theme: Theme): Promise<void> => ipcRenderer.invoke('theme:set', theme),

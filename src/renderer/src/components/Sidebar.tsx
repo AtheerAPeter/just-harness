@@ -31,6 +31,10 @@ export function Sidebar({
   const [shown, setShown] = useState<Record<string, number>>({})
   /** The chat whose title is being edited in place. */
   const [renaming, setRenaming] = useState<string>()
+  const [version, setVersion] = useState<string>()
+  useEffect(() => {
+    window.api.appVersion().then(setVersion)
+  }, [])
   const now = useNow()
 
   function toggle(projectId: string): void {
@@ -186,6 +190,7 @@ export function Sidebar({
           <BookIcon /> Skills
         </button>
         <ThemeToggle />
+        {version && <span className="app-version muted">v{version}</span>}
       </div>
     </nav>
   )

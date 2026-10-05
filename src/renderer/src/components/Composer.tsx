@@ -10,7 +10,7 @@ import {
   type Attachment
 } from '../../../shared/types'
 import { Picker } from './Picker'
-import { ModelPicker } from './ModelPicker'
+import { ModelPicker } from './model-picker/ModelPicker'
 import { CompletionMenu, type CompletionItem } from './CompletionMenu'
 import { CloseIcon, FileIcon, PaperclipIcon, SendIcon, StopIcon } from './icons'
 
