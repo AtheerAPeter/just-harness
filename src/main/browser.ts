@@ -38,6 +38,8 @@ const EMPTY_STATE: BrowserState = {
 const DEFAULT_BOUNDS = { x: 0, y: 0, width: 1024, height: 768 }
 /** Tabs one chat's browser may have open. */
 const MAX_TABS = 20
+/** Corner radius of the page, matching .browser-viewport in styles.css. */
+const PAGE_RADIUS = 12
 /**
  * For tabs and the windows pages open as tabs. With the sandbox on, iframes get
  * no Node.js either way; they run the page preload (see onPageDialog).
@@ -275,6 +277,7 @@ export class BuiltinBrowser {
     }
   ): ChatPage {
     const view = new WebContentsView(options.opened ?? { webPreferences: TAB_PREFERENCES })
+    view.setBorderRadius(PAGE_RADIUS)
     const tab = new ChatPage(`t${browser.next++}`, view, options.openedBy)
     const contents = tab.contents
     // Tabs out of sight and tabs of background chats keep running their automation.

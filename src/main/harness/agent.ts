@@ -16,16 +16,8 @@ import {
   type AgentEvents,
   type Permissions
 } from '../permissions'
-import {
-  defaultEffort,
-  defaultModel,
-  effortLevels,
-  findModel,
-  listModels,
-  parseArguments,
-  streamReply,
-  type Model
-} from './commandcode'
+import { defaultEffort, effortLevels, parseArguments, streamReply, type Model } from './wire'
+import type { Provider, Source } from './provider'
 import { browserTools, CORE_TOOLS, runTool, type Tool } from './tools'
 import type { AssistantTurn, Effort, Part, Reply, ToolResult, Turn } from './types'
 
@@ -36,8 +28,6 @@ import type { AssistantTurn, Effort, Part, Reply, ToolResult, Turn } from './typ
  * system prompt is fixed when the chat starts, the tools are always listed the
  * same way, and the transcript only ever grows.
  */
-
-export const HARNESS_AGENT = 'commandcode-api'
 
 /** A reply that streams nothing this long means the gateway or upstream hangs. */
 const STALL_TIMEOUT_MS = 5 * 60_000
@@ -65,17 +55,27 @@ const PERMISSION_OPTIONS: acp.PermissionOption[] = [
   { optionId: 'reject_once', name: 'Reject', kind: 'reject_once' }
 ]
 
+/** A chat's model: which source bills it, the model, and its effort. */
+interface Choice {
+  source: Source
+  model: Model
+  effort: Effort
+}
+
 export class HarnessAgent {
-  readonly agent = HARNESS_AGENT
+  readonly agent: Provider['id']
   private sessions = new Map<string, Session>()
   /** The running turn of each chat, aborted by Stop. */
   private turns = new Map<string, AbortController>()
   private options = new Map<string, AgentOption[]>()
 
   constructor(
+    private readonly provider: Provider,
     private readonly events: AgentEvents,
     private readonly permissions: Permissions
-  ) {}
+  ) {
+    this.agent = provider.id
+  }
 
   // --- Sessions -------------------------------------------------------------
 
@@ -151,7 +151,7 @@ Guidelines:
         `<project_instructions path="${instructions}">\n${readFileSync(instructions, 'utf8').trim()}\n</project_instructions>`
       )
     }
-    const skills = listSkills(project.path).filter((s) => s.agents.includes(HARNESS_AGENT))
+    const skills = listSkills(project.path).filter((s) => s.agents.includes(this.agent))
     if (skills.length > 0) {
       sections.push(
         `<skills>\nSkills are instructions for specific tasks. When a task matches a skill, read its SKILL.md and follow it.\n${skills
@@ -180,36 +180,73 @@ Guidelines:
     return []
   }
 
+  /** Every source's models, for the model picker; a source is a picker setting when there are several. */
   async listModels(): Promise<ModelSource[]> {
-    const models = await listModels()
-    return [{ option: modelOption(models, (await defaultModel(models)) ?? '') }]
+    const sources = await this.provider.sources()
+    const preferred = await this.provider.preferred()
+    return sources.map((source) => {
+      const current = source.models.some((m) => m.id === preferred?.model)
+        ? preferred!.model
+        : (source.models[0]?.id ?? '')
+      const option = modelOption(source.models, current)
+      return sources.length > 1
+        ? { setting: { optionId: 'source', value: source.id, name: source.name }, option }
+        : { option }
+    })
   }
 
   async applyOption(chatId: string, optionId: string, value: string): Promise<void> {
     await this.ensureSession(chatId)
     const settings = { ...store.getChat(chatId).settings, [optionId]: value }
-    // A model without the chosen effort level gets its default one.
-    if (optionId === 'model') delete settings.effort
+    // Another source has other models; another model may lack the chosen effort.
+    if (optionId === 'source') delete settings.model
+    if (optionId === 'source' || optionId === 'model') delete settings.effort
     store.updateChat(chatId, { settings })
     await this.setOptions(chatId)
   }
 
-  /** The chat's model and effort, settled from its settings and what the catalog has now. */
-  private async choice(chatId: string): Promise<{ model: Model; effort: Effort }> {
+  /**
+   * The chat's source, model and effort, settled from its settings and what the
+   * provider lists now. A new chat starts where the provider's own CLI is set.
+   */
+  private async choice(chatId: string): Promise<Choice> {
     const settings = store.getChat(chatId).settings
-    const id = settings.model ?? (await defaultModel(await listModels()))
-    if (!id) throw new Error('Command Code lists no models right now. Try again in a moment.')
-    const model = await findModel(id)
+    const sources = await this.provider.sources()
+    const preferred = settings.model ? undefined : await this.provider.preferred()
+    const source =
+      sources.find((s) => s.id === (settings.source ?? preferred?.source)) ??
+      sources.find((s) => s.models.some((m) => m.id === preferred?.model)) ??
+      sources.find((s) => s.models.length > 0)
+    if (!source)
+      throw new Error(`${this.provider.name} lists no models right now. Try again in a moment.`)
+    const id = settings.model ?? preferred?.model
+    const model =
+      source.models.find((m) => m.id === id) ??
+      // A model the provider stopped listing still works for chats already on it.
+      (settings.model ? fallbackModel(settings.model) : source.models[0])
+    if (!model)
+      throw new Error(`${this.provider.name} lists no models right now. Try again in a moment.`)
     const levels = effortLevels(model)
     const effort = levels.includes(settings.effort as Effort)
       ? (settings.effort as Effort)
       : defaultEffort(model)
-    return { model, effort }
+    return { source, model, effort }
   }
 
   private async setOptions(chatId: string): Promise<void> {
-    const { model, effort } = await this.choice(chatId)
-    const options = [modelOption(await listModels(), model.id)]
+    const { source, model, effort } = await this.choice(chatId)
+    const sources = await this.provider.sources()
+    const options: AgentOption[] = []
+    if (sources.length > 1) {
+      options.push({
+        id: 'source',
+        name: 'Plan',
+        category: 'model',
+        currentValue: source.id,
+        values: sources.map((s) => ({ value: s.id, name: s.name }))
+      })
+    }
+    options.push(modelOption(source.models, model.id))
     const levels = effortLevels(model)
     if (levels.length > 0) {
       options.push({
@@ -252,8 +289,7 @@ Guidelines:
       const tools = await this.tools()
       for (;;) {
         if (signal.aborted) return { stopReason: 'cancelled' }
-        const { model, effort } = await this.choice(chatId)
-        const reply = await this.reply(chatId, session, tools, model, effort, signal)
+        const reply = await this.reply(chatId, session, tools, await this.choice(chatId), signal)
         if (reply.turn.text || reply.turn.toolCalls.length > 0) {
           await this.append(session, { type: 'turn', turn: reply.turn })
         }
@@ -300,7 +336,7 @@ Guidelines:
     try {
       return [...CORE_TOOLS, ...(await browserTools())]
     } catch (error) {
-      console.error('[commandcode-api] browser tools unavailable:', error)
+      console.error(`[${this.agent}] browser tools unavailable:`, error)
       return CORE_TOOLS
     }
   }
@@ -313,10 +349,11 @@ Guidelines:
     chatId: string,
     session: Session,
     tools: Tool[],
-    model: Model,
-    effort: Effort,
+    { source, model, effort }: Choice,
     signal: AbortSignal
   ): Promise<Reply> {
+    // Fetched for every request: credentials can change (signing in again, a renewed token).
+    const endpoint = await this.provider.endpoint(source.id, chatId)
     const request = new AbortController()
     const onAbort = (): void => request.abort()
     signal.addEventListener('abort', onAbort)
@@ -330,6 +367,8 @@ Guidelines:
     let text = ''
     try {
       return await streamReply(
+        endpoint,
+        model,
         {
           model: model.id,
           effort,
@@ -359,7 +398,7 @@ Guidelines:
       if (text) await this.append(session, { type: 'turn', turn: partial })
       if (stalled) {
         throw new Error(
-          `Command Code sent nothing for ${STALL_TIMEOUT_MS / 60_000} minutes, so the reply was stopped. Send your message again to continue.`
+          `${this.provider.name} sent nothing for ${STALL_TIMEOUT_MS / 60_000} minutes, so the reply was stopped. Send your message again to continue.`
         )
       }
       throw error
@@ -454,7 +493,8 @@ Guidelines:
       rawInput: args,
       locations: tool.paths(args, cwd).map((path) => ({ path }))
     }
-    const outside = store.getChat(chatId).projectOnly ? outsidePath(cwd, toolCall) : undefined
+    // Read-only tools run without asking only inside the project, in every mode.
+    const outside = outsidePath(cwd, toolCall)
     if (!outside && (tool.readOnly || session.allowed.has(tool.spec.name))) return 'allow'
     const response = await requestPermission(
       this.events,
@@ -509,20 +549,28 @@ Guidelines:
   }
 }
 
-/** The model picker's list: "provider/name", so models group by who makes them. */
+/** The model picker's list: "maker/name" where the maker is known, so models group by it. */
 function modelOption(models: Model[], current: string): AgentOption {
-  const values = models.map((m) => ({ value: m.id, name: `${providerOf(m.id)}/${m.name}` }))
-  // A model Command Code stopped listing stays selectable for chats already on it.
+  const values = models.map((m) => {
+    const maker = makerOf(m.id)
+    return { value: m.id, name: m.name.includes('/') || !maker ? m.name : `${maker}/${m.name}` }
+  })
+  // A model the provider stopped listing stays selectable for chats already on it.
   if (current && !values.some((v) => v.value === current))
     values.push({ value: current, name: current })
   return { id: 'model', name: 'Model', category: 'model', currentValue: current, values }
 }
 
-function providerOf(id: string): string {
+function makerOf(id: string): string | undefined {
   if (id.includes('/')) return id.split('/')[0]
   if (id.startsWith('claude-')) return 'anthropic'
   if (id.startsWith('gpt-')) return 'openai'
-  return 'command-code'
+  return undefined
+}
+
+/** A model no longer listed: Claude ids answer on Messages, the rest on Chat Completions. */
+function fallbackModel(id: string): Model {
+  return { id, name: id, api: id.startsWith('claude-') ? 'messages' : 'chat', vision: false }
 }
 
 const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)

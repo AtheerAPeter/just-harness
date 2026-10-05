@@ -12,6 +12,7 @@ import {
 import { Picker } from './Picker'
 import { ModelPicker } from './model-picker/ModelPicker'
 import { CompletionMenu, type CompletionItem } from './CompletionMenu'
+import { writePref } from '../lib/prefs'
 import { CloseIcon, FileIcon, PaperclipIcon, SendIcon, StopIcon } from './icons'
 
 interface ComposerProps {
@@ -345,7 +346,7 @@ export function Composer({
             {error}
           </span>
         )}
-        <div className={`permission-mode ${permissionMode(chat)}`}>
+        <div className="permission-mode" data-mode={permissionMode(chat)}>
           <Picker
             title="Permissions"
             value={permissionMode(chat)}
@@ -360,11 +361,7 @@ export function Composer({
               window.api.setBypassPermissions(chat.id, permissions.bypassPermissions)
               window.api.setProjectOnly(chat.id, permissions.projectOnly)
               // Remembered for new chats.
-              try {
-                localStorage.setItem('permissions', JSON.stringify(permissions))
-              } catch {
-                // A convenience only.
-              }
+              writePref('permissions', permissions)
             }}
           />
         </div>

@@ -1,10 +1,13 @@
-export type AgentId = 'opencode' | 'cline' | 'commandcode' | 'commandcode-api'
+export type AgentId =
+  'opencode' | 'cline' | 'commandcode' | 'commandcode-api' | 'opencode-api' | 'cline-api'
 
 export const AGENTS: { id: AgentId; label: string }[] = [
   { id: 'opencode', label: 'OpenCode' },
   { id: 'cline', label: 'Cline' },
   { id: 'commandcode', label: 'Command Code' },
-  { id: 'commandcode-api', label: 'Command Code API' }
+  { id: 'commandcode-api', label: 'Command Code API' },
+  { id: 'opencode-api', label: 'OpenCode API' },
+  { id: 'cline-api', label: 'Cline API' }
 ]
 
 export interface Project {
