@@ -301,6 +301,14 @@ pre {
   border-top: 1px solid var(--border);
 }
 
+.app-version {
+  margin-left: auto;
+  padding-right: 4px;
+  font-size: 11px;
+  opacity: 0.6;
+  user-select: none;
+}
+
 .add-project {
   display: flex;
   align-items: center;
@@ -1527,7 +1535,10 @@ pre {
   color: var(--text-muted);
 }
 
-/* Agent and model picker: agents on a rail, the selected one's models beside it */
+/*
+ * Agent and model picker, in three columns: where the models come from (an
+ * agent, or one of its providers), the providers within that, and the models.
+ */
 
 .agent-logo {
   flex-shrink: 0;
@@ -1535,85 +1546,19 @@ pre {
 }
 
 .model-menu {
-  flex-direction: row;
-  width: 400px;
-}
-
-.model-rail {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px;
-  border-right: 1px solid var(--border);
-}
-
-.model-rail-item {
-  position: relative;
-  width: 34px;
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-}
-
-.model-rail-item:hover:not(:disabled) {
-  background: var(--fill);
-}
-
-.model-rail-item.active {
-  background: var(--bg-selected);
-}
-
-.model-rail-item.active::before {
-  content: '';
-  position: absolute;
-  top: 9px;
-  bottom: 9px;
-  left: -6px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: var(--accent);
-}
-
-.model-rail-item:disabled {
-  opacity: 0.35;
-}
-
-/* Tells an agent's providers apart when it has several on the rail. */
-.model-rail-badge {
-  position: absolute;
-  right: 1px;
-  bottom: 1px;
-  min-width: 14px;
-  padding: 0 3px;
-  border-radius: 4px;
-  background: var(--text);
-  color: var(--bg);
-  font-size: 8.5px;
-  font-weight: 700;
-  line-height: 13px;
-}
-
-.model-heading {
-  padding: 8px 14px 2px;
-  color: var(--text-muted);
-  font-size: 11.5px;
-  font-weight: 600;
-}
-
-.model-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
+  width: min(780px, calc(100vw - 48px));
+  height: min(480px, calc(100vh - 160px));
+  border-radius: 14px;
+  /* Solid: a menu this large stays readable over the chat, and sticky titles hide the rows under them. */
+  background: var(--card);
+  backdrop-filter: none;
 }
 
 .model-search {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 14px;
+  gap: 10px;
+  padding: 0 18px;
   border-bottom: 1px solid var(--border);
   color: var(--text-muted);
 }
@@ -1621,31 +1566,188 @@ pre {
 .model-search input {
   flex: 1;
   min-width: 0;
-  padding: 10px 0;
+  padding: 14px 0;
   border: 0;
   outline: none;
   background: transparent;
+  font-size: 14px;
 }
 
 .model-search input::placeholder {
   color: var(--text-muted);
 }
 
-.model-menu .picker-list {
-  max-height: 340px;
+.model-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
 }
 
-.model-source {
+.model-column {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.model-sources {
+  flex: 0 0 240px;
+  border-right: 1px solid var(--border);
+}
+
+.model-providers {
+  flex: 0 0 170px;
+  border-right: 1px solid var(--border);
+}
+
+.model-column-title {
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.model-list {
+  flex: 1;
+  min-width: 0;
+  /* Keyboard scrolling keeps the active row clear of a sticky section title. */
+  scroll-padding-top: 34px;
+}
+
+.model-agent-group + .model-agent-group,
+.model-agent-group + .model-source-item,
+.model-source-item + .model-agent-group {
+  margin-top: 6px;
+}
+
+.model-agent-name {
   display: flex;
   align-items: center;
-  gap: 5px;
-  min-width: 0;
+  gap: 10px;
+  padding: 7px 10px 4px;
+  color: var(--text);
 }
 
-.model-source > span {
+.model-agent-name.disabled {
+  opacity: 0.45;
+}
+
+.model-source-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--text);
+}
+
+/* A provider of the agent above it, lined up with the agent's name. */
+.model-source-item.nested {
+  padding-left: 38px;
+  color: var(--text-soft);
+}
+
+.model-source-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.model-source-item.active {
+  background: var(--bg-selected);
+  color: var(--text);
+}
+
+.model-source-item:disabled {
+  opacity: 0.45;
+}
+
+.model-source-name {
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Marks where the chat's current model is. */
+.model-current-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.model-count {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-section-title {
+  /* Stays on top while its models scroll under it. */
+  position: sticky;
+  top: -8px;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 -8px;
+  padding: 12px 18px 6px;
+  background: var(--card);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.model-section-title > span:first-child {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.model-row.active {
+  background: var(--bg-selected);
+}
+
+.model-row > svg {
+  flex-shrink: 0;
+  color: var(--text-soft);
+}
+
+.model-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.model-row-name,
+.model-row small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-row small {
+  color: var(--text-muted);
+  font-size: 11.5px;
 }
 
 /* Browser: the page itself is a native view placed over .browser-viewport */

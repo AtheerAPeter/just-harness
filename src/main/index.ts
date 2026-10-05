@@ -129,6 +129,7 @@ function registerIpc(browser: BuiltinBrowser): void {
   )
   ipcMain.handle('theme:set', (_e, theme: Theme) => setTheme(theme))
   ipcMain.handle('state:get', () => store.getState())
+  ipcMain.handle('app:version', () => app.getVersion())
 
   ipcMain.handle('project:add', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
