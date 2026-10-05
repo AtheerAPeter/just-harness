@@ -7,7 +7,9 @@ const LOGOS: Record<AgentId, string> = {
   opencode: opencodeLogo,
   cline: clineLogo,
   commandcode: commandcodeLogo,
-  'commandcode-api': commandcodeLogo
+  'commandcode-api': commandcodeLogo,
+  'opencode-api': opencodeLogo,
+  'cline-api': clineLogo
 }
 
 export function AgentLogo({

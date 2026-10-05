@@ -14,7 +14,7 @@
 
 Just Harness has no model providers and no API keys of its own. It starts the CLIs you already have installed, talks to them over the [Agent Client Protocol](https://agentclientprotocol.com) (`opencode acp`, `cline --acp`, `cmd acp`), and shows whatever models they report. If a model works in your terminal, it works here.
 
-There is one exception, **Command Code API**. Here the app runs its own small agent, modeled on [pi](https://github.com/earendil-works/pi): four tools (read, bash, edit, write) plus the browser panel. It calls Command Code's [Provider API](https://commandcode.ai/docs/provider) directly, with the key `cmd login` saved. Its model list comes from Command Code live, so new models show up without an update.
+The exceptions are **Command Code API**, **OpenCode API** and **Cline API**. For these the app runs its own small agent, modeled on [pi](https://github.com/earendil-works/pi): four tools (read, bash, edit, write) plus the browser panel. It calls each provider's API directly with the login its CLI already saved: `cmd login`, `opencode auth login` (Zen and Go) or `cline auth` (usage billing and ClinePass). Model lists come from the providers live, so new models show up without an update. The free models of OpenCode and Cline are not listed: both serve them only to their own apps.
 
 ## Keyboard shortcuts
 
@@ -41,7 +41,7 @@ Or download the `.dmg` from [Releases](https://github.com/AtheerAPeter/just-harn
 Apple Silicon only. You also need at least one agent installed and signed in:
 - opencode: `curl -fsSL https://opencode.ai/install | bash`, then `opencode auth login`
 - Cline: `npm i -g cline`, then `cline auth`
-- Command Code (1.74 or newer): `npm i -g command-code`, then `cmd login`. Command Code API uses the same login; its API access needs a GOAT plan or higher.
+- Command Code (1.74 or newer): `npm i -g command-code`, then `cmd login`. Command Code API uses the same login; its API access needs a GOAT plan or higher. OpenCode API and Cline API use the opencode and Cline logins above.
 
 The app finds the CLIs through your login shell's `PATH`, the same way your terminal does.
 
@@ -58,7 +58,7 @@ npx electron-vite build && npx electron-builder --mac dmg   # build the .app and
 ## How it works
 
 - `src/main/agents.ts` runs one ACP connection per agent CLI, maps chats to ACP sessions, and turns session updates into chat items. Command Code's ACP process serves a single folder, so it gets one connection per project.
-- `src/main/harness/` is the Command Code API agent. `commandcode.ts` reads the model catalog (saved to disk, refreshed every 10 minutes) and calls Claude models on `/v1/messages` with the Anthropic SDK and every other model on `/v1/chat/completions` with the OpenAI SDK. `agent.ts` runs the loop and stores each chat as an append-only JSONL transcript. The system prompt is fixed when a chat starts, the tools are always listed in the same order, and each reply is replayed exactly as the API returned it (thinking signatures, reasoning fields). Every request therefore extends the previous one byte for byte and hits the provider's prompt cache. Claude requests carry cache breakpoints on the tools, the system prompt and the newest message.
+- `src/main/harness/` is the app's own agent. `commandcode.ts`, `opencode.ts` and `cline.ts` say where each provider's models live and how to sign in; `catalog.ts` keeps their model lists on disk and refreshes them every 10 minutes. `wire.ts` sends models on Anthropic's `/v1/messages` with the Anthropic SDK and the rest on `/v1/chat/completions` with the OpenAI SDK. Cline's login is shared with the CLI: when it is about to expire, the app renews it under the CLI's own lock and writes it back, so both keep working. `agent.ts` runs the loop and stores each chat as an append-only JSONL transcript. The system prompt is fixed when a chat starts, the tools are always listed in the same order, and each reply is replayed exactly as the API returned it (thinking signatures, reasoning fields). Every request therefore extends the previous one byte for byte and hits the provider's prompt cache. Claude requests carry cache breakpoints on the tools, the system prompt and the newest message.
 - `src/main/browser.ts` owns the browser panel, a `WebContentsView` on a persistent session partition, so cookies and logins are stored on disk.
 - `src/main/page-driver.ts` drives a page for agents over the DevTools protocol, with Playwright's in-page script for snapshots and element checks (the approach is adapted from ZCode's browser). `src/preload/page.ts` sends a page's alerts and confirms to the app.
 - `src/main/browser-mcp.ts` is an MCP server on `127.0.0.1` (bearer-token protected) that exposes the panel to agents. Opencode and Command Code receive it through ACP; Cline's ACP mode ignores MCP servers sent by clients, so the app registers it with `cline mcp add`.

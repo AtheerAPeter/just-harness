@@ -52,8 +52,8 @@ function createWindow(): BuiltinBrowser {
     minHeight: 560,
     show: false,
     titleBarStyle: 'hiddenInset',
-    // Centred on the 52px toolbar row.
-    trafficLightPosition: { x: 20, y: 19 },
+    // Inside the sidebar panel, centred on the 52px toolbar row of the panels (10px in from the window edge).
+    trafficLightPosition: { x: 24, y: 29 },
     // Opaque, in the chat's background color: a transparent window would make
     // macOS blend it with what is behind it on every frame.
     backgroundColor: windowBackground(),
@@ -100,9 +100,9 @@ function createWindow(): BuiltinBrowser {
   return browser
 }
 
-/** The window's color behind the page, matching --bg in styles.css. */
+/** The window's color behind the page, matching --canvas in styles.css. */
 function windowBackground(): string {
-  return nativeTheme.shouldUseDarkColors ? '#15171b' : '#f8f9fb'
+  return nativeTheme.shouldUseDarkColors ? '#0c0c0e' : '#eceef2'
 }
 
 /**

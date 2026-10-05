@@ -5,24 +5,7 @@ import { ChatView } from './components/ChatView'
 import { SkillsView } from './components/SkillsView'
 import { BrowserPanel } from './components/BrowserPanel'
 import { ChatIcon, GlobeIcon, SidebarIcon } from './components/icons'
-
-/** Per-viewer UI preferences. Storage can be unavailable, so every access is guarded. */
-function readPref<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key)
-    return raw === null ? fallback : (JSON.parse(raw) as T)
-  } catch {
-    return fallback
-  }
-}
-
-function writePref(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    // Preferences are a convenience; losing them is fine.
-  }
-}
+import { readPref, writePref } from './lib/prefs'
 
 export default function App(): React.JSX.Element {
   const [state, setState] = useState<AppState>({ projects: [], chats: [] })
@@ -151,11 +134,15 @@ export default function App(): React.JSX.Element {
             {view === 'skills' ? 'Skills' : chat ? chat.title : 'Just Harness'}
           </div>
           {view === 'chat' && chat?.waiting && (
-            <span className="status-chip waiting">Waiting for you</span>
+            <span className="status-chip waiting">Needs you</span>
           )}
           {view === 'chat' && chat?.running && !chat.waiting && (
-            <span className="status-chip running">Working</span>
+            <span className="status-chip running">
+              <span className="spinner" />
+              Working
+            </span>
           )}
+          <span className="spacer" />
           <button
             className={`icon-btn${browserOpen ? ' on' : ''}`}
             title="Toggle browser (⌘B)"

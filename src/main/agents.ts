@@ -40,11 +40,17 @@ import {
   type Permissions
 } from './permissions'
 import { chatPreview } from './preview'
-import { HARNESS_AGENT, HarnessAgent } from './harness/agent'
-import { apiKey as commandCodeKey } from './harness/commandcode'
+import { HarnessAgent } from './harness/agent'
+import { isHarnessAgent, type HarnessAgentId, type Provider } from './harness/provider'
+import { commandCode } from './harness/commandcode'
+import { openCode } from './harness/opencode'
+import { cline } from './harness/cline'
 
-/** Agents run as a CLI over ACP; the built-in harness is not one. */
-type AcpAgent = Exclude<AgentId, typeof HARNESS_AGENT>
+/** Agents run as a CLI over ACP; the app's own harness agents are not. */
+type AcpAgent = Exclude<AgentId, HarnessAgentId>
+
+/** The provider APIs the app's own harness runs on. */
+const PROVIDERS: Provider[] = [commandCode, openCode, cline]
 
 const COMMANDS: Record<AcpAgent, { command: string; args: string[] }> = {
   opencode: { command: 'opencode', args: ['acp'] },
@@ -103,7 +109,9 @@ const LOGIN_COMMANDS: Record<AgentId, string> = {
   opencode: 'opencode auth login',
   cline: 'cline auth',
   commandcode: 'cmd login',
-  'commandcode-api': 'cmd login'
+  'commandcode-api': 'cmd login',
+  'opencode-api': 'opencode auth login',
+  'cline-api': 'cline auth'
 }
 
 /**
@@ -199,14 +207,18 @@ const UNLISTED_COMMANDS: Record<AcpAgent, AgentCommand[]> = {
 /** A prompt asking to compact the conversation. */
 const COMPACT = /^\/compact(\s|$)/
 
+const HARNESS_NO_COMPACTION =
+  "The app's own agents do not compact conversations. Start a new chat when this one gets long."
+
 /** What /compact shows for agents that cannot compact on request. */
 const NO_COMPACTION: Partial<Record<AgentId, string>> = {
   // Cline compacts on its own when its context fills up. Its ACP mode has no
   // command for it: the text would reach the model as an ordinary message.
   cline:
     'Cline compacts the conversation on its own when its context fills up. It has no command to do it now.',
-  'commandcode-api':
-    'Command Code API does not compact conversations. Start a new chat when this one gets long.'
+  'commandcode-api': HARNESS_NO_COMPACTION,
+  'opencode-api': HARNESS_NO_COMPACTION,
+  'cline-api': HARNESS_NO_COMPACTION
 }
 
 /** Pasted images have no file; save them so a path can be given to the agent. */
@@ -1093,15 +1105,17 @@ export class AgentManager {
   /** Started on first use: one per agent, or per agent and project (see PROCESS_PER_PROJECT). */
   private readonly processes = new Map<string, AgentProcess>()
   private readonly statuses = new Map<AgentId, Promise<AgentStatus>>()
-  /** Command Code through its Provider API, run in this process: one for all chats. */
-  private readonly harness: HarnessAgent
+  /** The app's own agents, one per provider API, each serving all its chats. */
+  private readonly harness = new Map<HarnessAgentId, HarnessAgent>()
 
   constructor(
     private readonly events: AgentEvents,
     /** The page open in the built-in browser, for `@browser` messages. */
     private readonly browserPage: (chatId: string) => BrowserState | undefined
   ) {
-    this.harness = new HarnessAgent(events, this.permissions)
+    for (const provider of PROVIDERS) {
+      this.harness.set(provider.id, new HarnessAgent(provider, events, this.permissions))
+    }
   }
 
   /** The agent the chat runs in. */
@@ -1111,7 +1125,7 @@ export class AgentManager {
   }
 
   private process(agent: AgentId, projectId: string): AgentBackend {
-    if (agent === HARNESS_AGENT) return this.harness
+    if (isHarnessAgent(agent)) return this.harness.get(agent)!
     const perProject = PROCESS_PER_PROJECT.has(agent)
     const key = perProject ? `${agent}:${projectId}` : agent
     let agentProcess = this.processes.get(key)
@@ -1129,15 +1143,16 @@ export class AgentManager {
 
   /** Whether the CLI is installed, and its version. */
   status(agent: AgentId): Promise<AgentStatus> {
-    // The harness needs only Command Code's key; it is looked up each time, so signing in shows at once.
-    if (agent === HARNESS_AGENT) {
-      return commandCodeKey().then((key) =>
-        key
-          ? { agent, available: true, version: 'Provider API' }
+    // The harness needs only the provider's sign-in; it is checked each time, so signing in shows at once.
+    if (isHarnessAgent(agent)) {
+      const provider = PROVIDERS.find((p) => p.id === agent)!
+      return provider.signedIn().then((signedIn) =>
+        signedIn
+          ? { agent, available: true, version: 'API' }
           : {
               agent,
               available: false,
-              error: 'Command Code is not signed in: run `cmd login` in a terminal.'
+              error: `${provider.name} is not signed in. ${provider.signIn}`
             }
       )
     }
@@ -1245,7 +1260,7 @@ export class AgentManager {
       ? ` It currently shows ${page.url}${page.title ? ` ("${page.title}")` : ''}.`
       : ''
     // The harness has the guidance in its system prompt already.
-    if (store.getChat(chatId).agent === HARNESS_AGENT) {
+    if (isHarnessAgent(store.getChat(chatId).agent)) {
       return `${text}\n\n@browser: use the browser tools for this.${where}`
     }
     return `${text}\n\n@browser: use the ${BROWSER_SERVER} tools for this.${where} ${BROWSER_GUIDANCE}`
@@ -1330,7 +1345,7 @@ export class AgentManager {
     try {
       let prompt = this.expandBrowserTag(chatId, this.expandSkill(chatId, text))
       // The harness passes each chat's browser ID to the tools itself.
-      if (chat.agent !== HARNESS_AGENT) prompt = this.withBrowserId(chatId, prompt)
+      if (!isHarnessAgent(chat.agent)) prompt = this.withBrowserId(chatId, prompt)
       let blocks = [...this.fileLinks(chatId, text), ...(await attachmentBlocks(attachments))]
       if (TEXT_ONLY_PROMPTS.has(chat.agent)) {
         prompt = await withFilePaths(prompt, attachments)
@@ -1415,6 +1430,6 @@ export class AgentManager {
 
   stopAll(): void {
     for (const agentProcess of this.processes.values()) agentProcess.stop()
-    this.harness.stop()
+    for (const agent of this.harness.values()) agent.stop()
   }
 }
