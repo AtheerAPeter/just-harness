@@ -28,7 +28,6 @@
   /* Flat fills on glass: hover, tracks, chips. */
   --fill: rgba(21, 23, 27, 0.05);
   --fill-strong: rgba(21, 23, 27, 0.09);
-  --row-hover: rgba(21, 23, 27, 0.025);
   --hover: rgba(21, 23, 27, 0.04);
 
   /* The canvas the panels sit on; also the window's color (index.ts). */
@@ -45,13 +44,9 @@
   --raised: #ffffff;
   --raised-shadow: 0 0 0 1px rgba(21, 23, 27, 0.06), 0 1px 2px rgba(20, 30, 50, 0.06);
 
-  /* Cards in the chat: tool groups, todos. */
+  /* Cards: the new-skill form. */
   --card: #ffffff;
   --card-edge: 0 0 0 1px var(--border);
-  --card-shadow: 0 1px 2px rgba(20, 30, 50, 0.04);
-  --tile: #f2f3f6;
-  /* The ring between stacked tiles, in the card's color. */
-  --tile-gap: #ffffff;
   /* Sunken: output, diffs, commands. */
   --well: #f6f7f9;
   /* Opaque, for large menus and sticky titles that must hide what scrolls under them. */
@@ -112,7 +107,6 @@
 
     --fill: rgba(255, 255, 255, 0.055);
     --fill-strong: rgba(255, 255, 255, 0.1);
-    --row-hover: rgba(255, 255, 255, 0.03);
     --hover: rgba(255, 255, 255, 0.04);
 
     --canvas: #0c0c0e;
@@ -126,9 +120,6 @@
 
     --card: #1d1d20;
     --card-edge: 0 0 0 1px var(--border);
-    --card-shadow: none;
-    --tile: #27272b;
-    --tile-gap: #1d1d20;
     --well: #141416;
     --surface: #1d1d20;
 
@@ -891,7 +882,7 @@ kbd {
   padding: 26px 28px 30px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   font-size: 13.5px;
   line-height: 1.6;
   user-select: text;
@@ -949,39 +940,7 @@ kbd {
   color: var(--text-soft);
 }
 
-.thinking-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-width: 0;
-  padding: 2px 4px;
-  color: var(--text-muted);
-  text-align: left;
-}
-
-.thinking-head svg {
-  flex-shrink: 0;
-}
-
-.thinking-label {
-  flex-shrink: 0;
-}
-
-.thinking-line {
-  min-width: 0;
-  color: var(--text-soft);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.thinking-head:hover .thinking-label {
-  color: var(--text);
-}
-
 .thinking-body {
-  padding: 4px 4px 4px 25px;
   color: var(--text-soft);
   font-size: 13px;
 }
@@ -1010,121 +969,97 @@ kbd {
 
 .working {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
-  padding: 2px 4px;
-  color: var(--text-soft);
+  padding: 3px 4px;
   font-size: 13px;
+  font-weight: 500;
 }
 
 .working-time {
   color: var(--text-muted);
 }
 
-/* Cards: a group of tool calls, and todos */
+/*
+ * Activity: tool calls, reasoning and todos as lines of text, like Codex. A
+ * run of calls is one summary line ("Edited 2 files, explored 3 files"); its
+ * calls open underneath. What is happening right now shimmers.
+ */
 
-.tool-group,
-.plan-card {
-  border-radius: 15px;
-  background: var(--card);
-  box-shadow: var(--card-edge), var(--card-shadow);
-}
-
-.group-head {
+.act-line {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-  padding: 10px 12px;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 100%;
+  padding: 3px 4px;
+  border-radius: 8px;
+  color: var(--text-muted);
   text-align: left;
 }
 
-.group-title {
-  flex-shrink: 0;
-  font-weight: 600;
+.act-line:hover {
+  color: var(--text-soft);
 }
 
-.group-sum {
+.act-lead {
+  /* Keeps its words; only the detail after it gives way. A long live phrase still truncates. */
+  flex: 0 1 auto;
   min-width: 0;
-  color: var(--text-muted);
+  color: var(--text-soft);
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.group-diff {
-  display: inline-flex;
-  gap: 6px;
-  font-family: var(--mono);
-  font-size: 11.5px;
+.act-line:hover .act-lead {
+  color: var(--text);
 }
 
-.group-head .chevron,
-.tool-group.open > .group-head .chevron,
-.plan-card.open > .group-head .chevron {
-  transition: transform 0.15s ease;
+.act-detail {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.tool-group.open > .group-head .chevron,
-.plan-card.open > .group-head .chevron {
-  transform: rotate(90deg);
+/* The calls of an open group, hanging off a hairline. */
+.act-body {
+  margin: 2px 0 6px 9px;
+  padding: 2px 0 2px 13px;
+  border-left: 1px solid var(--border-strong);
 }
 
-/* A kind of tool call, as a small tile; stacked in a group's header. */
-.tile {
-  width: 24px;
-  height: 24px;
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--tile);
-  box-shadow: inset 0 0 0 1px var(--border);
-  color: var(--text-soft);
-}
-
-.tile-stack {
+.call-line {
   display: flex;
-  flex-shrink: 0;
-}
-
-.tile-stack .tile {
-  box-shadow:
-    0 0 0 2px var(--tile-gap),
-    inset 0 0 0 1px var(--border);
-}
-
-.tile-stack .tile + .tile {
-  margin-left: -4px;
-}
-
-.tool-step {
-  border-top: 1px solid var(--border);
-}
-
-/* One row: what kind of call, what it acted on, and what came of it. */
-.step-line {
-  display: grid;
-  grid-template-columns: 24px 52px minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 10px;
+  align-items: baseline;
+  gap: 8px;
   width: 100%;
-  padding: 7px 12px;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: 8px;
+  color: var(--text-muted);
   text-align: left;
 }
 
-.step-line:not(:disabled):hover {
-  background: var(--row-hover);
+.call.alone > .call-line {
+  padding: 3px 4px;
 }
 
-.step-kind {
-  color: var(--text-muted);
-  font-size: 12px;
+.call-verb {
+  flex-shrink: 0;
+  color: var(--text-soft);
+  font-weight: 500;
 }
 
-.step-target {
+.call-line:not(:disabled):hover .call-verb {
+  color: var(--text);
+}
+
+.call-target {
   min-width: 0;
+  color: var(--text-soft);
   font-family: var(--mono);
   font-size: 12px;
   font-weight: 400;
@@ -1133,22 +1068,66 @@ kbd {
   text-overflow: ellipsis;
 }
 
-.step-result {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-muted);
+.call-result {
+  flex-shrink: 0;
   font-size: 12px;
-  white-space: nowrap;
 }
 
-.tool-step.in_progress .tile,
-.tool-step.pending .tile {
-  box-shadow: inset 0 0 0 1.5px var(--accent);
+.diff-count {
+  flex-shrink: 0;
+  display: inline-flex;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 11.5px;
 }
 
-.tool-step.failed .tile {
-  color: var(--danger);
+/* The chevron shows on hover, and turns while the line is open. */
+.act-line .chevron,
+.call-line .chevron {
+  align-self: center;
+  opacity: 0;
+}
+
+.act-line:hover .chevron,
+.call-line:hover .chevron,
+.activity.open > .act-line .chevron,
+.call.open > .call-line .chevron {
+  opacity: 1;
+}
+
+.activity.open > .act-line .chevron,
+.call.open > .call-line .chevron {
+  transform: rotate(90deg);
+}
+
+/*
+ * Text with a light sweeping across it, for what is happening now: a band of
+ * the full text color crossing muted text every two seconds.
+ */
+.shimmer {
+  background: linear-gradient(90deg, var(--text-muted) 40%, var(--text) 50%, var(--text-muted) 60%)
+    0 0 / 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2s linear infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer {
+    animation: none;
+    background: none;
+    color: var(--text-soft);
+  }
 }
 
 .result-add {
@@ -1164,7 +1143,7 @@ kbd {
 
 /* A call's output or diff, open under its row. */
 .step-output {
-  margin: 0 12px 12px 46px;
+  margin: 4px 0 8px;
   padding: 8px 0;
   border-radius: 11px;
   background: var(--well);
@@ -1206,26 +1185,6 @@ kbd {
 
 .step-more:hover {
   color: var(--text);
-}
-
-.plan-progress {
-  flex-shrink: 0;
-  width: 90px;
-  height: 5px;
-  border-radius: 5px;
-  background: var(--fill-strong);
-  overflow: hidden;
-}
-
-.plan-progress i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent);
-}
-
-.plan-body {
-  padding: 0 14px 12px 46px;
 }
 
 /* A permission request: the one card that asks for attention. */

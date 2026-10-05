@@ -10,21 +10,7 @@ import type {
 } from '../../../shared/types'
 import { renderMarkdown } from '../lib/markdown'
 import { Composer } from './Composer'
-import {
-  CheckIcon,
-  ChevronIcon,
-  CursorIcon,
-  FileIcon,
-  GlobeIcon,
-  ListIcon,
-  LockIcon,
-  PencilIcon,
-  SearchIcon,
-  ShieldIcon,
-  SparkIcon,
-  TerminalIcon,
-  WrenchIcon
-} from './icons'
+import { CheckIcon, ChevronIcon, FileIcon, LockIcon, ShieldIcon } from './icons'
 
 interface ChatViewProps {
   chat: Chat
@@ -155,11 +141,16 @@ export function ChatView({
               <p>Pick an agent and model below. The agent works inside this project’s folder.</p>
             </div>
           )}
-          {blocks.map((block) =>
+          {blocks.map((block, index) =>
             block.kind === 'tools' ? (
               <ToolGroup key={block.id} tools={block.tools} />
             ) : (
-              <Item key={block.item.id} item={block.item} chatId={chat.id} />
+              <Item
+                key={block.item.id}
+                item={block.item}
+                chatId={chat.id}
+                live={chat.running && index === blocks.length - 1}
+              />
             )
           )}
           {chat.running && !chat.waiting && <Working />}
@@ -189,7 +180,7 @@ export function ChatView({
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>
 type PlanEntry = Extract<ChatItem, { kind: 'plan' }>['entries'][number]
 
-/** What the chat shows: single items, and runs of tool calls grouped into one card. */
+/** What the chat shows: single items, and runs of tool calls grouped into one line. */
 type Block =
   | { kind: 'item'; item: Exclude<ChatItem, ToolItem> }
   | { kind: 'tools'; id: string; tools: ToolItem[] }
@@ -210,10 +201,13 @@ function toBlocks(items: ChatItem[]): Block[] {
 
 const Item = memo(function Item({
   item,
-  chatId
+  chatId,
+  live
 }: {
   item: Exclude<ChatItem, ToolItem>
   chatId: string
+  /** The last thing in the chat while the agent works on it. */
+  live: boolean
 }): React.JSX.Element {
   switch (item.kind) {
     case 'user':
@@ -247,7 +241,7 @@ const Item = memo(function Item({
       if (item.text.length <= THOUGHT_INLINE_MAX && !item.text.trim().includes('\n')) {
         return <div className="note">{item.text}</div>
       }
-      return <Thinking text={item.text} />
+      return <Thinking text={item.text} live={live} />
     case 'plan':
       return <PlanStep entries={item.entries} />
     case 'permission': {
@@ -423,9 +417,6 @@ const KIND_WORDS: Record<string, string> = {
   fetch: 'Fetch'
 }
 
-const isRunning = (tool: ToolItem): boolean =>
-  tool.status === 'pending' || tool.status === 'in_progress'
-
 /** The kind column and what the call acted on. */
 function toolKindAndTarget(tool: ToolItem): [string, string] {
   const detail = toolDetail(tool)
@@ -435,35 +426,7 @@ function toolKindAndTarget(tool: ToolItem): [string, string] {
   return [kind, detail ?? toolLabel(tool.title)]
 }
 
-/** The right-hand column: what came of the call. */
-function ToolResult({ tool, lines }: { tool: ToolItem; lines: string[] }): React.JSX.Element {
-  if (isRunning(tool)) return <span className="spinner" />
-  if (tool.status === 'failed') return <span className="result-bad">failed</span>
-  if (tool.status === 'interrupted') return <>interrupted</>
-  if (tool.toolKind === 'edit') {
-    const added = lines.filter((l) => lineClass(l) === 'diff-add').length
-    const removed = lines.filter((l) => lineClass(l) === 'diff-del').length
-    if (added || removed)
-      return (
-        <>
-          {added > 0 && <span className="result-add">+{added}</span>}{' '}
-          {removed > 0 && <span className="result-del">−{removed}</span>}
-        </>
-      )
-  }
-  if (tool.toolKind === 'read') {
-    const files = tool.output ? outputResults(tool.output).length : 0
-    if (files > 1) return <>{files} files</>
-  }
-  if (lines.length === 0) return <>done</>
-  return (
-    <>
-      {lines.length} line{lines.length === 1 ? '' : 's'}
-    </>
-  )
-}
-
-/** What a call did, for its icon and for naming the group it is in. */
+/** What a call did, for the words that describe it and for summing up a group. */
 type CallKind = 'read' | 'search' | 'edit' | 'run' | 'fetch' | 'browser' | 'other'
 
 function callKind(tool: ToolItem): CallKind {
@@ -484,124 +447,187 @@ function callKind(tool: ToolItem): CallKind {
   }
 }
 
-const CALL_ICONS: Record<CallKind, (p: React.SVGProps<SVGSVGElement>) => React.JSX.Element> = {
-  read: FileIcon,
-  search: SearchIcon,
-  edit: PencilIcon,
-  run: TerminalIcon,
-  fetch: GlobeIcon,
-  browser: CursorIcon,
-  other: WrenchIcon
+/** The verb for a call, finished and in progress: "Ran" and "Running". */
+function callVerb(tool: ToolItem): [string, string] {
+  switch (tool.toolKind) {
+    case 'delete':
+      return ['Deleted', 'Deleting']
+    case 'move':
+      return ['Moved', 'Moving']
+  }
+  const verbs: Record<CallKind, [string, string]> = {
+    read: ['Read', 'Reading'],
+    search: ['Searched', 'Searching'],
+    edit: ['Edited', 'Editing'],
+    run: ['Ran', 'Running'],
+    fetch: ['Fetched', 'Fetching'],
+    browser: ['Browser', 'Browser'],
+    other: ['Called', 'Calling']
+  }
+  return verbs[callKind(tool)]
 }
 
-/** How a group sums up its calls of each kind: "2 reads · 1 search". */
-const CALL_NOUNS: Record<CallKind, [string, string]> = {
-  read: ['read', 'reads'],
-  search: ['search', 'searches'],
-  edit: ['edit', 'edits'],
-  run: ['command', 'commands'],
-  fetch: ['fetch', 'fetches'],
-  browser: ['browser step', 'browser steps'],
-  other: ['tool', 'tools']
+const isRunning = (tool: ToolItem): boolean =>
+  tool.status === 'pending' || tool.status === 'in_progress'
+
+const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`
+
+/** Files a read covered: one, or each file of a batched read (cline's read_files). */
+function filesRead(tool: ToolItem): number {
+  return tool.output ? Math.max(1, outputResults(tool.output).length) : 1
 }
 
-/** The group's name, from the most telling kind of call in it. */
-function groupTitle(kinds: CallKind[]): string {
-  if (kinds.includes('edit')) return 'Changed'
-  if (kinds.includes('run')) return 'Ran'
-  if (kinds.includes('browser')) return 'Browsed'
-  if (kinds.every((k) => k === 'other')) return 'Used tools'
-  return 'Explored'
+/**
+ * What a group of calls did, the way Codex sums it up:
+ * "Edited 2 files, explored 3 files, 1 search, ran 1 command".
+ */
+function groupSummary(tools: ToolItem[]): string {
+  const of = (kind: CallKind): ToolItem[] => tools.filter((t) => callKind(t) === kind)
+  const files = of('read').reduce((n, t) => n + filesRead(t), 0)
+  const edited = new Set(of('edit').map((t) => toolDetail(t) ?? t.id)).size
+  const explored = [
+    files > 0 && plural(files, 'file', 'files'),
+    of('search').length > 0 && plural(of('search').length, 'search', 'searches'),
+    of('fetch').length > 0 && plural(of('fetch').length, 'page', 'pages')
+  ].filter(Boolean)
+  const parts = [
+    edited > 0 && `edited ${plural(edited, 'file', 'files')}`,
+    explored.length > 0 && `explored ${explored.join(', ')}`,
+    of('run').length > 0 && `ran ${plural(of('run').length, 'command', 'commands')}`,
+    of('browser').length > 0 &&
+      `took ${plural(of('browser').length, 'browser step', 'browser steps')}`,
+    of('other').length > 0 && `used ${plural(of('other').length, 'tool', 'tools')}`
+  ].filter((part): part is string => Boolean(part))
+  const text = parts.join(', ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
-function CallTile({ kind }: { kind: CallKind }): React.JSX.Element {
-  const Icon = CALL_ICONS[kind]
+/** Lines added and removed across a group's edits. */
+function diffTotals(tools: ToolItem[]): [number, number] {
+  const lines = tools.filter((t) => t.toolKind === 'edit').flatMap(outputLines)
+  return [
+    lines.filter((l) => lineClass(l) === 'diff-add').length,
+    lines.filter((l) => lineClass(l) === 'diff-del').length
+  ]
+}
+
+function DiffCount({ added, removed }: { added: number; removed: number }): React.JSX.Element {
   return (
-    <span className="tile">
-      <Icon width={13} height={13} />
+    <span className="diff-count">
+      {added > 0 && <span className="result-add">+{added}</span>}
+      {removed > 0 && <span className="result-del">−{removed}</span>}
     </span>
   )
 }
 
 /**
- * A run of tool calls as one card: the kinds of call, what they add up to, and
- * one row per call inside. It stays open while a call runs or when it holds a
- * diff; otherwise it folds to its header.
+ * A run of tool calls as one line of text. While a call runs, the line says
+ * what is happening and shimmers; once done it sums the group up. The calls
+ * themselves open underneath on click.
  */
 function ToolGroup({ tools }: { tools: ToolItem[] }): React.JSX.Element {
-  const [open, setOpen] = useState<boolean>()
-  const kinds = tools.map(callKind)
-  const distinct = [...new Set(kinds)]
-  const counts = distinct.map((kind) => {
-    const n = kinds.filter((k) => k === kind).length
-    return `${n} ${CALL_NOUNS[kind][n === 1 ? 0 : 1]}`
-  })
-  const lines = tools.filter((t) => t.toolKind === 'edit').flatMap(outputLines)
-  const added = lines.filter((l) => lineClass(l) === 'diff-add').length
-  const removed = lines.filter((l) => lineClass(l) === 'diff-del').length
+  const [open, setOpen] = useState(false)
+  if (tools.length === 1) return <CallRow tool={tools[0]} />
+  const active = tools.findLast(isRunning)
   const failed = tools.filter((t) => t.status === 'failed').length
-  const running = tools.some(isRunning)
-  const shown = open ?? (running || added + removed > 0)
+  const [added, removed] = diffTotals(tools)
   return (
-    <div className={`tool-group${shown ? ' open' : ''}`}>
-      <button className="group-head" aria-expanded={shown} onClick={() => setOpen(!shown)}>
-        <span className="tile-stack">
-          {distinct.slice(0, 4).map((kind) => (
-            <CallTile key={kind} kind={kind} />
-          ))}
-        </span>
-        <span className="group-title">{groupTitle(distinct)}</span>
-        <span className="group-sum">{counts.join(' · ')}</span>
-        <span className="spacer" />
-        {failed > 0 && <span className="result-bad">{failed} failed</span>}
-        {(added > 0 || removed > 0) && (
-          <span className="group-diff">
-            {added > 0 && <span className="result-add">+{added}</span>}
-            {removed > 0 && <span className="result-del">−{removed}</span>}
+    <div className={`activity${open ? ' open' : ''}`}>
+      <button className="act-line" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {active ? (
+          <span className="act-lead shimmer">
+            {callVerb(active)[1]} {toolKindAndTarget(active)[1]}
           </span>
+        ) : (
+          <span className="act-lead">{groupSummary(tools)}</span>
         )}
-        {running && <span className="spinner" />}
-        <ChevronIcon width={11} height={11} className="chevron" />
+        {(added > 0 || removed > 0) && <DiffCount added={added} removed={removed} />}
+        {failed > 0 && <span className="result-bad">{failed} failed</span>}
+        <ChevronIcon width={10} height={10} className="chevron" />
       </button>
-      {shown && (
-        <div className="group-body">
-          {tools.map((tool) => (
-            <ToolStep key={tool.id} tool={tool} />
-          ))}
+      {open && (
+        <div className="act-body">
+          {callRows(tools).map((row) =>
+            row.kind === 'reads' ? (
+              <ReadsRow key={row.tools[0].id} tools={row.tools} />
+            ) : (
+              <CallRow key={row.tool.id} tool={row.tool} nested />
+            )
+          )}
         </div>
       )}
     </div>
   )
 }
 
-/** One tool call. Edits show their diff; other output opens on click. */
-const ToolStep = memo(function ToolStep({ tool }: { tool: ToolItem }): React.JSX.Element {
+/** Reads in a row read as one line ("Read App.tsx, store.ts"); every other call is its own. */
+type CallRowItem = { kind: 'reads'; tools: ToolItem[] } | { kind: 'call'; tool: ToolItem }
+
+function callRows(tools: ToolItem[]): CallRowItem[] {
+  const rows: CallRowItem[] = []
+  for (const tool of tools) {
+    const last = rows.at(-1)
+    const plainRead = tool.toolKind === 'read' && tool.status !== 'failed'
+    if (plainRead && last?.kind === 'reads') last.tools.push(tool)
+    else if (plainRead) rows.push({ kind: 'reads', tools: [tool] })
+    else rows.push({ kind: 'call', tool })
+  }
+  return rows
+}
+
+/** Several reads on one line. A read's output is the file itself, so there is nothing to open. */
+function ReadsRow({ tools }: { tools: ToolItem[] }): React.JSX.Element {
+  const reading = tools.some(isRunning)
+  return (
+    <div className="call">
+      <div className="call-line">
+        <span className={`call-verb${reading ? ' shimmer' : ''}`}>
+          {reading ? 'Reading' : 'Read'}
+        </span>
+        <span className="call-target">{tools.map((t) => toolKindAndTarget(t)[1]).join(', ')}</span>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * One call: its verb, what it acted on, and what came of it. Edits open on
+ * their diff; other output opens on click.
+ */
+const CallRow = memo(function CallRow({
+  tool,
+  nested
+}: {
+  tool: ToolItem
+  /** Inside an open group, under its summary line. */
+  nested?: boolean
+}): React.JSX.Element {
   const lines = outputLines(tool)
   // Only an edit's output is a diff; a "- " in other output is a list item, not a removed line.
   const diffClass = (line: string): string | undefined =>
     tool.toolKind === 'edit' ? lineClass(line) : undefined
   const isDiff = lines.some((l) => diffClass(l) === 'diff-add' || diffClass(l) === 'diff-del')
-  const [open, setOpen] = useState(isDiff)
+  const [open, setOpen] = useState(nested === true && isDiff)
   const [all, setAll] = useState(false)
-  const [kind, target] = toolKindAndTarget(tool)
+  const running = isRunning(tool)
+  const [done, doing] = callVerb(tool)
+  const target = toolKindAndTarget(tool)[1]
   // A read's output is the file itself, already summed up as its line count.
   const expandable = lines.length > 0 && tool.toolKind !== 'read'
   const hidden = lines.length - OUTPUT_PREVIEW
   const shown = all || hidden <= 0 ? lines : lines.slice(0, OUTPUT_PREVIEW)
   return (
-    <div className={`tool-step ${tool.status}`}>
+    <div className={`call${nested ? '' : ' alone'}${open ? ' open' : ''}`}>
       <button
-        className="step-line"
+        className="call-line"
         disabled={!expandable}
         aria-expanded={expandable ? open : undefined}
         onClick={() => setOpen((o) => !o)}
       >
-        <CallTile kind={callKind(tool)} />
-        <span className="step-kind">{kind}</span>
-        <span className="step-target">{target}</span>
-        <span className="step-result">
-          <ToolResult tool={tool} lines={lines} />
-        </span>
+        <span className={`call-verb${running ? ' shimmer' : ''}`}>{running ? doing : done}</span>
+        <span className="call-target">{target}</span>
+        <CallResult tool={tool} lines={lines} />
+        {expandable && <ChevronIcon width={10} height={10} className="chevron" />}
       </button>
       {expandable && open && (
         <div className="step-output">
@@ -621,19 +647,43 @@ const ToolStep = memo(function ToolStep({ tool }: { tool: ToolItem }): React.JSX
   )
 })
 
-/** Long reasoning, folded to one line. */
-function Thinking({ text }: { text: string }): React.JSX.Element {
+/** What came of a call, after its target. Nothing while it runs: the verb shimmers instead. */
+function CallResult({
+  tool,
+  lines
+}: {
+  tool: ToolItem
+  lines: string[]
+}): React.JSX.Element | null {
+  if (isRunning(tool)) return null
+  if (tool.status === 'failed') return <span className="result-bad">failed</span>
+  if (tool.status === 'interrupted') return <span className="call-result">interrupted</span>
+  if (tool.toolKind === 'edit') {
+    const added = lines.filter((l) => lineClass(l) === 'diff-add').length
+    const removed = lines.filter((l) => lineClass(l) === 'diff-del').length
+    if (added || removed) return <DiffCount added={added} removed={removed} />
+  }
+  if (tool.toolKind === 'read') {
+    const files = filesRead(tool)
+    return files > 1 ? <span className="call-result">{files} files</span> : null
+  }
+  if (lines.length === 0) return null
+  return <span className="call-result">{plural(lines.length, 'line', 'lines')}</span>
+}
+
+/** Reasoning: "Thinking" shimmers while it streams, then folds to "Thought". */
+function Thinking({ text, live }: { text: string; live: boolean }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   return (
-    <div className={`thinking${open ? ' open' : ''}`}>
-      <button className="thinking-head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <SparkIcon width={13} height={13} />
-        <span className="thinking-label">Thinking</span>
-        {!open && <span className="thinking-line">{text.split('\n')[0]}</span>}
+    <div className={`activity${open ? ' open' : ''}`}>
+      <button className="act-line" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span className={`act-lead${live ? ' shimmer' : ''}`}>{live ? 'Thinking' : 'Thought'}</span>
+        {!open && <span className="act-detail">{text.split('\n')[0]}</span>}
+        <ChevronIcon width={10} height={10} className="chevron" />
       </button>
       {open && (
         <div
-          className="thinking-body markdown"
+          className="act-body thinking-body markdown"
           dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }}
         />
       )}
@@ -656,28 +706,21 @@ function TodoList({ entries }: { entries: PlanEntry[] }): React.JSX.Element {
   )
 }
 
-/** A todo update in the chat: the progress in one row, the list on click. */
+/** A todo update in the chat: one line with the progress, the list on click. */
 function PlanStep({ entries }: { entries: PlanEntry[] }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const done = entries.filter((e) => e.status === 'completed').length
   return (
-    <div className={`plan-card${open ? ' open' : ''}`}>
-      <button className="group-head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <span className="tile">
-          <ListIcon width={13} height={13} />
+    <div className={`activity${open ? ' open' : ''}`}>
+      <button className="act-line" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span className="act-lead">Updated todos</span>
+        <span className="act-detail">
+          {done} of {entries.length} done
         </span>
-        <span className="group-title">Todos</span>
-        <span className="plan-progress">
-          <i style={{ width: `${entries.length ? (done / entries.length) * 100 : 0}%` }} />
-        </span>
-        <span className="group-sum">
-          {done} of {entries.length}
-        </span>
-        <span className="spacer" />
-        <ChevronIcon width={11} height={11} className="chevron" />
+        <ChevronIcon width={10} height={10} className="chevron" />
       </button>
       {open && (
-        <div className="plan-body">
+        <div className="act-body">
           <TodoList entries={entries} />
         </div>
       )}
@@ -710,6 +753,16 @@ function TodoStrip({ entries }: { entries: PlanEntry[] }): React.JSX.Element {
   )
 }
 
+/** "12s", then "1m 05s", then "1h 02m 05s", like Codex's status line. */
+function elapsed(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = String(seconds % 60).padStart(2, '0')
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m ${s}s`
+  if (m > 0) return `${m}m ${s}s`
+  return `${seconds}s`
+}
+
 function Working(): React.JSX.Element {
   const [seconds, setSeconds] = useState(0)
   useEffect(() => {
@@ -719,8 +772,8 @@ function Working(): React.JSX.Element {
   }, [])
   return (
     <div className="working">
-      <span className="spinner" />
-      Working… <span className="working-time">{seconds}s, Esc to stop</span>
+      <span className="shimmer">Working</span>
+      <span className="working-time">{elapsed(seconds)} · Esc to stop</span>
     </div>
   )
 }
