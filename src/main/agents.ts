@@ -13,11 +13,13 @@ import type {
   OpenChatResult,
   AgentCommand,
   AgentId,
+  AgentModels,
   AgentOption,
   AgentStatus,
   ChatItem,
   ToolStatus
 } from '../shared/types'
+import { modelOptions, type ModelSource } from '../shared/types'
 import * as store from './store'
 import { browserMcpServer, BROWSER_GUIDANCE, SERVER_NAME as BROWSER_SERVER } from './browser-mcp'
 import { listSkills } from './skills'
@@ -29,8 +31,15 @@ import { chatPreview } from './preview'
 
 const COMMANDS: Record<AgentId, { command: string; args: string[] }> = {
   opencode: { command: 'opencode', args: ['acp'] },
-  cline: { command: 'cline', args: ['--acp'] }
+  cline: { command: 'cline', args: ['--acp'] },
+  commandcode: { command: 'cmd', args: ['acp'] }
 }
+
+/**
+ * Agents whose ACP process serves a single project folder: `cmd acp` refuses
+ * sessions for any folder other than its first. They get one process per project.
+ */
+const PROCESS_PER_PROJECT = new Set<AgentId>(['commandcode'])
 
 /**
  * An agent process with no prompt running is stopped after this long. Agents
@@ -75,7 +84,8 @@ const STDERR_SHOWN_LINES = 12
 /** The command that signs each agent in, for its "authentication required" error. */
 const LOGIN_COMMANDS: Record<AgentId, string> = {
   opencode: 'opencode auth login',
-  cline: 'cline auth'
+  cline: 'cline auth',
+  commandcode: 'cmd login'
 }
 
 /**
@@ -164,7 +174,8 @@ const TEXT_ONLY_PROMPTS = new Set<AgentId>(['cline'])
  */
 const UNLISTED_COMMANDS: Record<AgentId, AgentCommand[]> = {
   opencode: [{ name: 'compact', description: 'Summarize older messages to free up context' }],
-  cline: []
+  cline: [],
+  commandcode: []
 }
 
 /** A prompt asking to compact the conversation. */
@@ -212,7 +223,11 @@ const RETRY_OUTCOMES: Record<TurnOutcome, string> = {
 }
 
 /** Chats always run in the agent's build mode; plan mode is not offered. */
-const BUILD_MODE: Record<AgentId, string> = { opencode: 'build', cline: 'act' }
+const BUILD_MODE: Record<AgentId, string> = {
+  opencode: 'build',
+  cline: 'act',
+  commandcode: 'default'
+}
 
 interface PendingPermission {
   chatId: string
@@ -256,6 +271,9 @@ class AgentProcess {
   private opening = new Map<string, Promise<string>>()
   /** The live session options (model, mode, ...) per chat, as the agent last reported them. */
   private options = new Map<string, AgentOption[]>()
+  /** The agent's model lists as sessions last reported them, for the model picker. */
+  private modelSources?: ModelSource[]
+  private listingModels?: Promise<ModelSource[]>
   /**
    * Slash commands per ACP session id. Keyed by session because agents announce
    * them before the session/new response tells us which chat the session is for.
@@ -275,8 +293,16 @@ class AgentProcess {
   constructor(
     readonly agent: AgentId,
     private readonly events: AgentEvents,
-    private readonly permissions: Map<string, PendingPermission>
+    private readonly permissions: Map<string, PendingPermission>,
+    /** Set when this process serves only one project (see PROCESS_PER_PROJECT). */
+    readonly projectId?: string
   ) {}
+
+  /** Whether the chat runs in this process. */
+  private owns(chatId: string): boolean {
+    const chat = store.getChat(chatId)
+    return chat.agent === this.agent && (!this.projectId || chat.projectId === this.projectId)
+  }
 
   async connect(): Promise<acp.ClientConnection> {
     if (this.connection) return this.connection
@@ -363,7 +389,7 @@ class AgentProcess {
     this.loadingSessions.clear()
     this.commands.clear()
     for (const [id, pending] of this.permissions) {
-      if (store.getChat(pending.chatId).agent === this.agent) {
+      if (this.owns(pending.chatId)) {
         this.permissions.delete(id)
         this.resolvePermissionItem(pending.chatId, id, 'cancelled')
       }
@@ -414,6 +440,7 @@ class AgentProcess {
     if (!configOptions) return
     const options = normalizeOptions(configOptions)
     this.options.set(chatId, options)
+    this.rememberModels(options)
     // Remember what is selected so a reloaded or recreated session starts the same way.
     store.updateChat(chatId, {
       settings: Object.fromEntries(options.map((o) => [o.id, o.currentValue]))
@@ -555,6 +582,90 @@ class AgentProcess {
     } finally {
       this.loadingSessions.delete(sessionId)
     }
+  }
+
+  /** Keep the model list a session reported, so the picker shows it as it is now. */
+  private rememberModels(options: AgentOption[]): void {
+    const { model, source } = modelOptions(options)
+    if (!model) return
+    if (!source) {
+      this.modelSources = [{ option: model }]
+      return
+    }
+    // One provider's list: the others are read when the picker asks for them.
+    this.modelSources = this.modelSources?.map((s) =>
+      s.setting?.value === source.currentValue ? { ...s, option: model } : s
+    )
+  }
+
+  /**
+   * The agent's model lists, for the model picker: as sessions last reported
+   * them, or read from a session opened just to ask and then dropped.
+   */
+  listModels(cwd: string): Promise<ModelSource[]> {
+    if (this.modelSources) return Promise.resolve(this.modelSources)
+    if (!this.listingModels) {
+      const listing = withTimeout(
+        this.readModels(cwd),
+        OPEN_TIMEOUT_MS,
+        () =>
+          new Error(
+            `${this.agent} did not list its models within ${OPEN_TIMEOUT_MS / 1000} seconds.`
+          )
+      ).finally(() => {
+        if (this.listingModels === listing) this.listingModels = undefined
+        this.scheduleIdleStop()
+      })
+      this.listingModels = listing
+    }
+    return this.listingModels
+  }
+
+  private async readModels(cwd: string): Promise<ModelSource[]> {
+    const connection = await this.connect()
+    const { methods } = await loadSdk()
+    const { sessionId, configOptions } = await connection.agent.request(methods.agent.session.new, {
+      cwd,
+      mcpServers: []
+    })
+    const initial = normalizeOptions(configOptions ?? [])
+    const { model, source } = modelOptions(initial)
+    const sources: ModelSource[] = []
+    if (model && source) {
+      // Each provider has its own models: switch this session through them. The
+      // switch stays in the session; the agent's own default is not changed.
+      for (const value of source.values) {
+        const options =
+          value.value === source.currentValue
+            ? initial
+            : normalizeOptions(
+                (
+                  await connection.agent.request(methods.agent.session.setConfigOption, {
+                    sessionId,
+                    configId: source.id,
+                    value: value.value
+                  })
+                ).configOptions
+              )
+        const listed = modelOptions(options).model
+        if (!listed) continue
+        sources.push({
+          setting: { optionId: source.id, value: value.value, name: value.name },
+          option: listed
+        })
+      }
+    } else if (model) {
+      sources.push({ option: model })
+    }
+    // Drop the session so it does not show up in the agent's own history.
+    const caps = this.initResult?.agentCapabilities?.sessionCapabilities
+    if (caps?.delete) {
+      await connection.agent.request(methods.agent.session.delete, { sessionId })
+    } else if (caps?.close) {
+      await connection.agent.request(methods.agent.session.close, { sessionId })
+    }
+    this.modelSources ??= sources
+    return this.modelSources
   }
 
   async applyOption(chatId: string, optionId: string, value: string): Promise<void> {
@@ -1018,18 +1129,36 @@ function stderrExcerpt(text: string): string {
 
 export class AgentManager {
   private readonly permissions = new Map<string, PendingPermission>()
-  private readonly processes: Record<AgentId, AgentProcess>
+  /** Started on first use: one per agent, or per agent and project (see PROCESS_PER_PROJECT). */
+  private readonly processes = new Map<string, AgentProcess>()
   private readonly statuses = new Map<AgentId, Promise<AgentStatus>>()
 
   constructor(
     private readonly events: AgentEvents,
     /** The page open in the built-in browser, for `@browser` messages. */
     private readonly browserPage: (chatId: string) => BrowserState | undefined
-  ) {
-    this.processes = {
-      opencode: new AgentProcess('opencode', events, this.permissions),
-      cline: new AgentProcess('cline', events, this.permissions)
+  ) {}
+
+  /** The process the chat runs in. */
+  private processFor(chatId: string): AgentProcess {
+    const { agent, projectId } = store.getChat(chatId)
+    return this.process(agent, projectId)
+  }
+
+  private process(agent: AgentId, projectId: string): AgentProcess {
+    const perProject = PROCESS_PER_PROJECT.has(agent)
+    const key = perProject ? `${agent}:${projectId}` : agent
+    let agentProcess = this.processes.get(key)
+    if (!agentProcess) {
+      agentProcess = new AgentProcess(
+        agent,
+        this.events,
+        this.permissions,
+        perProject ? projectId : undefined
+      )
+      this.processes.set(key, agentProcess)
     }
+    return agentProcess
   }
 
   /** Whether the CLI is installed, and its version. */
@@ -1050,9 +1179,19 @@ export class AgentManager {
     return cached
   }
 
+  /** The models an agent offers in a project, for picking one before a chat uses that agent. */
+  async models(agent: AgentId, projectId: string): Promise<AgentModels> {
+    const agentProcess = this.process(agent, projectId)
+    try {
+      return { sources: await agentProcess.listModels(store.getProject(projectId).path) }
+    } catch (error) {
+      return { sources: [], error: errorMessage(await agentProcess.explain(error), agent) }
+    }
+  }
+
   /** Open the chat's session (starting the agent if needed) and return its options. */
   async open(chatId: string): Promise<OpenChatResult> {
-    const agentProcess = this.processes[store.getChat(chatId).agent]
+    const agentProcess = this.processFor(chatId)
     try {
       await agentProcess.ensureSession(chatId)
       return {
@@ -1071,11 +1210,10 @@ export class AgentManager {
     agent: AgentId,
     settings: Record<string, string>
   ): Promise<void> {
-    const chat = store.getChat(chatId)
     if (store.getMessages(chatId).some((i) => i.kind === 'user')) {
       throw new Error('The agent cannot change after the chat has started.')
     }
-    await this.processes[chat.agent].release(chatId)
+    await this.processFor(chatId).release(chatId)
     store.updateChat(chatId, { agent, settings, sessionId: undefined })
     this.events.stateChanged()
   }
@@ -1083,14 +1221,15 @@ export class AgentManager {
   async deleteChat(chatId: string): Promise<void> {
     const chat = store.getChat(chatId)
     if (chat.running) await this.cancel(chatId)
-    await this.processes[chat.agent].release(chatId)
+    await this.processFor(chatId).release(chatId)
     store.removeChat(chatId)
     this.events.stateChanged()
   }
 
   /**
-   * Neither CLI exposes skills as slash commands, so `/skill-name rest` becomes an
-   * explicit request to use that skill. Agent commands are passed through as typed.
+   * Opencode and cline do not expose skills as slash commands, so `/skill-name rest`
+   * becomes an explicit request to use that skill. Agent commands (including
+   * Command Code's skills, which it lists as commands) are passed through as typed.
    * Any skill on the machine can be used; ones the agent does not discover itself
    * (e.g. ~/.claude/skills for cline) are passed by file path.
    */
@@ -1099,7 +1238,12 @@ export class AgentManager {
     if (!match) return text
     const [, name, rest] = match
     const chat = store.getChat(chatId)
-    if (this.processes[chat.agent].getCommands(chatId).some((c) => c.name === name)) return text
+    if (
+      this.processFor(chatId)
+        .getCommands(chatId)
+        .some((c) => c.name === name)
+    )
+      return text
     const project = store.getProject(chat.projectId)
     const skill = listSkills(project.path).find((s) => s.name === name)
     if (!skill) return text
@@ -1216,7 +1360,7 @@ export class AgentManager {
         prompt = await withFilePaths(prompt, attachments)
         blocks = []
       }
-      const response = await this.processes[chat.agent].prompt(chatId, prompt, blocks)
+      const response = await this.processFor(chatId).prompt(chatId, prompt, blocks)
       outcome = response.stopReason === 'cancelled' ? 'stopped' : 'done'
       // opencode reports nothing while it compacts, so say when it is done.
       if (compact && response.stopReason === 'end_turn') {
@@ -1250,7 +1394,7 @@ export class AgentManager {
       )
     } finally {
       if (store.getState().chats.some((c) => c.id === chatId)) {
-        this.processes[chat.agent].endTurn(chatId, outcome)
+        this.processFor(chatId).endTurn(chatId, outcome)
         store.updateChat(chatId, {
           running: false,
           updatedAt: Date.now(),
@@ -1262,11 +1406,11 @@ export class AgentManager {
   }
 
   cancel(chatId: string): Promise<void> {
-    return this.processes[store.getChat(chatId).agent].cancel(chatId)
+    return this.processFor(chatId).cancel(chatId)
   }
 
   setOption(chatId: string, optionId: string, value: string): Promise<void> {
-    return this.processes[store.getChat(chatId).agent].applyOption(chatId, optionId, value)
+    return this.processFor(chatId).applyOption(chatId, optionId, value)
   }
 
   resolvePermission(chatId: string, permissionId: string, optionId: string, auto = false): void {
@@ -1274,7 +1418,7 @@ export class AgentManager {
     if (!pending) return
     this.permissions.delete(permissionId)
     pending.resolve({ outcome: { outcome: 'selected', optionId } })
-    const agentProcess = this.processes[store.getChat(chatId).agent]
+    const agentProcess = this.processFor(chatId)
     // The turn resumes past the answer: its silence clock restarts from here.
     agentProcess.touchActivity(chatId)
     agentProcess.resolvePermissionItem(chatId, permissionId, optionId, auto)
@@ -1294,6 +1438,6 @@ export class AgentManager {
   }
 
   stopAll(): void {
-    for (const agentProcess of Object.values(this.processes)) agentProcess.stop()
+    for (const agentProcess of this.processes.values()) agentProcess.stop()
   }
 }

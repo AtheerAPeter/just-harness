@@ -100,10 +100,13 @@ export default function App(): React.JSX.Element {
     [newChat, toggleBrowser]
   )
 
-  async function changeAgent(agent: AgentId): Promise<void> {
+  async function changeAgent(agent: AgentId, chosen: Record<string, string>): Promise<void> {
     if (!chat) return
     writePref('lastAgent', agent)
-    await window.api.setAgent(chat.id, agent, readPref(`settings:${agent}`, {}))
+    // What was picked along with the agent (its model) is remembered like any other choice.
+    const settings = { ...readPref(`settings:${agent}`, {}), ...chosen }
+    writePref(`settings:${agent}`, settings)
+    await window.api.setAgent(chat.id, agent, settings)
   }
 
   async function changeOption(optionId: string, value: string): Promise<void> {
@@ -179,7 +182,7 @@ export default function App(): React.JSX.Element {
             {!project ? (
               <>
                 <h2>Open a project to start</h2>
-                <p>Chats run OpenCode or Cline inside a project folder.</p>
+                <p>Chats run OpenCode, Cline or Command Code inside a project folder.</p>
                 <button className="btn primary" onClick={() => window.api.addProject()}>
                   Open folder
                 </button>

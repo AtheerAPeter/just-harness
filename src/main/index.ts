@@ -224,6 +224,9 @@ function registerIpc(browser: BuiltinBrowser): void {
   )
 
   ipcMain.handle('agents:status', (_e, agent: AgentId) => agents.status(agent))
+  ipcMain.handle('agents:models', (_e, agent: AgentId, projectId: string) =>
+    agents.models(agent, projectId)
+  )
 
   ipcMain.on('browser:setChat', (_e, chatId: string | null) =>
     browser.setActiveChat(chatId ?? undefined)

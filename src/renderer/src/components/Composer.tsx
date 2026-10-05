@@ -9,7 +9,8 @@ import {
   type Skill,
   type Attachment
 } from '../../../shared/types'
-import { Picker, type PickerValue } from './Picker'
+import { Picker } from './Picker'
+import { ModelPicker } from './ModelPicker'
 import { CompletionMenu, type CompletionItem } from './CompletionMenu'
 import { CloseIcon, FileIcon, PaperclipIcon, SendIcon, StopIcon } from './icons'
 
@@ -24,15 +25,17 @@ interface ComposerProps {
   /** True once the first message is sent; the agent is fixed from then on. */
   started: boolean
   projectPath: string
-  onAgentChange: (agent: AgentId) => void
-  onOptionChange: (optionId: string, value: string) => void
+  /** Switch agents, starting with the given settings (e.g. the model picked with it). */
+  onAgentChange: (agent: AgentId, settings: Record<string, string>) => void
+  onOptionChange: (optionId: string, value: string) => Promise<void>
 }
 
 /**
- * Options shown in the composer, in this order. Anything else the agent offers is
- * ignored, including mode: chats always run in build mode.
+ * Options shown in the composer next to the model picker (which also covers
+ * cline's provider). Anything else the agent offers is ignored, including mode:
+ * chats always run in build mode.
  */
-const SHOWN_CATEGORIES = ['model', 'thought_level']
+const SHOWN_CATEGORIES = ['thought_level']
 
 /** How much the agent may do without asking, per chat. */
 const PERMISSION_MODES = [
@@ -203,6 +206,17 @@ export function Composer({
   const shown = SHOWN_CATEGORIES.flatMap((category) =>
     (options ?? []).filter((o) => o.category === category)
   )
+
+  /** Apply a model picked in the model picker, with its provider when it has one. */
+  async function pickModel(agent: AgentId, settings: [string, string][]): Promise<void> {
+    if (agent !== chat.agent) return onAgentChange(agent, Object.fromEntries(settings))
+    // In order: the model list depends on the provider set before it.
+    for (const [optionId, value] of settings) {
+      if (options?.find((o) => o.id === optionId)?.currentValue !== value) {
+        await onOptionChange(optionId, value)
+      }
+    }
+  }
   const error = status?.error ?? optionsError
 
   return (
@@ -308,18 +322,13 @@ export function Composer({
         >
           <PaperclipIcon width={15} height={15} />
         </button>
-        <Picker
-          title={started ? 'The agent is fixed once a chat has started' : 'Agent'}
-          value={chat.agent}
-          disabled={started}
-          values={AGENTS.map((a) => ({
-            value: a.id,
-            name: a.label,
-            description:
-              statuses[a.id]?.available === false ? 'Not installed' : statuses[a.id]?.version,
-            disabled: statuses[a.id]?.available === false
-          }))}
-          onChange={(v) => onAgentChange(v as AgentId)}
+        <ModelPicker
+          agent={chat.agent}
+          projectId={chat.projectId}
+          statuses={statuses}
+          options={options}
+          agentFixed={started}
+          onChange={pickModel}
         />
         {!options && !error && <span className="composer-hint">Starting agent…</span>}
         {shown.map((option) => (
@@ -327,7 +336,7 @@ export function Composer({
             key={option.id}
             title={option.name}
             value={option.currentValue}
-            values={option.category === 'model' ? byProvider(option.values) : option.values}
+            values={option.values}
             onChange={(v) => onOptionChange(option.id, v)}
           />
         ))}
@@ -376,20 +385,4 @@ export function Composer({
       </div>
     </div>
   )
-}
-
-/**
- * Model names arrive as "provider/model" (sometimes "provider/provider/model").
- * The list groups them under the provider and shows the model's own name.
- */
-function byProvider(values: AgentOption['values']): PickerValue[] {
-  // Providers keep the order they first appear in; each gathers its models.
-  const groups = new Map<string, PickerValue[]>()
-  for (const v of values) {
-    const parts = v.name.split('/')
-    const group = parts.length > 1 ? parts[0] : ''
-    const item = parts.length > 1 ? { ...v, group, name: parts[parts.length - 1] } : v
-    groups.set(group, [...(groups.get(group) ?? []), item])
-  }
-  return [...groups.values()].flat()
 }

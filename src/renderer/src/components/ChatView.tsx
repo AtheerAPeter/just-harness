@@ -16,8 +16,8 @@ interface ChatViewProps {
   chat: Chat
   statuses: Partial<Record<AgentId, AgentStatus>>
   projectPath: string
-  onAgentChange: (agent: AgentId) => void
-  onOptionChange: (optionId: string, value: string) => void
+  onAgentChange: (agent: AgentId, settings: Record<string, string>) => void
+  onOptionChange: (optionId: string, value: string) => Promise<void>
 }
 
 export function ChatView({

@@ -163,8 +163,9 @@ export function SkillsView({ project }: SkillsViewProps): React.JSX.Element {
             <p>
               A skill is a folder with a <code>SKILL.md</code> file. Its description tells the agent
               when to load it. Project skills live in <code>.claude/skills</code>, which OpenCode
-              and Cline both read. Global skills live in <code>~/.claude/skills</code> and are
-              linked into <code>~/.cline/skills</code>.
+              and Cline both read; Command Code is pointed to them when you use one. Global skills
+              live in <code>~/.claude/skills</code> and are linked into <code>~/.cline/skills</code>{' '}
+              and <code>~/.commandcode/skills</code>.
             </p>
           </div>
         )}

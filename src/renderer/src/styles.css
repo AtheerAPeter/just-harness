@@ -1527,6 +1527,127 @@ pre {
   color: var(--text-muted);
 }
 
+/* Agent and model picker: agents on a rail, the selected one's models beside it */
+
+.agent-logo {
+  flex-shrink: 0;
+  border-radius: 4px;
+}
+
+.model-menu {
+  flex-direction: row;
+  width: 400px;
+}
+
+.model-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-right: 1px solid var(--border);
+}
+
+.model-rail-item {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+
+.model-rail-item:hover:not(:disabled) {
+  background: var(--fill);
+}
+
+.model-rail-item.active {
+  background: var(--bg-selected);
+}
+
+.model-rail-item.active::before {
+  content: '';
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: -6px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+
+.model-rail-item:disabled {
+  opacity: 0.35;
+}
+
+/* Tells an agent's providers apart when it has several on the rail. */
+.model-rail-badge {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 13px;
+}
+
+.model-heading {
+  padding: 8px 14px 2px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.model-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.model-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.model-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+}
+
+.model-search input::placeholder {
+  color: var(--text-muted);
+}
+
+.model-menu .picker-list {
+  max-height: 340px;
+}
+
+.model-source {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.model-source > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Browser: the page itself is a native view placed over .browser-viewport */
 
 .browser {
