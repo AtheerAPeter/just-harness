@@ -666,7 +666,7 @@ async function buildServer(
       act(id, tab, async (page) => {
         if (browser.windowHidden) {
           throw new Error(
-            'Just Harness is minimized, so pages cannot be captured now. Use snapshot to read the page.'
+            "Just Harness's window is closed or minimized, so pages cannot be captured now. Use snapshot to read the page."
           )
         }
         const result = await untilDialog(page, () =>

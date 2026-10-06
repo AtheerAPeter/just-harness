@@ -25,6 +25,8 @@ import { listProjectFiles } from './files'
 
 let mainWindow: BrowserWindow
 let browser: BuiltinBrowser | undefined
+/** Set once the app is quitting: closing the window then really closes it. */
+let quitting = false
 
 function send(channel: string, ...args: unknown[]): void {
   if (!mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
@@ -37,8 +39,10 @@ const agents = new AgentManager(
     commands: (chatId: string, commands: AgentCommand[]) => send('chat:commands', chatId, commands),
     stateChanged: () => {
       send('state:changed', store.getState())
-      // A chat that stopped running may no longer need its browser page.
+      // A chat that stopped running may no longer need its browser page, and
+      // no longer controls a tab.
       browser?.prune()
+      browser?.endControl()
     }
   },
   (chatId) => browser?.state(chatId)
@@ -66,6 +70,20 @@ function createWindow(): BuiltinBrowser {
   // A sheet attached in the same tick as show() is never drawn; the show event comes after.
   mainWindow.once('show', () => store.reportDamagedState(mainWindow))
   mainWindow.on('ready-to-show', () => mainWindow.show())
+  // As in other Mac apps, closing the window hides it and the app stays in the
+  // Dock: chats keep running, and the window comes back as it was. Quitting
+  // (⌘Q) closes it for real and stops the agents.
+  mainWindow.on('close', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    // A full-screen window would leave an empty space behind; it leaves full screen first.
+    if (mainWindow.isFullScreen()) {
+      mainWindow.once('leave-full-screen', () => mainWindow.hide())
+      mainWindow.setFullScreen(false)
+    } else {
+      mainWindow.hide()
+    }
+  })
   // A crashed renderer leaves the window blank. Chats live in this process, so
   // loading the window again loses nothing; one that keeps crashing is left to the user.
   let lastReload = 0
@@ -259,7 +277,7 @@ function registerIpc(browser: BuiltinBrowser): void {
   ipcMain.handle('browser:selectTab', (_e, tabId: string) => browser.selectActiveChatTab(tabId))
   ipcMain.handle('browser:closeTab', (_e, tabId: string) => browser.closeActiveChatTab(tabId))
   ipcMain.handle('browser:newTab', () => browser.newActiveChatTab())
-  ipcMain.handle('browser:clearData', () => browser.clearData())
+  ipcMain.on('browser:menu', (_e, x: number, y: number) => browser.showMenu(x, y))
   ipcMain.handle('browser:state', () => browser.state())
 
   ipcMain.handle('files:list', (_e, projectPath: string) => listProjectFiles(projectPath))
@@ -283,7 +301,12 @@ function registerIpc(browser: BuiltinBrowser): void {
 if (!app.requestSingleInstanceLock()) app.exit(0)
 app.on('second-instance', () => {
   if (mainWindow.isMinimized()) mainWindow.restore()
-  mainWindow.focus()
+  mainWindow.show()
+})
+
+// Clicking the Dock icon brings back a closed (hidden) window.
+app.on('activate', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show()
 })
 
 app.setName('Just Harness')
@@ -315,7 +338,6 @@ app.whenReady().then(async () => {
   })
 })
 
-let quitting = false
 app.on('before-quit', (event) => {
   if (quitting) return
   quitting = true
@@ -330,5 +352,6 @@ app.on('before-quit', (event) => {
   ;(browser?.flush() ?? Promise.resolve()).finally(() => app.quit())
 })
 
-// Single-window app: closing the window quits, which also stops the agent processes.
+// Closing the window only hides it, so it closes for good only while quitting.
+// Should it go any other way, the app quits rather than run without a window.
 app.on('window-all-closed', () => app.quit())

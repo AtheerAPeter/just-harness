@@ -172,6 +172,10 @@ export interface BrowserTab {
   title: string
   url: string
   loading: boolean
+  /** The page's icon, as the page declares it. */
+  favicon?: string
+  /** The tab the agent is working in: it acted on it last, in a turn still running. */
+  controlled: boolean
 }
 
 /** The selected chat's browser: its tabs, and the active tab's page. */

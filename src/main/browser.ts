@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
   WebContentsView,
   session,
   type IpcMainEvent,
@@ -98,7 +99,8 @@ function siteOf(url: string): string {
 
 /**
  * A tab of a chat's browser: its view, the driver agents use, and the dialog it
- * waits on. Emits 'dialog' when a dialog opens.
+ * waits on. Emits 'dialog' when a dialog opens, and 'automate' when an agent
+ * tool call starts on it.
  */
 export class ChatPage extends EventEmitter {
   readonly driver: PageDriver
@@ -109,6 +111,8 @@ export class ChatPage extends EventEmitter {
   shown = false
   /** The page it shows, kept for reopening the tab after the browser closes. */
   url = ''
+  /** The page's icon, once the page has declared one. */
+  favicon?: string
   /**
    * A reopened tab that has not loaded its page yet. Every page is a renderer
    * process, so saved tabs load when they are first used, not all at once.
@@ -154,6 +158,7 @@ export class ChatPage extends EventEmitter {
   /** Run an agent tool call on the page. */
   async automate<T>(work: () => Promise<T>): Promise<T> {
     this.automating++
+    this.emit('automate')
     try {
       return await work()
     } finally {
@@ -183,6 +188,8 @@ export class ChatPage extends EventEmitter {
 interface ChatTabs {
   tabs: ChatPage[]
   active?: ChatPage
+  /** The tab the agent acted on last, while its turn runs; shown highlighted. */
+  controlled?: ChatPage
   /** For the next tab's id. */
   next: number
   /** While its saved tabs are being reopened, which must not overwrite what was saved. */
@@ -330,6 +337,18 @@ export class BuiltinBrowser {
     }
     contents.on('did-navigate', remember)
     contents.on('did-navigate-in-page', remember)
+    // A new page has its own icon, if any; until it declares one the tab shows none.
+    contents.on('did-navigate', () => (tab.favicon = undefined))
+    contents.on('page-favicon-updated', (_event, favicons) => {
+      tab.favicon = favicons[0]
+      if (chatId === this.activeChat) this.emitState()
+    })
+    // The agent's work moves to whichever tab it acts on.
+    tab.on('automate', () => {
+      if (browser.controlled === tab) return
+      browser.controlled = tab
+      if (chatId === this.activeChat) this.emitState()
+    })
     // A page with unsaved changes asks before it is left. Electron would
     // silently stay; the agent was asked to leave, the user is asked.
     contents.on('will-prevent-unload', (event) => {
@@ -381,6 +400,7 @@ export class BuiltinBrowser {
     const index = browser?.tabs.indexOf(tab) ?? -1
     if (!browser || index === -1) return
     browser.tabs.splice(index, 1)
+    if (browser.controlled === tab) browser.controlled = undefined
     if (browser.active === tab) {
       browser.active =
         tab.openedBy && browser.tabs.includes(tab.openedBy)
@@ -538,6 +558,44 @@ export class BuiltinBrowser {
       const shown = chatId === this.activeChat && this.panelBounds
       if (!shown && !this.isRunning(chatId)) this.closeBrowser(chatId)
     }
+  }
+
+  /** A chat whose turn ended no longer controls a tab: its highlight goes. */
+  endControl(): void {
+    for (const [chatId, browser] of this.chats) {
+      if (!browser.controlled || this.isRunning(chatId)) continue
+      browser.controlled = undefined
+      if (chatId === this.activeChat) this.emitState()
+    }
+  }
+
+  /**
+   * The panel's ⋮ menu, at a point in the window. A native menu: an HTML one
+   * would open under the page, which is drawn above the window's content.
+   */
+  showMenu(x: number, y: number): void {
+    // The renderer measures in CSS pixels; the menu is placed in window points (see setBounds).
+    const zoom = this.window.webContents.getZoomFactor()
+    Menu.buildFromTemplate([
+      { label: 'New Tab', click: () => this.newActiveChatTab() },
+      { label: 'Reload', click: () => this.reload() },
+      { type: 'separator' },
+      { label: 'Sign Out Everywhere…', click: () => void this.confirmClearData() }
+    ]).popup({ window: this.window, x: Math.round(x * zoom), y: Math.round(y * zoom) })
+  }
+
+  /** Clear cookies and site data once the user confirms; it signs them out of every site. */
+  private async confirmClearData(): Promise<void> {
+    const { response } = await dialog.showMessageBox(this.window, {
+      type: 'warning',
+      message: 'Sign out everywhere?',
+      detail:
+        "This clears all cookies and site data in the built-in browser, so you're signed out of every site.",
+      buttons: ['Sign Out', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1
+    })
+    if (response === 0) await this.clearData()
   }
 
   /** Put the selected chat's active tab in the panel and park every other tab. */
@@ -729,7 +787,9 @@ export class BuiltinBrowser {
         id: tab.id,
         title: tab.contents.getTitle(),
         url: shownUrl(tab.contents.getURL() || tab.url),
-        loading: tab.contents.isLoading()
+        loading: tab.contents.isLoading(),
+        favicon: tab.favicon,
+        controlled: tab === browser.controlled
       })),
       activeTab: browser.active?.id,
       // A blank page shows as an empty address bar, with its placeholder.
