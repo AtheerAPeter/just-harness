@@ -92,7 +92,8 @@ const api = {
     selectTab: (tabId: string): Promise<void> => ipcRenderer.invoke('browser:selectTab', tabId),
     closeTab: (tabId: string): Promise<void> => ipcRenderer.invoke('browser:closeTab', tabId),
     newTab: (): Promise<void> => ipcRenderer.invoke('browser:newTab'),
-    clearData: (): Promise<void> => ipcRenderer.invoke('browser:clearData'),
+    /** Open the panel's ⋮ menu at a point in the window. */
+    showMenu: (x: number, y: number): void => ipcRenderer.send('browser:menu', x, y),
     getState: (): Promise<BrowserState> => ipcRenderer.invoke('browser:state'),
     onState: (listener: (state: BrowserState) => void) => on('browser:state', listener),
     /** Open or close the browser panel in a chat. */
