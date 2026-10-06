@@ -63,7 +63,25 @@ function createWindow(): BuiltinBrowser {
     }
   })
 
+  // A sheet attached in the same tick as show() is never drawn; the show event comes after.
+  mainWindow.once('show', () => store.reportDamagedState(mainWindow))
   mainWindow.on('ready-to-show', () => mainWindow.show())
+  // A crashed renderer leaves the window blank. Chats live in this process, so
+  // loading the window again loses nothing; one that keeps crashing is left to the user.
+  let lastReload = 0
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`The window's renderer is gone: ${details.reason} (${details.exitCode})`)
+    if (details.reason === 'clean-exit' || mainWindow.isDestroyed()) return
+    if (Date.now() - lastReload < 30_000) {
+      dialog.showErrorBox(
+        'Just Harness stopped responding',
+        'The window crashed again right after reloading. Quit and open the app again.'
+      )
+      return
+    }
+    lastReload = Date.now()
+    mainWindow.webContents.reload()
+  })
   nativeTheme.on('updated', () => {
     if (!mainWindow.isDestroyed()) mainWindow.setBackgroundColor(windowBackground())
   })
@@ -209,13 +227,11 @@ function registerIpc(browser: BuiltinBrowser): void {
     })
     return result.canceled ? [] : result.filePaths.map((path) => ({ name: basename(path), path }))
   })
-  ipcMain.handle('chat:setBypass', (_e, chatId: string, enabled: boolean) =>
-    agents.setBypassPermissions(chatId, enabled)
+  ipcMain.handle(
+    'chat:setPermissions',
+    (_e, chatId: string, permissions: Pick<Chat, 'bypassPermissions' | 'projectOnly'>) =>
+      agents.setPermissions(chatId, permissions)
   )
-  ipcMain.handle('chat:setProjectOnly', (_e, chatId: string, enabled: boolean) => {
-    store.updateChat(chatId, { projectOnly: enabled })
-    send('state:changed', store.getState())
-  })
   ipcMain.handle('chat:cancel', (_e, chatId: string) => agents.cancel(chatId))
   ipcMain.handle('chat:setOption', (_e, chatId: string, optionId: string, value: string) =>
     agents.setOption(chatId, optionId, value)
@@ -233,6 +249,7 @@ function registerIpc(browser: BuiltinBrowser): void {
     browser.setActiveChat(chatId ?? undefined)
   )
   ipcMain.on('browser:setBounds', (_e, rect: Rect | null) => browser.setBounds(rect))
+  ipcMain.on('browser:setHidden', (_e, hidden: boolean) => browser.setPanelHidden(hidden))
   ipcMain.handle('browser:navigate', (_e, url: string) =>
     browser.navigate(url).catch(() => undefined)
   )
@@ -304,7 +321,12 @@ app.on('before-quit', (event) => {
   quitting = true
   event.preventDefault()
   agents.stopAll()
-  store.flush()
+  // A failed save (a full disk) must not keep the app from quitting.
+  try {
+    store.flush()
+  } catch (error) {
+    console.error('Could not save before quitting:', error)
+  }
   ;(browser?.flush() ?? Promise.resolve()).finally(() => app.quit())
 })
 

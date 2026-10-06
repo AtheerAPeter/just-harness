@@ -59,10 +59,11 @@ const api = {
   /** The path of a dropped or pasted file (empty for data with no file, like a screenshot). */
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
   cancel: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:cancel', chatId),
-  setProjectOnly: (chatId: string, enabled: boolean): Promise<void> =>
-    ipcRenderer.invoke('chat:setProjectOnly', chatId, enabled),
-  setBypassPermissions: (chatId: string, enabled: boolean): Promise<void> =>
-    ipcRenderer.invoke('chat:setBypass', chatId, enabled),
+  /** Set the permission mode: both settings in one call, so they never apply half-changed. */
+  setPermissions: (
+    chatId: string,
+    permissions: Pick<Chat, 'bypassPermissions' | 'projectOnly'>
+  ): Promise<void> => ipcRenderer.invoke('chat:setPermissions', chatId, permissions),
   setOption: (chatId: string, optionId: string, value: string): Promise<void> =>
     ipcRenderer.invoke('chat:setOption', chatId, optionId, value),
   resolvePermission: (chatId: string, permissionId: string, optionId: string): Promise<void> =>
@@ -80,6 +81,8 @@ const api = {
 
   browser: {
     setBounds: (rect: Rect | null): void => ipcRenderer.send('browser:setBounds', rect),
+    /** Hide the page for a moment while the panel stays open, as during a resize drag. */
+    setHidden: (hidden: boolean): void => ipcRenderer.send('browser:setHidden', hidden),
     /** Which chat's page the panel shows. */
     setChat: (chatId: string | null): void => ipcRenderer.send('browser:setChat', chatId),
     navigate: (url: string): Promise<void> => ipcRenderer.invoke('browser:navigate', url),

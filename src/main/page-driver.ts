@@ -305,6 +305,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** A DevTools command the page did not answer in time. */
+class PageTimeoutError extends Error {}
+
 export function withTimeout<T>(promise: Promise<T>, ms: number, error: () => Error): Promise<T> {
   let timer: NodeJS.Timeout | undefined
   const timeout = new Promise<never>((_resolve, reject) => {
@@ -563,7 +566,7 @@ export class PageDriver {
         this.cdp.sendCommand(method, params, sessionId) as Promise<T>,
         timeout,
         () =>
-          new Error(
+          new PageTimeoutError(
             `The page did not respond within ${timeout / 1000}s (${method}). It may be busy or frozen.`
           )
       )
@@ -989,8 +992,13 @@ export class PageDriver {
    * PNG of the page's viewport, as base64. Electron renders a page for the
    * capture, so this works for pages of background chats too, which draw
    * nothing while parked off-screen.
+   *
+   * The capture has the display's pixels (twice the page's size on Retina); it
+   * is scaled to `width`, the page's own width, which keeps text legible with a
+   * quarter of the pixels. Model APIs resend every image with each request and
+   * refuse images over 2000 pixels once a chat has many.
    */
-  async screenshot(): Promise<string> {
+  async screenshot(width: number): Promise<string> {
     const capture = (): Promise<Electron.NativeImage> =>
       withTimeout(
         this.contents.capturePage(),
@@ -1004,7 +1012,11 @@ export class PageDriver {
       try {
         const image = await capture()
         if (image.isEmpty()) throw new Error('The page has not drawn anything yet.')
-        return image.toPNG().toString('base64')
+        const scaled =
+          width > 0 && image.getSize().width > width
+            ? image.resize({ width, quality: 'best' })
+            : image
+        return scaled.toPNG().toString('base64')
       } catch (error) {
         if (!/UnknownVizError/.test((error as Error).message) || Date.now() > deadline) throw error
         await sleep(100)
@@ -1015,20 +1027,24 @@ export class PageDriver {
   /** Run an expression in the page's own context and return its JSON value. */
   async evaluate(expression: string, timeout = COMMAND_TIMEOUT): Promise<unknown> {
     await this.attach()
+    let response: RemoteResult
     try {
-      return valueOf(
-        await this.send<RemoteResult>(
-          'Runtime.evaluate',
-          { expression, returnByValue: true, awaitPromise: true, userGesture: true, timeout },
-          undefined,
-          timeout + 1000
-        )
+      response = await this.send<RemoteResult>(
+        'Runtime.evaluate',
+        { expression, returnByValue: true, awaitPromise: true, userGesture: true, timeout },
+        undefined,
+        timeout + 1000
       )
     } catch (error) {
-      // Stop a script that is still running, such as an endless loop.
-      this.send('Runtime.terminateExecution').catch(() => undefined)
+      // No answer at all: the script may still be running, such as an endless
+      // loop. Only then is it stopped: terminateExecution stops the current
+      // script or, when none runs, the next one, which would be the page's own.
+      if (error instanceof PageTimeoutError) {
+        this.send('Runtime.terminateExecution').catch(() => undefined)
+      }
       throw error
     }
+    return valueOf(response)
   }
 
   /**

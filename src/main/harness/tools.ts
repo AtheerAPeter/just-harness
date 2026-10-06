@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process'
+import { createWriteStream, type WriteStream } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import type { Readable } from 'node:stream'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { browserId, browserMcpEndpoint, SERVER_NAME as BROWSER_SERVER } from '../browser-mcp'
 import { loadShellPath } from '../shell-env'
@@ -281,9 +283,7 @@ const bash: Tool = {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe']
     })
-    const chunks: Buffer[] = []
-    child.stdout.on('data', (data: Buffer) => chunks.push(data))
-    child.stderr.on('data', (data: Buffer) => chunks.push(data))
+    const output = new CommandOutput([child.stdout, child.stderr])
 
     let stoppedBy: string | undefined
     const stop = (reason: string): void => {
@@ -301,25 +301,141 @@ const bash: Tool = {
         ? setTimeout(() => stop(`Timed out after ${timeout} seconds.`), timeout * 1000)
         : undefined
 
+    // The command is done when bash exits. Its pipes close then too, unless a
+    // process it started in the background (a dev server: `npm run dev &`)
+    // still holds them; waiting for that would hold the turn until it ends.
     const code = await new Promise<number | null>((done, fail) => {
       child.once('error', fail)
       child.once('close', (exitCode) => done(exitCode))
+      child.once('exit', (exitCode) => {
+        // Output bash wrote before exiting is already in the pipes; it is read
+        // within the next turn of the event loop, so wait two before finishing.
+        setImmediate(() => setImmediate(() => done(exitCode)))
+      })
     }).finally(() => {
       signal.removeEventListener('abort', onAbort)
       clearTimeout(timer)
     })
+    if (child.pid && groupAlive(child.pid)) keepForQuit(child.pid)
 
-    const output = Buffer.concat(chunks).toString('utf8')
-    let shown = tail(output)
-    if (shown !== output) {
-      const file = join(tmpdir(), `just-harness-${crypto.randomUUID().slice(0, 8)}.log`)
-      await writeFile(file, output)
-      shown += `\n\n[Output cut to its end. Full output: ${file}]`
+    const { text: all, file } = await output.finish()
+    let shown = tail(all)
+    if (file || shown !== all) {
+      const path = file ?? join(tmpdir(), `just-harness-${crypto.randomUUID().slice(0, 8)}.log`)
+      if (!file) await writeFile(path, all)
+      shown += `\n\n[Output cut to its end. Full output: ${path}]`
     }
     const status = stoppedBy ?? (code !== 0 ? `Exit code ${code ?? 'unknown'}.` : '')
     const result = [shown.trimEnd(), status].filter(Boolean).join('\n\n') || '(no output)'
     return { content: text(result), isError: Boolean(stoppedBy) || code !== 0 }
   }
+}
+
+/** Output kept in memory before the rest goes to a file. */
+const OUTPUT_IN_MEMORY = 8 * 1024 * 1024
+/** Of output written to a file, the end kept in memory: enough for what tail() shows. */
+const OUTPUT_TAIL = 2 * MAX_BYTES
+
+/**
+ * A command's stdout and stderr, together. Past OUTPUT_IN_MEMORY it is
+ * written to a log file and only its end stays in memory, so a command that
+ * prints without end cannot fill the app's memory. Once the command is done,
+ * later output (from processes it left running) is read and dropped: a pipe
+ * nobody reads would block them.
+ */
+class CommandOutput {
+  private chunks: Buffer[] = []
+  private size = 0
+  /** Set once the output went past OUTPUT_IN_MEMORY. */
+  private log?: { path: string; stream: WriteStream; dropped: boolean }
+  private done = false
+  private paused = false
+
+  constructor(private readonly sources: Readable[]) {
+    for (const source of sources) source.on('data', (data: Buffer) => this.add(data))
+  }
+
+  private add(data: Buffer): void {
+    if (this.done) return
+    this.chunks.push(data)
+    this.size += data.length
+    if (!this.log && this.size > OUTPUT_IN_MEMORY) {
+      const path = join(tmpdir(), `just-harness-${crypto.randomUUID().slice(0, 8)}.log`)
+      this.log = { path, stream: createWriteStream(path), dropped: false }
+      // A failed write (a full disk) only costs the file; the end is still shown.
+      this.log.stream.on('error', (error) => console.error('[harness] command log:', error))
+      for (const chunk of this.chunks) this.write(chunk)
+    } else if (this.log) {
+      this.write(data)
+    }
+    // With a log, keep only the end in memory.
+    while (this.log && this.chunks.length > 1 && this.size - this.chunks[0].length >= OUTPUT_TAIL) {
+      this.size -= this.chunks.shift()!.length
+      this.log.dropped = true
+    }
+  }
+
+  /** Write to the log, pausing the command's pipes while the disk catches up. */
+  private write(chunk: Buffer): void {
+    if (this.log!.stream.write(chunk) || this.paused) return
+    this.paused = true
+    for (const source of this.sources) source.pause()
+    this.log!.stream.once('drain', () => this.resume())
+  }
+
+  private resume(): void {
+    this.paused = false
+    for (const source of this.sources) source.resume()
+  }
+
+  /** Stop collecting; returns the output, or its end and the log file holding all of it. */
+  async finish(): Promise<{ text: string; file?: string }> {
+    this.done = true
+    if (this.paused) this.resume()
+    let text = Buffer.concat(this.chunks).toString('utf8')
+    if (!this.log) return { text }
+    // The first kept line may start mid-line (or mid-character); drop it.
+    if (this.log.dropped) text = text.slice(text.indexOf('\n') + 1)
+    const { stream, path } = this.log
+    await new Promise<void>((resolve) => stream.end(resolve))
+    return { text, file: path }
+  }
+}
+
+/** Process groups of commands that left processes running, stopped when the app quits. */
+const leftRunning = new Set<number>()
+let pruneTimer: NodeJS.Timeout | undefined
+
+/** Whether any process of a command's process group still runs. */
+function groupAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch {
+    // ESRCH: none left. EPERM: the number now belongs to another user's group.
+    return false
+  }
+}
+
+/**
+ * Remember a group to stop at quit. Groups that end are forgotten within 30
+ * seconds, so a later, unrelated group that reuses the number is not signalled.
+ */
+function keepForQuit(pid: number): void {
+  leftRunning.add(pid)
+  pruneTimer ??= setInterval(() => {
+    for (const group of leftRunning) if (!groupAlive(group)) leftRunning.delete(group)
+    if (leftRunning.size === 0) {
+      clearInterval(pruneTimer)
+      pruneTimer = undefined
+    }
+  }, 30_000).unref()
+}
+
+/** Stop what commands left running (servers started with &); called when the app quits. */
+export function stopLeftRunning(): void {
+  for (const group of leftRunning) killGroup(group, 'SIGTERM')
+  leftRunning.clear()
 }
 
 /** Signal a command's process group; it may have exited already. */

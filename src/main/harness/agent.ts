@@ -16,10 +16,39 @@ import {
   type AgentEvents,
   type Permissions
 } from '../permissions'
-import { defaultEffort, effortLevels, parseArguments, streamReply, type Model } from './wire'
+import {
+  CONTEXT_FULL_MESSAGE,
+  defaultEffort,
+  effortLevels,
+  parseArguments,
+  streamReply,
+  type Model
+} from './wire'
 import type { Provider, Source } from './provider'
 import { browserTools, CORE_TOOLS, runTool, type Tool } from './tools'
-import type { AssistantTurn, Effort, Part, Reply, ToolResult, Turn } from './types'
+import {
+  AGENT_TOOL,
+  AGENT_TOOL_NAME,
+  brief,
+  Limiter,
+  MAX_PARALLEL,
+  MAX_REQUESTS,
+  parseTask,
+  STEP_LIMIT_NOTE,
+  subagentRefusal,
+  type SubagentTask
+} from './subagents'
+import type {
+  AssistantTurn,
+  Effort,
+  Part,
+  Reply,
+  Request,
+  ToolCall,
+  ToolResult,
+  ToolSpec,
+  Turn
+} from './types'
 
 /**
  * A minimal coding agent run in the app, after pi: a system prompt, four tools
@@ -38,16 +67,29 @@ const sessionsDir = join(app.getPath('userData'), 'harness')
 /** One line of a session file. */
 type Entry =
   | { type: 'session'; system: string }
+  | { type: 'tools'; tools: ToolSpec[] }
   | { type: 'turn'; turn: Turn }
   | { type: 'allow'; tool: string }
 
 interface Session {
   file: string
   system: string
+  /** The tools the chat declares, fixed at its first request (see toolSpecs). */
+  tools?: ToolSpec[]
   turns: Turn[]
   /** Tools the user chose "Always allow" for in this chat. */
   allowed: Set<string>
 }
+
+type ToolItem = Extract<ChatItem, { kind: 'tool' }>
+
+/**
+ * Who makes a reply's tool calls: the main agent, which may start subagents,
+ * or a subagent, whose calls follow its task's rules.
+ */
+type Caller =
+  | { spawn: (callId: string, args: Record<string, unknown>) => Promise<ToolResult> }
+  | { subagent: SubagentTask; parentId: string }
 
 const PERMISSION_OPTIONS: acp.PermissionOption[] = [
   { optionId: 'allow_once', name: 'Allow', kind: 'allow_once' },
@@ -68,6 +110,10 @@ export class HarnessAgent {
   /** The running turn of each chat, aborted by Stop. */
   private turns = new Map<string, AbortController>()
   private options = new Map<string, AgentOption[]>()
+  /** Subagents of each chat running at once (see MAX_PARALLEL). */
+  private limiters = new Map<string, Limiter>()
+  /** Per chat, the files running implement subagents own, by the agent call's item id. */
+  private owners = new Map<string, Map<string, string>>()
 
   constructor(
     private readonly provider: Provider,
@@ -99,6 +145,7 @@ export class HarnessAgent {
           continue
         }
         if (entry.type === 'session') session.system = entry.system
+        else if (entry.type === 'tools') session.tools = entry.tools
         else if (entry.type === 'turn') session.turns.push(entry.turn)
         else session.allowed.add(entry.tool)
       }
@@ -120,6 +167,7 @@ export class HarnessAgent {
 
   private async append(session: Session, entry: Entry): Promise<void> {
     if (entry.type === 'turn') session.turns.push(entry.turn)
+    if (entry.type === 'tools') session.tools = entry.tools
     if (entry.type === 'allow') session.allowed.add(entry.tool)
     await appendFile(session.file, `${JSON.stringify(entry)}\n`)
   }
@@ -136,7 +184,7 @@ export class HarnessAgent {
 
 Guidelines:
 - Use read to look at files, not cat or sed.
-- Use bash for ls, rg, find, git, builds and tests.
+- Use bash for ls, rg, find, git, builds and tests. Commands that keep running (dev servers, watchers) must be started in the background with & and their output redirected to a file; otherwise the call waits until they exit.
 - Use edit for precise changes. When changing several places in one file, make one edit call with several entries.
 - Use write only for new files or complete rewrites.
 - Be concise in your responses.
@@ -167,6 +215,8 @@ Guidelines:
   async release(chatId: string): Promise<void> {
     this.options.delete(chatId)
     this.sessions.delete(chatId)
+    this.limiters.delete(chatId)
+    this.owners.delete(chatId)
     await rm(join(sessionsDir, `${chatId}.jsonl`), { force: true })
   }
 
@@ -281,19 +331,28 @@ Guidelines:
     try {
       await this.ensureSession(chatId)
       const session = this.sessions.get(chatId)!
+      const tools = await this.tools()
+      const specs = await this.toolSpecs(session, tools)
       await this.closeOpenCalls(session)
       await this.append(session, {
         type: 'turn',
         turn: { role: 'user', content: userContent(text, blocks) }
       })
-      const tools = await this.tools()
+      const request = { system: session.system, tools: specs, turns: session.turns }
       for (;;) {
         if (signal.aborted) return { stopReason: 'cancelled' }
-        const reply = await this.reply(chatId, session, tools, await this.choice(chatId), signal)
+        const choice = await this.choice(chatId)
+        const reply = await this.reply(chatId, request, choice, signal, {
+          keep: (partial) => this.append(session, { type: 'turn', turn: partial })
+        })
         if (reply.turn.text || reply.turn.toolCalls.length > 0) {
           await this.append(session, { type: 'turn', turn: reply.turn })
         }
         if (signal.aborted) return { stopReason: 'cancelled' }
+        // Cut off by the context window: calls in it may be incomplete, and the
+        // next request would not fit either. Calls left unanswered are closed
+        // when the chat is used again (closeOpenCalls).
+        if (reply.stop === 'context_full') throw new Error(CONTEXT_FULL_MESSAGE)
         if (reply.turn.toolCalls.length === 0) {
           return {
             stopReason:
@@ -313,12 +372,33 @@ Guidelines:
                   'Not run: the reply hit the output limit, so the arguments may be cut off. Call the tool again with complete arguments.'
                 )
               )
-            : await this.runCalls(chatId, session, tools, reply.turn, signal)
+            : await this.runCalls(chatId, session, tools, reply.turn, signal, {
+                spawn: (callId, args) =>
+                  this.runSubagent(chatId, session, tools, request, choice, callId, args, signal)
+              })
         await this.append(session, { type: 'turn', turn: { role: 'tool', results } })
       }
     } finally {
       if (this.turns.get(chatId) === turn) this.turns.delete(chatId)
     }
+  }
+
+  /**
+   * The tools the chat declares, fixed at its first request and replayed
+   * unchanged after. Changing a tool's text or the set mid-conversation would
+   * invalidate the thinking that newer Claude models replay (a 400 on accounts
+   * where that is enforced) and miss the prompt cache, so app updates and a
+   * browser that fails to connect leave a chat's tools as they were. Chats from
+   * before tools were stored keep the ones they had, which had no subagents.
+   */
+  private async toolSpecs(session: Session, tools: Tool[]): Promise<ToolSpec[]> {
+    if (session.tools) return session.tools
+    const core = CORE_TOOLS.map((t) => t.spec)
+    const browser = tools.filter((t) => !CORE_TOOLS.includes(t)).map((t) => t.spec)
+    const specs =
+      session.turns.length === 0 ? [...core, AGENT_TOOL, ...browser] : [...core, ...browser]
+    await this.append(session, { type: 'tools', tools: specs })
+    return specs
   }
 
   /** Calls the app quit or crashed during were never answered; answer them so the transcript stays valid. */
@@ -342,49 +422,47 @@ Guidelines:
   }
 
   /**
-   * Stream one reply into the chat. A reply cut short (Stop, an error, a stall)
-   * keeps the text that arrived, so the model knows what it already said.
+   * Stream one reply. The main agent's (`main` set) is shown in the chat as it
+   * arrives, and when cut short (Stop, an error, a stall) the text that arrived
+   * is kept, so the model knows what it already said. A subagent's is not shown:
+   * only its report is.
    */
   private async reply(
     chatId: string,
-    session: Session,
-    tools: Tool[],
+    request: Pick<Request, 'system' | 'tools' | 'turns'>,
     { source, model, effort }: Choice,
-    signal: AbortSignal
+    signal: AbortSignal,
+    main?: { keep: (partial: AssistantTurn) => Promise<void> }
   ): Promise<Reply> {
     // Fetched for every request: credentials can change (signing in again, a renewed token).
     const endpoint = await this.provider.endpoint(source.id, chatId)
-    const request = new AbortController()
-    const onAbort = (): void => request.abort()
+    const sending = new AbortController()
+    const onAbort = (): void => sending.abort()
     signal.addEventListener('abort', onAbort)
     let lastActivity = Date.now()
     let stalled = false
     const watchdog = setInterval(() => {
       if (Date.now() - lastActivity < STALL_TIMEOUT_MS) return
       stalled = true
-      request.abort()
+      sending.abort()
     }, STALL_CHECK_MS)
     let text = ''
     try {
       return await streamReply(
         endpoint,
         model,
-        {
-          model: model.id,
-          effort,
-          system: session.system,
-          tools: tools.map((t) => t.spec),
-          turns: session.turns
-        },
+        { model: model.id, effort, ...request },
         {
           text: (delta) => {
             text += delta
-            this.stream(chatId, 'text', delta)
+            if (main) this.stream(chatId, 'text', delta)
           },
-          thinking: (delta) => this.stream(chatId, 'thought', delta),
+          thinking: (delta) => {
+            if (main) this.stream(chatId, 'thought', delta)
+          },
           activity: () => (lastActivity = Date.now())
         },
-        request.signal
+        sending.signal
       )
     } catch (error) {
       const partial: AssistantTurn = {
@@ -395,7 +473,7 @@ Guidelines:
         toolCalls: []
       }
       if (signal.aborted) return { turn: partial, stop: 'end' }
-      if (text) await this.append(session, { type: 'turn', turn: partial })
+      if (text && main) await main.keep(partial)
       if (stalled) {
         throw new Error(
           `${this.provider.name} sent nothing for ${STALL_TIMEOUT_MS / 60_000} minutes, so the reply was stopped. Send your message again to continue.`
@@ -415,68 +493,218 @@ Guidelines:
     else this.emit(chatId, { kind, id: crypto.randomUUID(), text: delta })
   }
 
-  /** Run a reply's tool calls in order, asking first where the chat's mode says to. */
+  /**
+   * Run a reply's tool calls, asking first where the chat's mode says to. Calls
+   * run in order, except subagents: they start at once and run alongside, and
+   * every result is returned in the order of the calls.
+   */
   private async runCalls(
     chatId: string,
     session: Session,
     tools: Tool[],
     reply: AssistantTurn,
-    signal: AbortSignal
+    signal: AbortSignal,
+    caller: Caller
   ): Promise<ToolResult[]> {
-    const results: ToolResult[] = []
-    const chat = store.getChat(chatId)
-    const cwd = store.getProject(chat.projectId).path
+    const results: (ToolResult | Promise<ToolResult>)[] = []
+    const cwd = store.getProject(store.getChat(chatId).projectId).path
     for (const call of reply.toolCalls) {
       if (signal.aborted) {
         results.push(errorResult(call.id, 'Not run: the user stopped the turn.'))
         continue
       }
-      const tool = tools.find((t) => t.spec.name === call.name)
       const args = parseArguments(call.arguments)
-      const item: Extract<ChatItem, { kind: 'tool' }> = {
-        kind: 'tool',
-        // Call ids can repeat across replies (some models number them per reply).
-        id: crypto.randomUUID(),
-        title: tool?.title ?? call.name,
-        toolKind: tool?.kind,
-        status: 'pending',
-        input: formatRaw(args ?? call.arguments)
-      }
-      this.emit(chatId, item)
-      if (!tool || !args) {
-        const message = !tool
-          ? `There is no tool named "${call.name}".`
-          : 'The arguments were not a valid JSON object.'
-        this.emit(chatId, { ...item, status: 'failed', output: message })
-        results.push(errorResult(call.id, message))
+      if (call.name === AGENT_TOOL_NAME && args && 'spawn' in caller) {
+        results.push(caller.spawn(call.id, args))
         continue
       }
-      const allowed = await this.allow(chatId, session, tool, args, cwd)
-      if (allowed !== 'allow') {
-        this.emit(chatId, { ...item, status: allowed === 'cancelled' ? 'interrupted' : 'failed' })
-        results.push(
-          errorResult(
-            call.id,
-            allowed === 'cancelled'
-              ? 'Not run: the user stopped the turn.'
-              : 'The user rejected this tool call.'
-          )
-        )
-        continue
-      }
-      this.emit(chatId, { ...item, status: 'in_progress' })
-      const output = await runTool(tool, args, { cwd, chatId, signal })
-      const shown =
-        output.display ??
-        output.content.map((p) => (p.type === 'text' ? p.text : `[${p.mimeType}]`)).join('\n')
-      this.emit(chatId, {
-        ...item,
-        status: signal.aborted ? 'interrupted' : output.isError ? 'failed' : 'completed',
-        output: limitOutput(shown)
-      })
-      results.push({ callId: call.id, content: output.content, isError: output.isError === true })
+      results.push(await this.runCall(chatId, session, tools, call, args, signal, cwd, caller))
     }
-    return results
+    return Promise.all(results)
+  }
+
+  /** Run one tool call: refused, rejected by the user, or run, and shown in the chat. */
+  private async runCall(
+    chatId: string,
+    session: Session,
+    tools: Tool[],
+    call: ToolCall,
+    args: Record<string, unknown> | undefined,
+    signal: AbortSignal,
+    cwd: string,
+    caller: Caller
+  ): Promise<ToolResult> {
+    const tool = tools.find((t) => t.spec.name === call.name)
+    const item: ToolItem = {
+      kind: 'tool',
+      // Call ids can repeat across replies (some models number them per reply).
+      id: crypto.randomUUID(),
+      title: tool?.title ?? call.name,
+      toolKind: tool?.kind,
+      status: 'pending',
+      input: formatRaw(args ?? call.arguments),
+      ...('subagent' in caller ? { parentId: caller.parentId } : {})
+    }
+    this.emit(chatId, item)
+    const refuse = (message: string): ToolResult => {
+      this.emit(chatId, { ...item, status: 'failed', output: message })
+      return errorResult(call.id, message)
+    }
+    if (!args) return refuse('The arguments were not a valid JSON object.')
+    // A subagent's rules come first: they also cover tools it cannot have.
+    const rule =
+      'subagent' in caller ? subagentRefusal(caller.subagent, call.name, args, cwd) : undefined
+    if (rule) return refuse(rule)
+    if (!tool) return refuse(`There is no tool named "${call.name}" available right now.`)
+    const allowed = await this.allow(chatId, session, tool, args, cwd)
+    if (allowed !== 'allow') {
+      this.emit(chatId, { ...item, status: allowed === 'cancelled' ? 'interrupted' : 'failed' })
+      return errorResult(
+        call.id,
+        allowed === 'cancelled'
+          ? 'Not run: the user stopped the turn.'
+          : 'The user rejected this tool call.'
+      )
+    }
+    this.emit(chatId, { ...item, status: 'in_progress' })
+    const output = await runTool(tool, args, { cwd, chatId, signal })
+    const shown =
+      output.display ??
+      output.content.map((p) => (p.type === 'text' ? p.text : `[${p.mimeType}]`)).join('\n')
+    this.emit(chatId, {
+      ...item,
+      status: signal.aborted ? 'interrupted' : output.isError ? 'failed' : 'completed',
+      output: limitOutput(shown)
+    })
+    return { callId: call.id, content: output.content, isError: output.isError === true }
+  }
+
+  // --- Subagents ------------------------------------------------------------
+
+  /**
+   * Run one subagent to the end; its report is the agent call's result. A
+   * failure is an error result, and the main agent decides what to do next.
+   */
+  private async runSubagent(
+    chatId: string,
+    session: Session,
+    tools: Tool[],
+    request: Pick<Request, 'system' | 'tools'>,
+    choice: Choice,
+    callId: string,
+    args: Record<string, unknown>,
+    signal: AbortSignal
+  ): Promise<ToolResult> {
+    const cwd = store.getProject(store.getChat(chatId).projectId).path
+    const item: ToolItem = {
+      kind: 'tool',
+      id: crypto.randomUUID(),
+      title: 'Subagent',
+      toolKind: AGENT_TOOL_NAME,
+      status: 'pending',
+      input: formatRaw(args)
+    }
+    const fail = (message: string, status: ToolItem['status'] = 'failed'): ToolResult => {
+      this.emit(chatId, { ...item, status, output: message })
+      return errorResult(callId, message)
+    }
+    let task: SubagentTask
+    try {
+      task = parseTask(args, cwd)
+    } catch (error) {
+      this.emit(chatId, item)
+      return fail((error as Error).message)
+    }
+    item.title = `${task.type === 'explore' ? 'Explore' : 'Implement'}: ${task.description}`
+    item.input = task.prompt
+    this.emit(chatId, item)
+
+    // Implementers running at once never share a file.
+    let owners = this.owners.get(chatId)
+    if (!owners) this.owners.set(chatId, (owners = new Map()))
+    const taken = task.files.find((file) => owners.has(file))
+    if (taken) {
+      return fail(
+        `${taken} belongs to another implement subagent that is still running. Wait for its report, or give this one other files.`
+      )
+    }
+    for (const file of task.files) owners.set(file, item.id)
+
+    let limiter = this.limiters.get(chatId)
+    if (!limiter) this.limiters.set(chatId, (limiter = new Limiter(MAX_PARALLEL)))
+    let started = false
+    try {
+      await limiter.acquire(signal)
+      started = true
+      this.emit(chatId, { ...item, status: 'in_progress' })
+      const report = await this.subagentLoop(
+        chatId,
+        session,
+        tools,
+        request,
+        choice,
+        task,
+        item.id,
+        signal
+      )
+      this.emit(chatId, { ...item, status: 'completed', output: limitOutput(report) })
+      return { callId, content: [{ type: 'text', text: limitOutput(report) }], isError: false }
+    } catch (error) {
+      return signal.aborted
+        ? fail('Not finished: the user stopped the turn.', 'interrupted')
+        : fail(`The subagent failed: ${(error as Error).message}`)
+    } finally {
+      if (started) limiter.release()
+      for (const file of task.files) if (owners.get(file) === item.id) owners.delete(file)
+    }
+  }
+
+  /**
+   * A subagent's own loop: the chat's system prompt and tools (so its requests
+   * read the cached prefix), its brief as the first message, and a transcript
+   * kept only while it runs. Its last text is its report.
+   */
+  private async subagentLoop(
+    chatId: string,
+    session: Session,
+    tools: Tool[],
+    { system, tools: specs }: Pick<Request, 'system' | 'tools'>,
+    choice: Choice,
+    task: SubagentTask,
+    parentId: string,
+    signal: AbortSignal
+  ): Promise<string> {
+    const turns: Turn[] = [{ role: 'user', content: [{ type: 'text', text: brief(task) }] }]
+    let report = ''
+    for (let step = 1; ; step++) {
+      signal.throwIfAborted()
+      const reply = await this.reply(chatId, { system, tools: specs, turns }, choice, signal)
+      signal.throwIfAborted()
+      if (reply.turn.text || reply.turn.toolCalls.length > 0) turns.push(reply.turn)
+      if (reply.turn.text) report = reply.turn.text
+      if (reply.stop === 'context_full') throw new Error('its context window filled up.')
+      if (reply.turn.toolCalls.length === 0)
+        return report || 'The subagent finished without a report.'
+      if (step > MAX_REQUESTS) {
+        return `${report}\n\n(The subagent reached its step limit before it reported.)`.trim()
+      }
+      const results =
+        reply.stop === 'max_tokens'
+          ? reply.turn.toolCalls.map((call) =>
+              errorResult(
+                call.id,
+                'Not run: the reply hit the output limit, so the arguments may be cut off. Call the tool again with complete arguments.'
+              )
+            )
+          : await this.runCalls(chatId, session, tools, reply.turn, signal, {
+              subagent: task,
+              parentId
+            })
+      turns.push({ role: 'tool', results })
+      if (step === MAX_REQUESTS) {
+        turns.push({ role: 'user', content: [{ type: 'text', text: STEP_LIMIT_NOTE }] })
+      }
+    }
   }
 
   /** Whether a call may run: read-only tools and "always allowed" ones run unless they leave the project. */

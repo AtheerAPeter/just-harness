@@ -57,9 +57,18 @@ export interface BrowserMcpEndpoint {
 
 let endpoint: BrowserMcpEndpoint | undefined
 
+/** The address and token of the last launch. A damaged file is replaced by new ones. */
 function readSaved(): { port: number; token: string } | undefined {
   if (!existsSync(endpointFile)) return undefined
-  return JSON.parse(readFileSync(endpointFile, 'utf8'))
+  try {
+    const saved = JSON.parse(readFileSync(endpointFile, 'utf8')) as Record<string, unknown>
+    if (typeof saved.port === 'number' && typeof saved.token === 'string') {
+      return { port: saved.port, token: saved.token }
+    }
+  } catch (error) {
+    console.error(`${endpointFile} could not be read:`, error)
+  }
+  return undefined
 }
 
 function listen(http: Server, port: number): Promise<number> {
@@ -660,7 +669,9 @@ async function buildServer(
             'Just Harness is minimized, so pages cannot be captured now. Use snapshot to read the page.'
           )
         }
-        const result = await untilDialog(page, () => page.driver.screenshot())
+        const result = await untilDialog(page, () =>
+          page.driver.screenshot(page.view.getBounds().width)
+        )
         if ('dialog' in result) return text(dialogNote(result.dialog))
         return { content: [{ type: 'image', data: result.value, mimeType: 'image/png' }] }
       })

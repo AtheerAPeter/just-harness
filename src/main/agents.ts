@@ -16,6 +16,7 @@ import type {
   AgentModels,
   AgentOption,
   AgentStatus,
+  Chat,
   ChatItem,
   ToolStatus
 } from '../shared/types'
@@ -41,6 +42,7 @@ import {
 } from './permissions'
 import { chatPreview } from './preview'
 import { HarnessAgent } from './harness/agent'
+import { stopLeftRunning } from './harness/tools'
 import { isHarnessAgent, type HarnessAgentId, type Provider } from './harness/provider'
 import { commandCode } from './harness/commandcode'
 import { openCode } from './harness/opencode'
@@ -1415,15 +1417,29 @@ export class AgentManager {
     agentProcess.resolvePermissionItem(chatId, permissionId, optionId, auto)
   }
 
-  /** Turn bypass mode on or off. Turning it on also approves requests already waiting. */
-  setBypassPermissions(chatId: string, enabled: boolean): void {
-    store.updateChat(chatId, { bypassPermissions: enabled })
+  /**
+   * Set the chat's permission mode, both settings at once. Turning bypass on
+   * also approves requests already waiting, except, in project-only mode, ones
+   * that reach outside the project: those stay with the user, marked as such.
+   */
+  setPermissions(
+    chatId: string,
+    { bypassPermissions, projectOnly }: Pick<Chat, 'bypassPermissions' | 'projectOnly'>
+  ): void {
+    store.updateChat(chatId, { bypassPermissions, projectOnly })
     this.events.stateChanged()
-    if (!enabled) return
+    if (!bypassPermissions) return
     for (const [permissionId, pending] of this.permissions) {
       if (pending.chatId !== chatId) continue
       const item = store.findItem(chatId, permissionId)
-      const optionId = item?.kind === 'permission' ? bypassOption(item.options) : undefined
+      if (item?.kind !== 'permission') continue
+      if (projectOnly && pending.outside) {
+        if (!item.outside) {
+          emitItem(this.events, this.permissions, chatId, { ...item, outside: pending.outside })
+        }
+        continue
+      }
+      const optionId = bypassOption(item.options)
       if (optionId) this.resolvePermission(chatId, permissionId, optionId, true)
     }
   }
@@ -1431,5 +1447,6 @@ export class AgentManager {
   stopAll(): void {
     for (const agentProcess of this.processes.values()) agentProcess.stop()
     for (const agent of this.harness.values()) agent.stop()
+    stopLeftRunning()
   }
 }

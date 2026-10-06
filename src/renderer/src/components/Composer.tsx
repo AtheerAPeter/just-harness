@@ -358,8 +358,7 @@ export function Composer({
                 bypassPermissions: mode !== 'ask',
                 projectOnly: mode === 'project'
               }
-              window.api.setBypassPermissions(chat.id, permissions.bypassPermissions)
-              window.api.setProjectOnly(chat.id, permissions.projectOnly)
+              window.api.setPermissions(chat.id, permissions)
               // Remembered for new chats.
               writePref('permissions', permissions)
             }}

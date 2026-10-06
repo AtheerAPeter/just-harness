@@ -109,6 +109,11 @@ export class ChatPage extends EventEmitter {
   shown = false
   /** The page it shows, kept for reopening the tab after the browser closes. */
   url = ''
+  /**
+   * A reopened tab that has not loaded its page yet. Every page is a renderer
+   * process, so saved tabs load when they are first used, not all at once.
+   */
+  unloaded = false
   /** Agent tool calls in progress on this page. */
   private automating = 0
 
@@ -132,6 +137,13 @@ export class ChatPage extends EventEmitter {
 
   get contents(): WebContents {
     return this.view.webContents
+  }
+
+  /** Load the page of a reopened tab, if it has not been loaded yet. Settles when it has loaded or failed. */
+  load(): Promise<void> {
+    if (!this.unloaded) return Promise.resolve()
+    this.unloaded = false
+    return this.contents.loadURL(this.url || 'about:blank').catch(() => undefined)
   }
 
   /** Whether an agent tool call is running on the page. */
@@ -191,6 +203,8 @@ export class BuiltinBrowser {
   private activeChat?: string
   /** Where the panel is, in window points; undefined while the panel is closed. */
   private panelBounds?: Electron.Rectangle
+  /** The panel is open but its page is out of sight for a moment, while the user resizes it. */
+  private panelHidden = false
   private waitingForPanel: (() => void)[] = []
 
   constructor(
@@ -255,6 +269,7 @@ export class BuiltinBrowser {
     const saved = this.savedTabs.get(chatId)
     for (const url of saved?.urls.length ? saved.urls : ['']) this.addTab(chatId, browser, { url })
     browser.active = browser.tabs[Math.min(saved?.active ?? 0, browser.tabs.length - 1)]
+    void browser.active.load()
     browser.restoring = false
     this.layout()
     return browser
@@ -345,7 +360,9 @@ export class BuiltinBrowser {
     if (options.activate || !browser.active) browser.active = tab
     if (!options.opened) {
       tab.url = options.url ?? ''
-      contents.loadURL(tab.url || 'about:blank').catch(() => undefined)
+      tab.unloaded = true
+      // Reopened tabs wait until they are used; the active one is loaded by browserFor.
+      if (!browser.restoring) void tab.load()
     }
     if (!browser.restoring) {
       this.layout()
@@ -369,6 +386,7 @@ export class BuiltinBrowser {
         tab.openedBy && browser.tabs.includes(tab.openedBy)
           ? tab.openedBy
           : browser.tabs[Math.min(index, browser.tabs.length - 1)]
+      void browser.active?.load()
     }
     // A browser always has a tab.
     if (!browser.tabs.length) this.addTab(chatId, browser, { url: '' })
@@ -408,6 +426,7 @@ export class BuiltinBrowser {
     const browser = this.browserFor(chatId)
     const tab = this.findTab(browser, tabId)
     browser.active = tab
+    void tab.load()
     this.layout()
     this.saveTabs(chatId)
     if (chatId === this.activeChat) this.emitState()
@@ -507,7 +526,8 @@ export class BuiltinBrowser {
       tab.dismissDialog()
       tab.closeDialog()
       tab.driver.detach()
-      this.window.contentView.removeChildView(tab.view)
+      // A turn ending while the app quits closes its browser after the window is gone.
+      if (!this.window.isDestroyed()) this.window.contentView.removeChildView(tab.view)
       tab.contents.close()
     }
   }
@@ -524,9 +544,12 @@ export class BuiltinBrowser {
   private layout(): void {
     for (const [chatId, browser] of this.chats) {
       for (const tab of browser.tabs) {
-        const shown = chatId === this.activeChat && tab === browser.active && this.panelBounds
+        const shown =
+          chatId === this.activeChat && tab === browser.active && !this.panelHidden
+            ? this.panelBounds
+            : undefined
         tab.shown = Boolean(shown)
-        tab.view.setBounds(shown || parked(this.panelBounds ?? tab.view.getBounds()))
+        tab.view.setBounds(shown ?? parked(this.panelBounds ?? tab.view.getBounds()))
       }
     }
     this.showDialog()
@@ -545,6 +568,7 @@ export class BuiltinBrowser {
   setBounds(rect: Rect | null): void {
     if (!rect) {
       this.panelBounds = undefined
+      this.panelHidden = false
       this.layout()
       this.prune()
       return
@@ -565,6 +589,16 @@ export class BuiltinBrowser {
   }
 
   /**
+   * Park the panel's page while the panel stays open: the native view would
+   * swallow the pointer while the user drags the panel's edge. Unlike closing
+   * the panel, this keeps every page as it is.
+   */
+  setPanelHidden(hidden: boolean): void {
+    this.panelHidden = hidden
+    this.layout()
+  }
+
+  /**
    * Get a tab of a chat's browser ready for an agent: the given one, or the
    * active one. For the selected chat the panel is opened so the user can
    * watch; other chats work in the background.
@@ -577,6 +611,8 @@ export class BuiltinBrowser {
     }
     const browser = this.browserFor(chatId)
     const tab = tabId ? this.findTab(browser, tabId) : browser.active!
+    // A reopened tab loads its page on first use.
+    if (tab.unloaded) await loadedWithin(tab.load())
     // A page whose renderer crashed comes back by loading it again.
     if (tab.contents.isCrashed()) await reloadAndWait(tab.contents)
     return tab
@@ -666,7 +702,8 @@ export class BuiltinBrowser {
     for (const browser of this.chats.values()) {
       for (const tab of browser.tabs) {
         tab.dismissDialog()
-        tab.contents.reload()
+        // A tab that has not loaded yet will load with the cleared data anyway.
+        if (!tab.unloaded) tab.contents.reload()
       }
     }
   }
@@ -714,7 +751,19 @@ export class BuiltinBrowser {
   }
 }
 
-/** Reload a page and wait until it has loaded, or failed to, or 15 seconds passed. */
+/** How long an agent waits for a page to load before working with it as it is. */
+const LOAD_WAIT_MS = 15_000
+
+/** Wait for a page load to settle, or LOAD_WAIT_MS, whichever comes first. */
+function loadedWithin(load: Promise<void>): Promise<void> {
+  let timer: NodeJS.Timeout | undefined
+  return Promise.race([
+    load,
+    new Promise<void>((resolve) => (timer = setTimeout(resolve, LOAD_WAIT_MS)))
+  ]).finally(() => clearTimeout(timer))
+}
+
+/** Reload a page and wait until it has loaded, or failed to, or LOAD_WAIT_MS passed. */
 function reloadAndWait(contents: WebContents): Promise<void> {
   return new Promise((resolve) => {
     const done = (): void => {
@@ -723,7 +772,7 @@ function reloadAndWait(contents: WebContents): Promise<void> {
       contents.off('did-fail-load', done)
       resolve()
     }
-    const timer = setTimeout(done, 15_000)
+    const timer = setTimeout(done, LOAD_WAIT_MS)
     contents.on('did-finish-load', done)
     contents.on('did-fail-load', done)
     contents.reload()

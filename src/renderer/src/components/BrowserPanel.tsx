@@ -24,10 +24,10 @@ export function BrowserPanel({ width, onResize, onClose }: BrowserPanelProps): R
     return window.api.browser.onState(setState)
   }, [])
 
+  // Where the page sits, for as long as the panel is open.
   useLayoutEffect(() => {
     const el = viewportRef.current
-    // The native view would swallow pointer events mid-drag, so hide it until the drag ends.
-    if (!el || dragging) return
+    if (!el) return
     const report = (): void => {
       const r = el.getBoundingClientRect()
       window.api.browser.setBounds({ x: r.left, y: r.top, width: r.width, height: r.height })
@@ -41,6 +41,14 @@ export function BrowserPanel({ width, onResize, onClose }: BrowserPanelProps): R
       window.removeEventListener('resize', report)
       window.api.browser.setBounds(null)
     }
+  }, [])
+
+  // The native view would swallow pointer events mid-drag, so hide it until the
+  // drag ends. Hiding is not closing: the page stays loaded.
+  useLayoutEffect(() => {
+    if (!dragging) return
+    window.api.browser.setHidden(true)
+    return () => window.api.browser.setHidden(false)
   }, [dragging])
 
   function startDrag(event: React.PointerEvent): void {
