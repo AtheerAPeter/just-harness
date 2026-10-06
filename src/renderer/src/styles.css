@@ -909,7 +909,7 @@ kbd {
   margin: 12px 0 4px;
 }
 
-.user-msg:first-child {
+.block:first-child > .user-msg {
   margin-top: 0;
 }
 
@@ -1398,7 +1398,7 @@ kbd {
   box-shadow: var(--strip-edge);
 }
 
-.todo-strip > .todo-list {
+.todo-strip-list {
   max-height: 220px;
   overflow-y: auto;
   padding: 10px 14px 4px;
@@ -2328,4 +2328,183 @@ kbd {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
+}
+
+/*
+ * Motion. One curve for everything that moves: fast at the start, settling
+ * gently (the curve iOS uses for sheets). Things that open animate their real
+ * height both ways; things that appear fade and rise a few pixels. Only
+ * opacity and transform animate, apart from heights and the sidebar slide.
+ * Switching chats or views is instant, as in native apps.
+ */
+
+:root {
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --fast: 140ms;
+  --move: 260ms;
+  /* Lets height animate to and from auto. */
+  interpolate-size: allow-keywords;
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes pop-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+}
+
+@keyframes pop-down {
+  from {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.985);
+  }
+}
+
+/* Hover and state colors ease instead of snapping. */
+button,
+.chat-row,
+.project-row,
+.skill-row,
+.browser-tab,
+.address input,
+.sidebar-search {
+  transition:
+    background-color var(--fast) ease,
+    color var(--fast) ease,
+    box-shadow var(--fast) ease,
+    opacity var(--fast) ease;
+}
+
+.chevron {
+  transition:
+    transform var(--move) var(--ease),
+    opacity var(--fast) ease;
+}
+
+/*
+ * Open and close: the height eases between 0 and the content's height, and
+ * the content fades with it. Closed content is skipped by rendering once the
+ * close has played.
+ */
+.collapse {
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  content-visibility: hidden;
+  transition:
+    height var(--move) var(--ease),
+    opacity var(--move) var(--ease),
+    content-visibility var(--move) allow-discrete;
+}
+
+.collapse.open {
+  height: auto;
+  opacity: 1;
+  content-visibility: visible;
+}
+
+/* A thought's first line gives way to the full text. */
+.act-detail {
+  transition: opacity var(--fast) ease;
+}
+
+.activity.open > .act-line .act-detail {
+  opacity: 0;
+}
+
+/* The sidebar slides out past the window edge and back, without fading. */
+.sidebar {
+  transition:
+    margin-left var(--move) var(--ease),
+    visibility 0s linear 0s;
+}
+
+.sidebar.closed {
+  /* Its width plus the gap after it. */
+  margin-left: -278px;
+  visibility: hidden;
+  transition:
+    margin-left var(--move) var(--ease),
+    visibility 0s linear var(--move);
+}
+
+.topbar {
+  transition: padding-left var(--move) var(--ease);
+}
+
+/* Steps and messages that arrive while the chat is open. */
+.block.enter {
+  animation: appear var(--move) var(--ease) both;
+}
+
+/* A title the agent just gave the chat. */
+.topbar-name.changed {
+  animation: appear var(--move) var(--ease) both;
+}
+
+.status-chip,
+.todo-strip,
+.attachment {
+  animation: appear var(--move) var(--ease) both;
+}
+
+.picker-menu,
+.slash-menu {
+  transform-origin: bottom left;
+  animation: pop-up var(--fast) var(--ease) both;
+}
+
+.menu {
+  transform-origin: top right;
+  animation: pop-down var(--fast) var(--ease) both;
+}
+
+/* Two-way switches: one highlight slides between the options. */
+.segmented {
+  position: relative;
+  isolation: isolate;
+}
+
+.segmented::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  border-radius: 8px;
+  background: var(--raised);
+  box-shadow: var(--raised-shadow);
+  transition: transform var(--move) var(--ease);
+}
+
+.segmented:not(:has(> button.on))::before {
+  opacity: 0;
+}
+
+.segmented:has(> button.on:nth-child(2))::before {
+  transform: translateX(100%);
+}
+
+.segmented button.on {
+  background: none;
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *:not(.spinner, .chat-dot),
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

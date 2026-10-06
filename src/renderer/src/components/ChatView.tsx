@@ -10,6 +10,7 @@ import type {
 } from '../../../shared/types'
 import { renderMarkdown } from '../lib/markdown'
 import { Composer } from './Composer'
+import { Collapse } from './Collapse'
 import { CheckIcon, ChevronIcon, FileIcon, LockIcon, ShieldIcon } from './icons'
 
 interface ChatViewProps {
@@ -36,12 +37,16 @@ export function ChatView({
   const stickToBottom = useRef(true)
   const plan = useMemo(() => items.findLast((i) => i.kind === 'plan'), [items])
   const blocks = useMemo(() => toBlocks(items), [items])
+  /** Items there when the chat opened; only ones that arrive after animate in. */
+  const [loaded, setLoaded] = useState<Set<string>>()
 
   useEffect(() => {
     let cancelled = false
     stickToBottom.current = true
     window.api.getMessages(chat.id).then((loaded) => {
-      if (!cancelled) setItems(loaded)
+      if (cancelled) return
+      setItems(loaded)
+      setLoaded(new Set(loaded.map((item) => item.id)))
     })
     // Streaming sends an update per chunk, often faster than the screen redraws,
     // so updates are collected and applied once per frame.
@@ -141,18 +146,22 @@ export function ChatView({
               <p>Pick an agent and model below. The agent works inside this project’s folder.</p>
             </div>
           )}
-          {blocks.map((block, index) =>
-            block.kind === 'tools' ? (
-              <ToolGroup key={block.id} tools={block.tools} />
-            ) : (
-              <Item
-                key={block.item.id}
-                item={block.item}
-                chatId={chat.id}
-                live={chat.running && index === blocks.length - 1}
-              />
+          {blocks.map((block, index) => {
+            const id = block.kind === 'tools' ? block.id : block.item.id
+            return (
+              <div key={id} className={loaded && !loaded.has(id) ? 'block enter' : 'block'}>
+                {block.kind === 'tools' ? (
+                  <ToolGroup tools={block.tools} />
+                ) : (
+                  <Item
+                    item={block.item}
+                    chatId={chat.id}
+                    live={chat.running && index === blocks.length - 1}
+                  />
+                )}
+              </div>
             )
-          )}
+          })}
           {chat.running && !chat.waiting && <Working />}
         </div>
       </div>
@@ -545,17 +554,15 @@ function ToolGroup({ tools }: { tools: ToolItem[] }): React.JSX.Element {
         {failed > 0 && <span className="result-bad">{failed} failed</span>}
         <ChevronIcon width={10} height={10} className="chevron" />
       </button>
-      {open && (
-        <div className="act-body">
-          {callRows(tools).map((row) =>
-            row.kind === 'reads' ? (
-              <ReadsRow key={row.tools[0].id} tools={row.tools} />
-            ) : (
-              <CallRow key={row.tool.id} tool={row.tool} nested />
-            )
-          )}
-        </div>
-      )}
+      <Collapse open={open} className="act-body">
+        {callRows(tools).map((row) =>
+          row.kind === 'reads' ? (
+            <ReadsRow key={row.tools[0].id} tools={row.tools} />
+          ) : (
+            <CallRow key={row.tool.id} tool={row.tool} nested />
+          )
+        )}
+      </Collapse>
     </div>
   )
 }
@@ -629,8 +636,8 @@ const CallRow = memo(function CallRow({
         <CallResult tool={tool} lines={lines} />
         {expandable && <ChevronIcon width={10} height={10} className="chevron" />}
       </button>
-      {expandable && open && (
-        <div className="step-output">
+      {expandable && (
+        <Collapse open={open} className="step-output">
           {shown.map((line, index) => (
             <div key={index} className={diffClass(line)}>
               {line || ' '}
@@ -641,7 +648,7 @@ const CallRow = memo(function CallRow({
               {all ? 'Show less' : `Show ${hidden} more line${hidden === 1 ? '' : 's'}`}
             </button>
           )}
-        </div>
+        </Collapse>
       )}
     </div>
   )
@@ -678,15 +685,12 @@ function Thinking({ text, live }: { text: string; live: boolean }): React.JSX.El
     <div className={`activity${open ? ' open' : ''}`}>
       <button className="act-line" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <span className={`act-lead${live ? ' shimmer' : ''}`}>{live ? 'Thinking' : 'Thought'}</span>
-        {!open && <span className="act-detail">{text.split('\n')[0]}</span>}
+        <span className="act-detail">{text.split('\n')[0]}</span>
         <ChevronIcon width={10} height={10} className="chevron" />
       </button>
-      {open && (
-        <div
-          className="act-body thinking-body markdown"
-          dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }}
-        />
-      )}
+      <Collapse open={open} className="act-body thinking-body">
+        <div className="markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />
+      </Collapse>
     </div>
   )
 }
@@ -719,11 +723,9 @@ function PlanStep({ entries }: { entries: PlanEntry[] }): React.JSX.Element {
         </span>
         <ChevronIcon width={10} height={10} className="chevron" />
       </button>
-      {open && (
-        <div className="act-body">
-          <TodoList entries={entries} />
-        </div>
-      )}
+      <Collapse open={open} className="act-body">
+        <TodoList entries={entries} />
+      </Collapse>
     </div>
   )
 }
@@ -736,7 +738,9 @@ function TodoStrip({ entries }: { entries: PlanEntry[] }): React.JSX.Element {
     entries.find((e) => e.status === 'in_progress') ?? entries.find((e) => e.status !== 'completed')
   return (
     <div className={`todo-strip${open ? ' open' : ''}`}>
-      {open && <TodoList entries={entries} />}
+      <Collapse open={open} className="todo-strip-list">
+        <TodoList entries={entries} />
+      </Collapse>
       <button className="todo-bar" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <span className="todo-label">Todos</span>
         <span className="todo-bars">
