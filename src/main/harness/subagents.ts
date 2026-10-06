@@ -33,7 +33,7 @@ export type SubagentType = 'explore' | 'implement'
 
 export const AGENT_TOOL: ToolSpec = {
   name: AGENT_TOOL_NAME,
-  description: `Start a subagent: a separate agent with its own context that does one well-defined task and replies with a report. Use it to finish work sooner: independent investigations, or independent changes to different files, run in parallel when you call this tool several times in one reply (at most ${MAX_PARALLEL} run at once). Do not use it for what a few tool calls of your own would finish, or for steps that depend on each other's results.
+  description: `Start a subagent: a separate agent with its own context that does one well-defined task and replies with a report. Only when the user's message asks for subagents; otherwise the call is refused. Use it to finish work sooner: independent investigations, or independent changes to different files, run in parallel when you call this tool several times in one reply (at most ${MAX_PARALLEL} run at once). Do not use it for what a few tool calls of your own would finish, or for steps that depend on each other's results.
 
 type "explore": investigates the project (read, bash) and reports what it found. It never changes files.
 type "implement": makes a change, editing or writing only the files listed in "files". Implementers running at the same time must not share a file.
@@ -149,6 +149,19 @@ export function subagentRefusal(
   if (task.files.includes(path)) return undefined
   return `You may change only these files: ${task.files.join(', ')}. Describe other changes in your report instead.`
 }
+
+/**
+ * Whether the user's message asks for subagents. They cost a run of their own
+ * each on the chat's model, so they start only in a turn the user asked for
+ * them in, never on the agent's own initiative.
+ */
+export function asksForSubagents(message: string): boolean {
+  return /\bsub[- ]?agents?\b/i.test(message)
+}
+
+/** The agent call's result in a turn the user did not ask for subagents in. */
+export const NOT_ASKED =
+  'Not started: subagents run only when the user asks for them in their message. Do this work yourself.'
 
 /** Sent when a subagent used up its steps without reporting. */
 export const STEP_LIMIT_NOTE =

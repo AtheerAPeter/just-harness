@@ -1620,6 +1620,47 @@ kbd {
   color: var(--warn);
 }
 
+.permission-mode[data-mode='project'] .picker-icon {
+  color: var(--accent-text);
+}
+
+.permission-mode[data-mode='full'] .picker-icon {
+  color: var(--warn);
+}
+
+/*
+ * A narrow composer keeps every picker on one row by showing icons: effort and
+ * permissions first, then the model, which keeps its agent logo. Each
+ * button's tooltip names the current value.
+ */
+.picker-icon {
+  display: none;
+}
+
+@container (max-width: 560px) {
+  .picker:has(.picker-icon) .picker-icon {
+    display: inline-flex;
+  }
+
+  .picker:has(.picker-icon) :is(.picker-label, .picker-group-name, .picker-chevron) {
+    display: none;
+  }
+
+  .picker:has(.picker-icon) .picker-button {
+    padding: 0 8px;
+  }
+}
+
+@container (max-width: 400px) {
+  .model-picker :is(.picker-label, .picker-group-name, .picker-chevron) {
+    display: none;
+  }
+
+  .model-picker .picker-button {
+    padding: 0 8px;
+  }
+}
+
 /* Completion menu (/ and @) */
 
 .slash-menu {

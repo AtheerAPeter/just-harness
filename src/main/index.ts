@@ -349,6 +349,7 @@ app.on('before-quit', (event) => {
   } catch (error) {
     console.error('Could not save before quitting:', error)
   }
+  browser?.closeAll()
   ;(browser?.flush() ?? Promise.resolve()).finally(() => app.quit())
 })
 
