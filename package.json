@@ -1,6 +1,6 @@
 {
   "name": "just-harness",
-  "version": "1.0.22",
+  "version": "1.0.23",
   "description": "Minimal GUI for opencode and cline",
   "main": "./out/main/index.js",
   "author": "AtheerAPeter",

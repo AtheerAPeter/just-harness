@@ -104,20 +104,20 @@ export default function App(): React.JSX.Element {
 
   return (
     <div className={`app${sidebarOpen ? '' : ' sidebar-hidden'}`}>
-      {sidebarOpen && (
-        <Sidebar
-          state={state}
-          selectedChatId={chat?.id}
-          selectedProjectId={project?.id}
-          view={view}
-          onSelectChat={(id) => {
-            setSelectedChatId(id)
-            setView('chat')
-          }}
-          onNewChat={newChat}
-          onShowSkills={() => setView('skills')}
-        />
-      )}
+      {/* Stays mounted so hiding it can slide instead of cut. */}
+      <Sidebar
+        open={sidebarOpen}
+        state={state}
+        selectedChatId={chat?.id}
+        selectedProjectId={project?.id}
+        view={view}
+        onSelectChat={(id) => {
+          setSelectedChatId(id)
+          setView('chat')
+        }}
+        onNewChat={newChat}
+        onShowSkills={() => setView('skills')}
+      />
       <main className="main">
         <header className="topbar">
           <button
@@ -131,7 +131,10 @@ export default function App(): React.JSX.Element {
             {project && (view === 'skills' || chat) && (
               <span className="crumb">{project.name} / </span>
             )}
-            {view === 'skills' ? 'Skills' : chat ? chat.title : 'Just Harness'}
+            <TopbarName
+              id={view === 'skills' ? 'skills' : chat?.id}
+              text={view === 'skills' ? 'Skills' : chat ? chat.title : 'Just Harness'}
+            />
           </div>
           {view === 'chat' && chat?.waiting && (
             <span className="status-chip waiting">Needs you</span>
@@ -193,5 +196,19 @@ export default function App(): React.JSX.Element {
         />
       )}
     </div>
+  )
+}
+
+/**
+ * The title in the top bar. When the open chat's title changes (the agent
+ * names a new chat), the new one fades in; switching chats swaps it at once.
+ */
+function TopbarName({ id, text }: { id?: string; text: string }): React.JSX.Element {
+  const [last, setLast] = useState({ id, text, changed: false })
+  if (last.id !== id || last.text !== text) setLast({ id, text, changed: last.id === id })
+  return (
+    <span key={`${id}:${text}`} className={`topbar-name${last.changed ? ' changed' : ''}`}>
+      {text}
+    </span>
   )
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ThemeToggle } from './ThemeToggle'
+import { Collapse } from './Collapse'
 import type { AppState, Chat, Project } from '../../../shared/types'
 import { readPref, writePref } from '../lib/prefs'
 import {
@@ -23,6 +24,8 @@ const RECENT_PAGE = 20
 type ListMode = 'project' | 'recent'
 
 interface SidebarProps {
+  /** Hidden, it slides out but stays mounted, keeping its scroll and search. */
+  open: boolean
   state: AppState
   selectedChatId?: string
   selectedProjectId?: string
@@ -33,6 +36,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({
+  open,
   state,
   selectedChatId,
   selectedProjectId,
@@ -187,31 +191,29 @@ export function Sidebar({
             <PlusIcon width={14} height={14} />
           </button>
         </div>
-        {!isCollapsed && (
-          <div className="project-chats">
-            {visible.map((chat) => chatRow(chat, false))}
-            {!q && (own.length > limit || limit > CHAT_PAGE) && (
-              <div className="chat-more">
-                {own.length > limit && (
-                  <button
-                    onClick={() =>
-                      setShown((current) => ({ ...current, [project.id]: limit + CHAT_MORE }))
-                    }
-                  >
-                    Show more ({own.length - limit})
-                  </button>
-                )}
-                {limit > CHAT_PAGE && (
-                  <button
-                    onClick={() => setShown((current) => ({ ...current, [project.id]: CHAT_PAGE }))}
-                  >
-                    Show less
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+        <Collapse open={!isCollapsed} className="project-chats">
+          {visible.map((chat) => chatRow(chat, false))}
+          {!q && (own.length > limit || limit > CHAT_PAGE) && (
+            <div className="chat-more">
+              {own.length > limit && (
+                <button
+                  onClick={() =>
+                    setShown((current) => ({ ...current, [project.id]: limit + CHAT_MORE }))
+                  }
+                >
+                  Show more ({own.length - limit})
+                </button>
+              )}
+              {limit > CHAT_PAGE && (
+                <button
+                  onClick={() => setShown((current) => ({ ...current, [project.id]: CHAT_PAGE }))}
+                >
+                  Show less
+                </button>
+              )}
+            </div>
+          )}
+        </Collapse>
       </div>
     )
   }
@@ -246,7 +248,7 @@ export function Sidebar({
   }
 
   return (
-    <nav className="sidebar">
+    <nav className={`sidebar${open ? '' : ' closed'}`} inert={!open}>
       {/* The window buttons sit at its left; it drags the window. */}
       <div className="sidebar-top">
         <button
