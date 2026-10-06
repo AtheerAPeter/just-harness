@@ -858,6 +858,13 @@ kbd {
   margin: 0 0 8px;
 }
 
+/* The error boundary's screen fills the window on its own. */
+.welcome.crashed {
+  height: 100vh;
+  padding: 0 32px;
+  text-align: center;
+}
+
 /* Chat */
 
 .chat {
@@ -941,6 +948,13 @@ kbd {
 }
 
 .thinking-body {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+/* A subagent's report, under its steps. */
+.agent-report {
+  margin-top: 6px;
   color: var(--text-soft);
   font-size: 13px;
 }
@@ -2417,6 +2431,11 @@ button,
 
 .activity.open > .act-line .act-detail {
   opacity: 0;
+}
+
+/* A subagent keeps its task in view while its steps are open. */
+.activity.open > .act-line .act-detail.agent-task {
+  opacity: 1;
 }
 
 /* The sidebar slides out past the window edge and back, without fading. */

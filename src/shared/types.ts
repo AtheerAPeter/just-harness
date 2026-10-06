@@ -135,10 +135,13 @@ export type ChatItem =
       kind: 'tool'
       id: string
       title: string
+      /** An ACP tool kind, or 'agent' for a subagent the app's own agent started. */
       toolKind?: string
       status: ToolStatus
       input?: string
       output?: string
+      /** The subagent call this call was made in, for calls shown under their subagent. */
+      parentId?: string
     }
   | { kind: 'plan'; id: string; entries: { content: string; status: string }[] }
   | {

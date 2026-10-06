@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises'
 import type Anthropic from '@anthropic-ai/sdk'
 import type OpenAI from 'openai'
 import type {
@@ -106,7 +107,8 @@ export async function streamReply(
       if (signal.aborted) throw error
       const wait = received || attempt >= MAX_RETRIES ? undefined : await retryDelay(error, attempt)
       if (wait === undefined) throw readableError(endpoint, error)
-      await new Promise((resolve) => setTimeout(resolve, wait))
+      // Stop ends the wait at once; the wait can be up to a minute.
+      await sleep(wait, undefined, { signal }).catch(() => undefined)
       if (signal.aborted) throw error
     }
   }
@@ -141,12 +143,33 @@ function readableError(endpoint: Endpoint, error: unknown): Error {
   if (status === 401) {
     return new Error(`${endpoint.name} did not accept the sign-in. ${endpoint.signIn}`)
   }
-  const body = (error as { error?: { message?: unknown; error?: { message?: unknown } } }).error
+  const body = (
+    error as {
+      error?: { message?: unknown; code?: unknown; error?: { message?: unknown; code?: unknown } }
+    }
+  ).error
   const message = body?.error?.message ?? body?.message
-  return new Error(
-    `${endpoint.name} answered ${status}: ${typeof message === 'string' ? message : (error as Error).message}`
-  )
+  const text = typeof message === 'string' ? message : (error as Error).message
+  const code = body?.error?.code ?? body?.code
+  // The chat only grows, so a request this large fails the same way every time.
+  const full =
+    status === 413
+      ? ' The request is too large for the provider, often because of many images such as screenshots. Start a new chat to continue.'
+      : status === 400 && (code === 'context_length_exceeded' || CONTEXT_FULL.test(text))
+        ? ` ${CONTEXT_FULL_MESSAGE}`
+        : ''
+  return new Error(`${endpoint.name} answered ${status}: ${text}${full}`)
 }
+
+/**
+ * How providers word a request over the context window: Anthropic ("prompt is
+ * too long"), OpenAI ("maximum context length"), and gateways in between.
+ */
+const CONTEXT_FULL =
+  /prompt is too long|maximum context length|context (length|window)|too many tokens/i
+
+export const CONTEXT_FULL_MESSAGE =
+  "This chat no longer fits in the model's context window. Start a new chat to continue."
 
 /** Clients by URL, key and headers: one per provider and sign-in. */
 const clients = new Map<string, Anthropic | OpenAI>()
@@ -271,11 +294,13 @@ async function streamMessages(
   const stop: Stop =
     message.stop_reason === 'max_tokens'
       ? 'max_tokens'
-      : message.stop_reason === 'refusal'
-        ? 'refusal'
-        : toolCalls.length > 0
-          ? 'tool_use'
-          : 'end'
+      : message.stop_reason === 'model_context_window_exceeded'
+        ? 'context_full'
+        : message.stop_reason === 'refusal'
+          ? 'refusal'
+          : toolCalls.length > 0
+            ? 'tool_use'
+            : 'end'
   return {
     turn: { role: 'assistant', model: request.model, api: 'messages', text, toolCalls, native },
     stop

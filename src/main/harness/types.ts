@@ -68,8 +68,8 @@ export interface StreamHandlers {
   activity(): void
 }
 
-/** Why a reply ended. */
-export type Stop = 'end' | 'tool_use' | 'max_tokens' | 'refusal'
+/** Why a reply ended. `context_full`: the conversation reached the model's context window. */
+export type Stop = 'end' | 'tool_use' | 'max_tokens' | 'refusal' | 'context_full'
 
 export interface Reply {
   turn: AssistantTurn

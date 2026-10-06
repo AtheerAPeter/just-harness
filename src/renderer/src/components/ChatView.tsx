@@ -152,6 +152,8 @@ export function ChatView({
               <div key={id} className={loaded && !loaded.has(id) ? 'block enter' : 'block'}>
                 {block.kind === 'tools' ? (
                   <ToolGroup tools={block.tools} />
+                ) : block.kind === 'agent' ? (
+                  <AgentRow item={block.item} steps={block.steps} />
                 ) : (
                   <Item
                     item={block.item}
@@ -189,18 +191,33 @@ export function ChatView({
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>
 type PlanEntry = Extract<ChatItem, { kind: 'plan' }>['entries'][number]
 
-/** What the chat shows: single items, and runs of tool calls grouped into one line. */
+/**
+ * What the chat shows: single items, runs of tool calls grouped into one line,
+ * and subagents, each one line with the calls it made underneath.
+ */
 type Block =
   | { kind: 'item'; item: Exclude<ChatItem, ToolItem> }
   | { kind: 'tools'; id: string; tools: ToolItem[] }
+  | { kind: 'agent'; item: ToolItem; steps: ToolItem[] }
 
 function toBlocks(items: ChatItem[]): Block[] {
+  const steps = new Map<string, ToolItem[]>()
+  for (const item of items) {
+    if (item.kind !== 'tool' || !item.parentId) continue
+    const list = steps.get(item.parentId)
+    if (list) list.push(item)
+    else steps.set(item.parentId, [item])
+  }
   const blocks: Block[] = []
   for (const item of items) {
     // Requests bypass mode approved are not shown, so they do not split a group.
     if (item.kind === 'permission' && item.auto) continue
+    // A subagent's calls are shown under it.
+    if (item.kind === 'tool' && item.parentId) continue
     const last = blocks.at(-1)
-    if (item.kind !== 'tool') blocks.push({ kind: 'item', item })
+    if (item.kind === 'tool' && item.toolKind === 'agent') {
+      blocks.push({ kind: 'agent', item, steps: steps.get(item.id) ?? [] })
+    } else if (item.kind !== 'tool') blocks.push({ kind: 'item', item })
     else if (last?.kind === 'tools') last.tools.push(item)
     // The group is keyed by its first call, which stays first while the group grows.
     else blocks.push({ kind: 'tools', id: item.id, tools: [item] })
@@ -561,6 +578,60 @@ function ToolGroup({ tools }: { tools: ToolItem[] }): React.JSX.Element {
           ) : (
             <CallRow key={row.tool.id} tool={row.tool} nested />
           )
+        )}
+      </Collapse>
+    </div>
+  )
+}
+
+/**
+ * A subagent as one line: what it works on, shimmering while it runs, and how
+ * many steps it took. Its calls and its report open underneath on click.
+ */
+function AgentRow({ item, steps }: { item: ToolItem; steps: ToolItem[] }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const running = isRunning(item)
+  // The title is "Explore: what it does" or "Implement: what it does".
+  const split = item.title.indexOf(': ')
+  const type = split > 0 ? item.title.slice(0, split) : ''
+  const what = split > 0 ? item.title.slice(split + 2) : item.title
+  const verb =
+    type === 'Implement'
+      ? running
+        ? 'Implementing'
+        : 'Implemented'
+      : running
+        ? 'Exploring'
+        : 'Explored'
+  const report = useMemo(
+    () => (item.status === 'completed' && item.output ? renderMarkdown(item.output) : undefined),
+    [item.status, item.output]
+  )
+  return (
+    <div className={`activity${open ? ' open' : ''}`}>
+      <button className="act-line" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span className={`act-lead${running ? ' shimmer' : ''}`}>{verb}</span>
+        <span className="act-detail agent-task">{what}</span>
+        {steps.length > 0 && (
+          <span className="call-result">{plural(steps.length, 'step', 'steps')}</span>
+        )}
+        {item.status === 'failed' && <span className="result-bad">failed</span>}
+        {item.status === 'interrupted' && <span className="call-result">interrupted</span>}
+        <ChevronIcon width={10} height={10} className="chevron" />
+      </button>
+      <Collapse open={open} className="act-body">
+        {callRows(steps).map((row) =>
+          row.kind === 'reads' ? (
+            <ReadsRow key={row.tools[0].id} tools={row.tools} />
+          ) : (
+            <CallRow key={row.tool.id} tool={row.tool} nested />
+          )
+        )}
+        {report ? (
+          <div className="markdown agent-report" dangerouslySetInnerHTML={{ __html: report }} />
+        ) : (
+          item.status === 'failed' &&
+          item.output && <div className="agent-report">{item.output}</div>
         )}
       </Collapse>
     </div>

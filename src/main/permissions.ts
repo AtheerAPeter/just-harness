@@ -15,6 +15,11 @@ export interface AgentEvents {
 export interface PendingPermission {
   chatId: string
   resolve: (response: acp.RequestPermissionResponse) => void
+  /**
+   * The first path outside the project the request touches, whatever the mode
+   * was when it was asked, so switching to project-only bypass leaves it to the user.
+   */
+  outside?: string
 }
 
 /** Permission requests waiting for the user, by permission item id. Shared by every agent. */
@@ -54,23 +59,40 @@ export function requestPermission(
     options: options.map((o) => ({ optionId: o.optionId, name: o.name, kind: o.kind }))
   }
   const chat = store.getChat(chatId)
+  const outside = outsidePath(store.getProject(chat.projectId).path, toolCall)
   // Project-only mode: anything outside the project always goes to the user,
   // bypass or not, with the agent's own options (including "always").
-  const outside = chat.projectOnly
-    ? outsidePath(store.getProject(chat.projectId).path, toolCall)
-    : undefined
-  if (outside) item.outside = outside
-  const autoOption = chat.bypassPermissions && !outside ? bypassOption(item.options) : undefined
+  const gated = chat.projectOnly && outside !== undefined
+  if (gated) item.outside = outside
+  const autoOption = chat.bypassPermissions && !gated ? bypassOption(item.options) : undefined
   if (autoOption) {
     emitItem(events, permissions, chatId, { ...item, resolved: autoOption, auto: true })
     return Promise.resolve({ outcome: { outcome: 'selected', optionId: autoOption } })
   }
   // Registered before the item is shown, so the chat counts as waiting.
   return new Promise((resolve) => {
-    permissions.set(id, { chatId, resolve })
+    permissions.set(id, { chatId, resolve, outside })
     emitItem(events, permissions, chatId, item)
   })
 }
+
+/**
+ * Arguments that hold text written into a file (a write's content, an edit's
+ * old and new text), as the app's own tools, opencode, cline and Claude-style
+ * tools name them. They are not paths to act on, and a "/" in them is code ("//
+ * comment", "/** doc", a regex) that would read as a path outside the project.
+ * The file they go into is checked through its own path argument.
+ */
+const CONTENT_KEYS = new Set([
+  'content',
+  'oldText',
+  'newText',
+  'oldString',
+  'newString',
+  'old_string',
+  'new_string',
+  'diff'
+])
 
 /** Paths that are never "outside": shell plumbing like 2>/dev/null. */
 const HARMLESS_PATHS = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/stdin'])
@@ -100,6 +122,7 @@ const CD = /(?:^|[\s;&|(])(?:cd|pushd|popd)(?:\s+([^\s;&|)]+))?(?=\s|$|[;&|)])/g
 export function outsidePath(projectPath: string, toolCall: acp.ToolCallUpdate): string | undefined {
   const candidates = (toolCall.locations ?? []).map((l) => l.path)
   const scan = (value: unknown, key?: string): string | undefined => {
+    if (key && CONTENT_KEYS.has(key)) return undefined
     if (typeof value === 'string') {
       if (key === 'command') {
         const escape = value.match(SHELL_ESCAPES)

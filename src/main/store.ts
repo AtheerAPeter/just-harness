@@ -1,5 +1,15 @@
-import { app } from 'electron'
-import { mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, existsSync } from 'node:fs'
+import { app, dialog, type BrowserWindow } from 'electron'
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { join } from 'node:path'
 import type { AppState, Chat, ChatItem, Project, Theme } from '../shared/types'
 import { cleanStoredOutput } from './tool-output'
@@ -11,25 +21,78 @@ const statePath = join(dataDir, 'state.json')
 
 mkdirSync(chatsDir, { recursive: true })
 
-function readJson<T>(path: string, fallback: T): T {
-  if (!existsSync(path)) return fallback
-  return JSON.parse(readFileSync(path, 'utf8')) as T
+/** A file's JSON, or `damaged` when it exists but cannot be parsed. */
+type Read<T> = { value: T } | { damaged: string }
+
+function readJson<T>(path: string, fallback: T): Read<T> {
+  if (!existsSync(path)) return { value: fallback }
+  try {
+    return { value: JSON.parse(readFileSync(path, 'utf8')) as T }
+  } catch (error) {
+    return { damaged: (error as Error).message }
+  }
 }
 
-/** Write via a temp file so a crash mid-write never leaves a truncated file. */
+/**
+ * Move a file that cannot be read out of the way, next to where it was, so it
+ * is not overwritten and can still be recovered by hand. Returns where it went.
+ */
+function keepDamaged(path: string, reason: string): string {
+  const kept = `${path}.damaged-${Date.now()}`
+  renameSync(path, kept)
+  console.error(`${path} could not be read (${reason}); it was moved to ${kept}.`)
+  return kept
+}
+
+/**
+ * Write via a temp file so a crash mid-write never leaves a truncated file;
+ * synced before the rename so a power loss cannot leave an empty one.
+ */
 function writeJson(path: string, value: unknown): void {
   const tmp = `${path}.tmp`
-  writeFileSync(tmp, JSON.stringify(value))
+  const fd = openSync(tmp, 'w')
+  try {
+    writeFileSync(fd, JSON.stringify(value))
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
   renameSync(tmp, path)
 }
 
-const state: AppState = readJson<AppState>(statePath, { projects: [], chats: [] })
+/** Where a damaged state file was moved at launch, for telling the user once the window is up. */
+let damagedState: string | undefined
+
+const state = loadState()
+
+/** The saved state; without it the app would not start, so a damaged file is set aside. */
+function loadState(): AppState {
+  const read = readJson<AppState>(statePath, { projects: [], chats: [] })
+  if ('value' in read) return read.value
+  damagedState = keepDamaged(statePath, read.damaged)
+  return { projects: [], chats: [] }
+}
+
+/** Say that the saved projects and chats could not be read, if so (see loadState). */
+export function reportDamagedState(window: BrowserWindow): void {
+  if (!damagedState) return
+  void dialog.showMessageBox(window, {
+    type: 'warning',
+    message: 'Just Harness could not read its saved projects and chats',
+    detail: `The file was damaged, so the app started without them. The damaged file was kept at:\n\n${damagedState}\n\nEach chat's messages are stored separately and were not touched.`
+  })
+  damagedState = undefined
+}
+
 for (const chat of state.chats) {
   // Nothing can be running or waiting right after launch.
   chat.running = false
   chat.waiting = false
   // Chats from before sidebar previews get theirs once; it is saved from then on.
-  chat.preview ??= chatPreview(readJson<ChatItem[]>(join(chatsDir, `${chat.id}.json`), []))
+  if (chat.preview === undefined) {
+    const read = readJson<ChatItem[]>(join(chatsDir, `${chat.id}.json`), [])
+    chat.preview = 'value' in read ? chatPreview(read.value) : ''
+  }
   // Before tabs, a chat's browser kept one page.
   const legacy = chat as Chat & { browserUrl?: string }
   if (legacy.browserUrl) {
@@ -114,7 +177,23 @@ export function removeChat(chatId: string): void {
 export function getMessages(chatId: string): ChatItem[] {
   let items = messages.get(chatId)
   if (!items) {
-    items = readJson<ChatItem[]>(join(chatsDir, `${chatId}.json`), [])
+    const path = join(chatsDir, `${chatId}.json`)
+    const read = readJson<ChatItem[]>(path, [])
+    if ('value' in read) {
+      items = read.value
+    } else {
+      // The chat stays usable; what it showed before is kept aside, and the chat says so.
+      const kept = keepDamaged(path, read.damaged)
+      items = [
+        {
+          kind: 'error',
+          id: crypto.randomUUID(),
+          text: `This chat's earlier messages could not be read, so they are not shown. The damaged file was kept at ${kept}.`
+        }
+      ]
+      dirtyChats.add(chatId)
+      scheduleFlush()
+    }
     for (const item of items) {
       // A permission prompt cannot survive a restart: the agent process that asked is gone.
       if (item.kind === 'permission' && !item.resolved) item.resolved = 'cancelled'
