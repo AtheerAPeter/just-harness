@@ -83,6 +83,12 @@ export const TrashIcon = (p: IconProps): React.JSX.Element => (
     <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" />
   </Icon>
 )
+export const GaugeIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <path d="M4.5 17a8.5 8.5 0 1 1 15 0" />
+    <path d="m12 14 3.5-4" />
+  </Icon>
+)
 export const ShieldIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
     <path d="M12 3 5 6v6c0 4.2 3 7.6 7 9 4-1.4 7-4.8 7-9V6z" />

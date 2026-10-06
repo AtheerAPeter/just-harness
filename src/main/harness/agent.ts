@@ -29,10 +29,12 @@ import { browserTools, CORE_TOOLS, runTool, type Tool } from './tools'
 import {
   AGENT_TOOL,
   AGENT_TOOL_NAME,
+  asksForSubagents,
   brief,
   Limiter,
   MAX_PARALLEL,
   MAX_REQUESTS,
+  NOT_ASKED,
   parseTask,
   STEP_LIMIT_NOTE,
   subagentRefusal,
@@ -339,6 +341,8 @@ Guidelines:
         turn: { role: 'user', content: userContent(text, blocks) }
       })
       const request = { system: session.system, tools: specs, turns: session.turns }
+      // Subagents run only in a turn the user asked for them in.
+      const subagentsAsked = asksForSubagents(text)
       for (;;) {
         if (signal.aborted) return { stopReason: 'cancelled' }
         const choice = await this.choice(chatId)
@@ -374,7 +378,18 @@ Guidelines:
               )
             : await this.runCalls(chatId, session, tools, reply.turn, signal, {
                 spawn: (callId, args) =>
-                  this.runSubagent(chatId, session, tools, request, choice, callId, args, signal)
+                  subagentsAsked
+                    ? this.runSubagent(
+                        chatId,
+                        session,
+                        tools,
+                        request,
+                        choice,
+                        callId,
+                        args,
+                        signal
+                      )
+                    : Promise.resolve(errorResult(callId, NOT_ASKED))
               })
         await this.append(session, { type: 'turn', turn: { role: 'tool', results } })
       }

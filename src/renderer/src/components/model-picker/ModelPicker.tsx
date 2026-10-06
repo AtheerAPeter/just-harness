@@ -212,18 +212,20 @@ export function ModelPicker({
   }
 
   return (
-    <div className="picker" ref={rootRef} onKeyDown={open ? onKeyDown : undefined}>
+    <div className="picker model-picker" ref={rootRef} onKeyDown={open ? onKeyDown : undefined}>
       <button
         type="button"
         className="picker-button"
-        title={currentSource ? sourceName(currentSource) : label(agent)}
+        title={[currentSource ? sourceName(currentSource) : label(agent), current?.name]
+          .filter(Boolean)
+          .join(': ')}
         onClick={toggle}
       >
         <AgentLogo agent={agent} />
         {/* The provider stays on the button: the same model can come from a free and a paid one. */}
         {current?.provider && <span className="picker-group-name">{current.provider}</span>}
         <span className="picker-label">{current?.name ?? label(agent)}</span>
-        <UpDownIcon width={10} height={10} />
+        <UpDownIcon width={10} height={10} className="picker-chevron" />
       </button>
       {open && (
         <div className="picker-menu model-menu" role="listbox">

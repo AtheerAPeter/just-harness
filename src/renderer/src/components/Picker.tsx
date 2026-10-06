@@ -17,6 +17,8 @@ interface PickerProps {
   placeholder?: string
   disabled?: boolean
   title?: string
+  /** Shown in place of the value when the composer is too narrow for it. */
+  icon?: React.ReactNode
 }
 
 export function Picker({
@@ -25,7 +27,8 @@ export function Picker({
   onChange,
   placeholder,
   disabled,
-  title
+  title,
+  icon
 }: PickerProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -102,13 +105,15 @@ export function Picker({
         type="button"
         className="picker-button"
         disabled={disabled}
-        title={title}
+        // The value stays readable when narrow widths leave only the icon.
+        title={title && current ? `${title}: ${current.name}` : title}
         onClick={toggle}
       >
+        {icon && <span className="picker-icon">{icon}</span>}
         {/* The group stays on the button: the same model can come from a free and a paid provider. */}
         {current?.group && <span className="picker-group-name">{current.group}</span>}
         <span className="picker-label">{current?.name ?? placeholder ?? value}</span>
-        <UpDownIcon width={10} height={10} />
+        <UpDownIcon width={10} height={10} className="picker-chevron" />
       </button>
       {open && (
         <div className="picker-menu" role="listbox">

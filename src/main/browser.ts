@@ -49,7 +49,12 @@ const TAB_PREFERENCES = {
   partition: PARTITION,
   sandbox: true,
   contextIsolation: true,
-  nodeIntegrationInSubFrames: true
+  nodeIntegrationInSubFrames: true,
+  // A page that navigates would otherwise take the window's keyboard focus,
+  // including from the composer mid-typing when the agent opens a page
+  // (electron/electron#42578). Pages get focus from the user's own click, and
+  // from an address the user enters (see navigate).
+  focusOnNavigation: false
 }
 
 export interface Download {
@@ -711,6 +716,8 @@ export class BuiltinBrowser {
     if (!this.activeChat) return Promise.resolve()
     const page = this.tabs(this.activeChat).active
     page.dismissDialog()
+    // The user entered the address, so the page is where they work next, as in Chrome.
+    page.contents.focus()
     return page.contents.loadURL(normalizeUrl(input))
   }
 
@@ -804,6 +811,16 @@ export class BuiltinBrowser {
   /** Close a deleted chat's browser. */
   closeChat(chatId: string): void {
     this.closeBrowser(chatId)
+  }
+
+  /**
+   * Close every browser before the app quits, keeping each chat's saved tabs.
+   * Left to the window's teardown, each page closing would count as a tab the
+   * user closed: the last one would be replaced by a blank tab on the closing
+   * window, which crashes the app and saves the blank tab over the chat's tabs.
+   */
+  closeAll(): void {
+    for (const chatId of [...this.chats.keys()]) this.closeBrowser(chatId)
   }
 
   private emitState(): void {

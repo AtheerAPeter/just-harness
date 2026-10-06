@@ -13,7 +13,15 @@ import { Picker } from './Picker'
 import { ModelPicker } from './model-picker/ModelPicker'
 import { CompletionMenu, type CompletionItem } from './CompletionMenu'
 import { writePref } from '../lib/prefs'
-import { CloseIcon, FileIcon, PaperclipIcon, SendIcon, StopIcon } from './icons'
+import {
+  CloseIcon,
+  FileIcon,
+  GaugeIcon,
+  PaperclipIcon,
+  SendIcon,
+  ShieldIcon,
+  StopIcon
+} from './icons'
 
 interface ComposerProps {
   chat: Chat
@@ -336,6 +344,7 @@ export function Composer({
           <Picker
             key={option.id}
             title={option.name}
+            icon={<GaugeIcon width={15} height={15} />}
             value={option.currentValue}
             values={option.values}
             onChange={(v) => onOptionChange(option.id, v)}
@@ -349,6 +358,7 @@ export function Composer({
         <div className="permission-mode" data-mode={permissionMode(chat)}>
           <Picker
             title="Permissions"
+            icon={<ShieldIcon width={15} height={15} />}
             value={permissionMode(chat)}
             values={PERMISSION_MODES}
             onChange={(mode) => {
