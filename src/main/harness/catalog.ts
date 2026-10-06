@@ -9,9 +9,12 @@ import { readFile, rename, writeFile } from 'node:fs/promises'
  */
 
 const MAX_AGE_MS = 10 * 60_000
+/** Raised when what is saved changes shape; a file in another shape is fetched again. */
+const FORMAT = 2
 const ATTEMPTS = 3
 
 interface Saved<T> {
+  format: number
   value: T
   fetchedAt: number
 }
@@ -24,7 +27,7 @@ export function savedCatalog<T>(name: string, fetch: () => Promise<T>): () => Pr
   const refresh = (): Promise<Saved<T>> => {
     fetching ??= fetchWithRetries(fetch)
       .then(async (value) => {
-        saved = { value, fetchedAt: Date.now() }
+        saved = { format: FORMAT, value, fetchedAt: Date.now() }
         const tmp = `${file}.tmp`
         await writeFile(tmp, JSON.stringify(saved))
         await rename(tmp, file)
@@ -35,7 +38,10 @@ export function savedCatalog<T>(name: string, fetch: () => Promise<T>): () => Pr
   }
 
   return async () => {
-    saved ??= await readJson<Saved<T>>(file)
+    if (!saved) {
+      const read = await readJson<Saved<T>>(file)
+      if (read?.format === FORMAT) saved = read
+    }
     if (!saved) return (await refresh()).value
     if (Date.now() - saved.fetchedAt > MAX_AGE_MS) {
       refresh().catch((error) => console.error(`[harness] ${name} model list:`, error))
