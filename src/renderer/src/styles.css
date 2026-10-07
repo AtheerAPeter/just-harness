@@ -1074,12 +1074,153 @@ kbd {
 .call-target {
   min-width: 0;
   color: var(--text-soft);
-  font-family: var(--mono);
-  font-size: 12px;
   font-weight: 400;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* A file a call read or edited, as Codex links it: dimmed and underlined. */
+.call-target.file {
+  color: var(--text-muted);
+  text-decoration: underline dotted;
+  text-decoration-color: color-mix(in srgb, var(--text-muted) 60%, transparent);
+  text-underline-offset: 3px;
+}
+
+/* Each call and each group line starts with the icon of what it did. */
+.call-icon {
+  flex-shrink: 0;
+  align-self: center;
+  color: var(--text-muted);
+}
+
+/* A line on its own in a turn's work (a group, or a single call) is muted, as in Codex. */
+.call.alone .call-verb,
+.call.alone .call-target {
+  color: var(--text-muted);
+}
+
+.call.alone > .call-line:not(:disabled):hover :is(.call-verb, .call-target) {
+  color: var(--text-soft);
+}
+
+/* An open group's rows line up under its line, without an indent rule. */
+.tool-rows {
+  margin: 2px 0 4px;
+}
+
+/*
+ * A turn's work, as in Codex: "Activity" while the agent works, then "Worked
+ * for …" with a rule under it, folded above the answer once the turn is done.
+ */
+.turn-work-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 4px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  text-align: left;
+}
+
+.turn-work-head:hover,
+.turn-work.open > .turn-work-head {
+  color: var(--text-soft);
+}
+
+.turn-work > .turn-work-head .chevron {
+  opacity: 1;
+}
+
+.turn-work.open > .turn-work-head .chevron {
+  transform: rotate(90deg);
+}
+
+.turn-work-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+/* The files a turn edited, as Codex's card under its answer. */
+.edits-card {
+  margin-top: 4px;
+  border-radius: 14px;
+  background: var(--raised);
+  box-shadow: var(--raised-shadow);
+  overflow: hidden;
+}
+
+.edits-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.edits-icon {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--fill);
+  color: var(--text-soft);
+}
+
+.edits-summary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.edits-title {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.edits-view {
+  flex-shrink: 0;
+}
+
+.edits-file {
+  border-top: 1px solid var(--border);
+}
+
+.edits-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 14px;
+  text-align: left;
+}
+
+.edits-row:hover {
+  background: var(--fill);
+}
+
+.edits-path {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.edits-dir {
+  color: var(--text-muted);
+}
+
+.edits-diff {
+  margin: 0 14px 10px;
 }
 
 .call-result {

@@ -1329,17 +1329,17 @@ export class AgentManager {
         ? { title: (text.split('\n')[0] || attachments[0]?.name || 'New chat').slice(0, 60) }
         : {})
     })
-    this.events.item(
-      chatId,
-      store.upsertItem(chatId, {
-        kind: 'user',
-        id: crypto.randomUUID(),
-        text,
-        ...(attachments.length
-          ? { attachments: attachments.map((a) => ({ name: a.name, image: isImage(a) })) }
-          : {})
-      })
-    )
+    const sentAt = Date.now()
+    const userItem: Extract<ChatItem, { kind: 'user' }> = {
+      kind: 'user',
+      id: crypto.randomUUID(),
+      text,
+      sentAt,
+      ...(attachments.length
+        ? { attachments: attachments.map((a) => ({ name: a.name, image: isImage(a) })) }
+        : {})
+    }
+    this.events.item(chatId, store.upsertItem(chatId, userItem))
     store.updateChat(chatId, { preview: chatPreview(store.getMessages(chatId)) })
     this.events.stateChanged()
 
@@ -1388,6 +1388,11 @@ export class AgentManager {
     } finally {
       if (store.getState().chats.some((c) => c.id === chatId)) {
         this.processFor(chatId).endTurn(chatId, outcome)
+        // How long the turn took, shown as "Worked for …" above its answer.
+        this.events.item(
+          chatId,
+          store.upsertItem(chatId, { ...userItem, workedMs: Date.now() - sentAt })
+        )
         store.updateChat(chatId, {
           running: false,
           updatedAt: Date.now(),
