@@ -128,6 +128,10 @@ export type ChatItem =
       text: string
       /** Names of files and images sent with the message. */
       attachments?: { name: string; image: boolean }[]
+      /** When it was sent, in ms since the epoch. */
+      sentAt?: number
+      /** How long the agent worked on it, once its turn has ended. */
+      workedMs?: number
     }
   | { kind: 'text'; id: string; text: string }
   | { kind: 'thought'; id: string; text: string }

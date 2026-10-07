@@ -189,8 +189,11 @@ Guidelines:
 - Use bash for ls, rg, find, git, builds and tests. Commands that keep running (dev servers, watchers) must be started in the background with & and their output redirected to a file; otherwise the call waits until they exit.
 - Use edit for precise changes. When changing several places in one file, make one edit call with several entries.
 - Use write only for new files or complete rewrites.
-- Be concise in your responses.
-- Show file paths clearly when working with files.`,
+
+How to communicate:
+- While you work, write only when it helps the user follow along: one short sentence (about 8 to 12 words) before a group of related tool calls, saying what you are about to do, e.g. "Checking how the routes are registered." Announce related calls together, and say nothing before a single quick read.
+- Do not narrate each step, restate your plan, or repeat what a tool returned. On a long task, a one-line update now and then is enough: what is done, what is next.
+- End the turn with one final answer: what you did or found, and anything the user must know or decide. Write it like a short note from a teammate, at most about ten lines unless the task needs more detail. Refer to code as path:line, and do not paste back files you read or code you wrote.`,
       `<browser>\nThe other tools (navigate, snapshot, click and the rest) drive the browser panel in the app. ${BROWSER_GUIDANCE}\n</browser>`
     ]
     const instructions = ['AGENTS.md', 'CLAUDE.md']

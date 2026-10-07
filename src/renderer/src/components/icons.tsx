@@ -83,6 +83,30 @@ export const TrashIcon = (p: IconProps): React.JSX.Element => (
     <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" />
   </Icon>
 )
+export const TerminalIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="3" />
+    <path d="m8 10 2.5 2.5L8 15M13 15h3" />
+  </Icon>
+)
+export const PencilIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z" />
+    <path d="m13.5 6.5 4 4" />
+  </Icon>
+)
+export const WrenchIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <path d="M19.45 7.39A3.5 3.5 0 1 1 16.61 4.55" />
+    <path d="M13.53 10.47 5 19" />
+  </Icon>
+)
+export const DiffIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <rect x="4" y="4" width="16" height="16" rx="3.5" />
+    <path d="M12 7.5v6M9 10.5h6M9 16.5h6" />
+  </Icon>
+)
 export const GaugeIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
     <path d="M4.5 17a8.5 8.5 0 1 1 15 0" />
