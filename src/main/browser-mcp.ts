@@ -10,12 +10,14 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { McpServer as AcpMcpServer } from '@agentclientprotocol/sdk'
 import { z } from 'zod'
 import { normalizeUrl, type BuiltinBrowser, type ChatPage, type PageDialog } from './browser'
+import { buildChatsServer, SERVER_NAME as CHATS_SERVER, type ChatsApi } from './chats-mcp'
 import { withTimeout } from './page-driver'
 
 /**
  * An MCP server that drives the built-in browser, on loopback HTTP guarded by a
  * bearer token. The port and token are kept between launches so agents that
- * register it in their own config (cline) keep a working address.
+ * register it in their own config (cline) keep a working address. The chats'
+ * server (chats-mcp.ts) is served at the same address under /chats.
  */
 
 /**
@@ -718,7 +720,8 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 
 export async function startBrowserMcp(
   browser: BuiltinBrowser,
-  routing: BrowserRouting
+  routing: BrowserRouting,
+  chats: ChatsApi
 ): Promise<BrowserMcpEndpoint> {
   const saved = readSaved()
   const token = saved?.token ?? randomBytes(24).toString('hex')
@@ -727,14 +730,17 @@ export async function startBrowserMcp(
       res.writeHead(401).end()
       return
     }
-    // "/mcp" is shared; "/mcp/<chat id>" is one chat's browser.
+    // "/mcp" is shared; "/mcp/<chat id>" is one chat's browser; "/chats" is the chats' server.
     const match = req.url?.match(/^\/mcp(?:\/([\w-]+))?\/?$/)
-    if (req.method !== 'POST' || !match) {
+    const forChats = /^\/chats\/?$/.test(req.url ?? '')
+    if (req.method !== 'POST' || (!match && !forChats)) {
       res.writeHead(req.method !== 'POST' ? 405 : 404).end()
       return
     }
     // Stateless mode: a fresh server and transport per request.
-    const server = await buildServer(browser, routing, match[1])
+    const server = forChats
+      ? await buildChatsServer(chats)
+      : await buildServer(browser, routing, match![1])
     const { StreamableHTTPServerTransport } =
       await import('@modelcontextprotocol/sdk/server/streamableHttp.js')
     const transport = new StreamableHTTPServerTransport({
@@ -749,7 +755,7 @@ export async function startBrowserMcp(
       await server.connect(transport)
       await transport.handleRequest(req, res, await readBody(req))
     } catch (error) {
-      console.error('browser MCP request failed:', error)
+      console.error(`${forChats ? 'chats' : 'browser'} MCP request failed:`, error)
       if (!res.headersSent) res.writeHead(500).end()
     }
   })
@@ -782,6 +788,23 @@ export function browserMcpServer(): AcpMcpServer {
   return {
     type: 'http',
     name: SERVER_NAME,
+    url: endpoint.url,
+    headers: [{ name: 'Authorization', value: `Bearer ${endpoint.token}` }]
+  }
+}
+
+/** Where the chats' server listens: next to the browser's, with the same token. */
+export function chatsMcpEndpoint(): BrowserMcpEndpoint {
+  const endpoint = browserMcpEndpoint()
+  return { url: new URL('/chats', endpoint.url).href, token: endpoint.token }
+}
+
+/** The chats' MCP server entry passed in ACP sessions; chats name themselves by ID. */
+export function chatsMcpServer(): AcpMcpServer {
+  const endpoint = chatsMcpEndpoint()
+  return {
+    type: 'http',
+    name: CHATS_SERVER,
     url: endpoint.url,
     headers: [{ name: 'Authorization', value: `Bearer ${endpoint.token}` }]
   }

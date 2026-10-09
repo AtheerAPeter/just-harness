@@ -148,11 +148,31 @@ export function getProject(projectId: string): Project {
   return project
 }
 
-export function addChat(chat: Chat): void {
+/** Add a new, empty chat. */
+export function createChat({
+  projectId,
+  agent,
+  settings,
+  bypassPermissions,
+  projectOnly
+}: Pick<Chat, 'projectId' | 'agent' | 'settings' | 'bypassPermissions' | 'projectOnly'>): Chat {
+  const chat: Chat = {
+    id: crypto.randomUUID(),
+    projectId,
+    title: 'New chat',
+    agent,
+    settings,
+    bypassPermissions,
+    projectOnly,
+    running: false,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
   state.chats.push(chat)
   messages.set(chat.id, [])
   dirtyChats.add(chat.id)
   scheduleFlush()
+  return chat
 }
 
 export function getChat(chatId: string): Chat {

@@ -18,6 +18,8 @@ The exceptions are **Command Code API**, **OpenCode API** and **Cline API**. For
 
 The API agents also get the MCP servers you set up in the matching CLI: OpenCode API reads opencode's `mcp` config, Cline API reads `cline_mcp_settings.json`, and Command Code API reads Command Code's `mcp.json` files and the project's `.mcp.json`. A server that the project's own `opencode.json` sets up or changes comes with the code, so the chat asks before starting it, in every mode. The question says what it runs or connects to, the variables and headers it sets, and the files and variables its config pulls in. A yes is remembered for that exact config and the project files its command runs, and a change to either is asked about again. When a server asks for an OAuth sign-in, the chat offers to open your browser for it. The app keeps that login itself, so you sign in once in the app even if the CLI is already signed in.
 
+A chat can start other chats in its project when you ask it to ("do this in three new chats"); the agent is told to do so only on request. Each new chat gets the same agent, model and permissions and works on its own. When it is done it reports back, and the report arrives in the first chat as a new message. Chats can also list the project's running chats and message each other to coordinate. A message to a busy chat waits until its turn ends. A chat takes at most 5 messages from other chats between your own messages, so two chats cannot keep each other running, and Stop drops the messages still waiting.
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |
@@ -64,6 +66,7 @@ npx electron-vite build && npx electron-builder --mac dmg   # build the .app and
 - `src/main/browser.ts` owns the browser panel, a `WebContentsView` on a persistent session partition, so cookies and logins are stored on disk.
 - `src/main/page-driver.ts` drives a page for agents over the DevTools protocol, with Playwright's in-page script for snapshots and element checks (the approach is adapted from ZCode's browser). `src/preload/page.ts` sends a page's alerts and confirms to the app.
 - `src/main/browser-mcp.ts` is an MCP server on `127.0.0.1` (bearer-token protected) that exposes the panel to agents. Opencode and Command Code receive it through ACP; Cline's ACP mode ignores MCP servers sent by clients, so the app registers it with `cline mcp add`.
+- `src/main/chats-mcp.ts` is a second MCP server at the same address (`/chats`) with `start_chat`, `send_message` and `list_chats`. Every agent gets it the same way as the browser's. Chats name themselves by the ID each prompt gives them, and `agents.ts` keeps the messages that wait for a busy chat.
 - `src/main/harness/mcp-config.ts` reads each CLI's MCP servers the way that CLI does: file locations, merge order, variable substitution, and servers turned off. `mcp.ts` connects to them with the MCP SDK (stdio, Streamable HTTP, SSE). A chat's first request takes their tools, named `mcp__<server>__<tool>`, into its fixed tool list. `mcp-auth.ts` handles OAuth sign-in through the SDK and keeps the tokens in `mcp-auth.json`, readable only by you.
 - `src/main/skills.ts` reads skills from `.claude/skills`, `.opencode/skills`, `.agents/skills`, `.cline/skills`, `.commandcode/skills` and their global equivalents.
 

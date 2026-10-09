@@ -5,6 +5,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { SERVER_NAME as BROWSER_SERVER } from '../browser-mcp'
+import { SERVER_NAME as CHATS_SERVER } from '../chats-mcp'
 import { loadShellPath } from '../shell-env'
 import { McpOAuth, waitForRedirect } from './mcp-auth'
 import { MAX_BYTES, type Tool } from './tools'
@@ -228,8 +229,8 @@ export async function mcpTools(
   entries: McpEntry[]
 ): Promise<{ tools: Tool[]; problems: McpProblem[] }> {
   const servers = entries
-    // The browser panel's own server, which the app registers with Cline: the harness has those tools already.
-    .filter((s) => s.name !== BROWSER_SERVER)
+    // The app's own servers, which it registers with Cline: the harness has those tools already.
+    .filter((s) => s.name !== BROWSER_SERVER && s.name !== CHATS_SERVER)
     .sort((a, b) => a.name.localeCompare(b.name))
   const results = await Promise.all(
     servers.map(async (server) => {

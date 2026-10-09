@@ -910,6 +910,14 @@ kbd {
   overflow-wrap: anywhere;
 }
 
+/* A message another chat's agent sent: who it came from, above the text. */
+.bubble-from {
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.7;
+}
+
 .bubble .attachment {
   background: rgba(255, 255, 255, 0.12);
   color: inherit;
