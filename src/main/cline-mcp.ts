@@ -31,7 +31,7 @@ async function run(args: string[]): Promise<void> {
  * where the data dir is CLINE_DATA_DIR, else CLINE_DIR/data, else ~/.cline/data.
  * The app runs cline with its own environment, so this is the file that cline uses.
  */
-function clineMcpSettingsPath(): string {
+export function clineMcpSettingsPath(): string {
   const env = process.env
   const settings = env.CLINE_MCP_SETTINGS_PATH?.trim()
   if (settings) return settings

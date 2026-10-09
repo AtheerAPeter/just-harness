@@ -20,6 +20,8 @@ export interface PendingPermission {
    * was when it was asked, so switching to project-only bypass leaves it to the user.
    */
   outside?: string
+  /** A question for the user rather than a tool permission (see askUser): bypass mode never answers it. */
+  question?: boolean
 }
 
 /** Permission requests waiting for the user, by permission item id. Shared by every agent. */
@@ -73,6 +75,30 @@ export function requestPermission(
   return new Promise((resolve) => {
     permissions.set(id, { chatId, resolve, outside })
     emitItem(events, permissions, chatId, item)
+  })
+}
+
+/**
+ * Ask the user something that is not a tool permission, such as whether to
+ * sign in to a server. It waits for the user in every mode: bypass approves
+ * tool calls, not opening a browser on the user's behalf.
+ */
+export function askUser(
+  events: AgentEvents,
+  permissions: Permissions,
+  chatId: string,
+  question: { title: string; question: string; options: acp.PermissionOption[] }
+): Promise<acp.RequestPermissionResponse> {
+  const id = crypto.randomUUID()
+  return new Promise((resolve) => {
+    permissions.set(id, { chatId, resolve, question: true })
+    emitItem(events, permissions, chatId, {
+      kind: 'permission',
+      id,
+      title: question.title,
+      question: question.question,
+      options: question.options.map((o) => ({ optionId: o.optionId, name: o.name, kind: o.kind }))
+    })
   })
 }
 
