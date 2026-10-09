@@ -85,11 +85,6 @@ export function Sidebar({
     })
   }
 
-  function newChat(): void {
-    if (selectedProjectId) onNewChat(selectedProjectId)
-    else window.api.addProject()
-  }
-
   /** One chat. Pinned and Recent rows say which project the chat belongs to. */
   function chatRow(chat: Chat, withProject: boolean): React.JSX.Element {
     const project = projects.get(chat.projectId)
@@ -277,11 +272,6 @@ export function Sidebar({
           <FolderPlusIcon />
         </button>
       </div>
-      <button className="new-chat" title="New chat (⌘N)" onClick={newChat}>
-        <PlusIcon width={15} height={15} />
-        New chat
-        <kbd>⌘N</kbd>
-      </button>
       {query !== undefined && (
         <label className="sidebar-search">
           <SearchIcon width={14} height={14} />
