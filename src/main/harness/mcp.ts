@@ -85,6 +85,26 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 /** The image types the model APIs accept. */
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 
+/** Spaces, quotes, and characters that do not show or that reorder the text around them. */
+const UNSAFE = /[\s"'`\\\p{Cc}\p{Cf}\u2028\u2029]/u
+
+/**
+ * Text from a config, as it is put in front of the user: as it is when it
+ * holds none of UNSAFE, else in quotes with those characters escaped, so a
+ * name or a path cannot pass for the app's own words (a server named
+ * "x. It runs echo hi. Start it?").
+ */
+export function shown(text: string): string {
+  if (text && !UNSAFE.test(text)) return text
+  const escaped = text
+    .replace(/[\\"]/g, (c) => `\\${c}`)
+    .replace(
+      /[\p{Cc}\p{Cf}\u2028\u2029]/gu,
+      (c) => `\\u${c.codePointAt(0)!.toString(16).padStart(4, '0')}`
+    )
+  return `"${escaped}"`
+}
+
 /** Tool names may hold only these, and at most 64 of them, on both APIs. */
 const sanitize = (name: string): string => name.replace(/[^a-zA-Z0-9_-]/g, '_')
 const MAX_NAME = 64

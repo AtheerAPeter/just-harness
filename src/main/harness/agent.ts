@@ -41,6 +41,7 @@ import {
   isTrusted,
   mcpTools,
   serverHash,
+  shown,
   signIn,
   trust,
   type McpEntry,
@@ -575,7 +576,7 @@ How to communicate:
     const { tools, problems } = await mcpTools(servers)
     for (const problem of problems) {
       if (signal.aborted) break
-      const { name } = problem.server
+      const name = shown(problem.server.name)
       if (problem.signIn && !this.skippedSignIns.has(serverHash(problem.server))) {
         if (!(await this.offerSignIn(chatId, problem, signal))) continue
         const after = await mcpTools([problem.server])
@@ -631,7 +632,7 @@ How to communicate:
       this.emit(chatId, {
         kind: 'notice',
         id: crypto.randomUUID(),
-        text: `Did not start ${server.name}, so its tools are not in this chat.`
+        text: `Did not start ${shown(server.name)}, so its tools are not in this chat.`
       })
     }
     return allowed
@@ -643,7 +644,7 @@ How to communicate:
     problem: McpProblem,
     signal: AbortSignal
   ): Promise<boolean> {
-    const { name } = problem.server
+    const name = shown(problem.server.name)
     const response = await askUser(this.events, this.permissions, chatId, {
       title: name,
       question: `Sign in to the MCP server ${name}? Its tools need it. Your browser opens to sign in.`,
@@ -1101,20 +1102,22 @@ function userContent(text: string, blocks: acp.ContentBlock[]): Part[] {
  */
 function describeProjectServer(server: McpServer, cwd: string): string {
   const { file, reads } = server.fromProject!
-  const where = relative(cwd, file) || file
-  const list = (items: string[]): string =>
-    items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`
+  // Everything but the app's own words comes from the project, so it goes through shown.
+  const list = (items: string[]): string => {
+    const parts = items.map(shown)
+    return parts.length <= 1
+      ? parts.join('')
+      : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`
+  }
   let does: string
   if (server.type === 'stdio') {
-    const quote = (part: string): string =>
-      /^[\w@%+=:,./~-]+$/.test(part) ? part : JSON.stringify(part)
     const folder = relative(cwd, server.cwd)
-    does = `It runs ${[server.command, ...server.args].map(quote).join(' ')}`
-    if (folder) does += ` in ${folder}`
+    does = `It runs ${[server.command, ...server.args].map(shown).join(' ')}`
+    if (folder) does += ` in ${shown(folder)}`
     const env = Object.keys(server.env)
     if (env.length > 0) does += `, with ${list(env)} set`
   } else {
-    does = `It connects to ${server.url}`
+    does = `It connects to ${shown(server.url)}`
     const headers = Object.keys(server.headers)
     if (headers.length > 0)
       does += `, sending the ${headers.length === 1 ? 'header' : 'headers'} ${list(headers)}`
@@ -1122,7 +1125,8 @@ function describeProjectServer(server: McpServer, cwd: string): string {
   const home = homedir()
   const pulled = reads.map((r) => (r.startsWith(`${home}/`) ? `~${r.slice(home.length)}` : r))
   const pulls = pulled.length > 0 ? ` Its config pulls in ${list(pulled)}.` : ''
-  return `This project's ${where} sets up or changes the MCP server ${server.name}. ${does}.${pulls} Start it?`
+  const where = shown(relative(cwd, file) || file)
+  return `This project's ${where} sets up or changes the MCP server ${shown(server.name)}. ${does}.${pulls} Start it?`
 }
 
 function errorResult(callId: string, message: string): ToolResult {
