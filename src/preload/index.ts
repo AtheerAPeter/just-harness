@@ -83,6 +83,8 @@ const api = {
     setBounds: (rect: Rect | null): void => ipcRenderer.send('browser:setBounds', rect),
     /** Hide the page for a moment while the panel stays open, as during a resize drag. */
     setHidden: (hidden: boolean): void => ipcRenderer.send('browser:setHidden', hidden),
+    /** A picture of the page the panel shows, as a data URL; null when it shows none. */
+    capture: (): Promise<string | null> => ipcRenderer.invoke('browser:capture'),
     /** Which chat's page the panel shows. */
     setChat: (chatId: string | null): void => ipcRenderer.send('browser:setChat', chatId),
     navigate: (url: string): Promise<void> => ipcRenderer.invoke('browser:navigate', url),

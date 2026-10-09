@@ -8,7 +8,7 @@ export interface ModelSection {
   rows: ModelRow[]
 }
 
-interface ModelColumnProps {
+interface ModelListProps {
   sections: ModelSection[]
   /** Index of the highlighted row, counted across every section. */
   active: number
@@ -19,7 +19,7 @@ interface ModelColumnProps {
   onChoose: (row: ModelRow) => void
 }
 
-export function ModelColumn({
+export function ModelList({
   sections,
   active,
   emptyText,
@@ -27,10 +27,10 @@ export function ModelColumn({
   isCurrent,
   onHover,
   onChoose
-}: ModelColumnProps): React.JSX.Element {
+}: ModelListProps): React.JSX.Element {
   let index = 0
   return (
-    <div className="model-column model-list" ref={listRef}>
+    <div className="model-list" ref={listRef}>
       {sections.length === 0 && <div className="picker-empty">{emptyText}</div>}
       {sections.map((section) => (
         <div key={section.key} role="group" aria-label={section.title}>

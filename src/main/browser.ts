@@ -662,6 +662,20 @@ export class BuiltinBrowser {
   }
 
   /**
+   * A picture of the page in the panel, as a data URL, or null when the panel
+   * shows none. The renderer shows it in the page's place while the page is
+   * parked for a popup: the native view is drawn over all of the app's HTML.
+   */
+  async capturePanel(): Promise<string | null> {
+    const page = this.activePage()
+    if (!page?.shown) return null
+    const image = await page.contents.capturePage()
+    if (image.isEmpty()) return null
+    // JPEG encodes in about a quarter of PNG's time (~5 ms against ~25 ms for a panel).
+    return `data:image/jpeg;base64,${image.toJPEG(90).toString('base64')}`
+  }
+
+  /**
    * Get a tab of a chat's browser ready for an agent: the given one, or the
    * active one. For the selected chat the panel is opened so the user can
    * watch; other chats work in the background.

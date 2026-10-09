@@ -268,6 +268,7 @@ function registerIpc(browser: BuiltinBrowser): void {
   )
   ipcMain.on('browser:setBounds', (_e, rect: Rect | null) => browser.setBounds(rect))
   ipcMain.on('browser:setHidden', (_e, hidden: boolean) => browser.setPanelHidden(hidden))
+  ipcMain.handle('browser:capture', () => browser.capturePanel())
   ipcMain.handle('browser:navigate', (_e, url: string) =>
     browser.navigate(url).catch(() => undefined)
   )
