@@ -85,23 +85,30 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 /** The image types the model APIs accept. */
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 
-/** Spaces, quotes, and characters that do not show or that reorder the text around them. */
-const UNSAFE = /[\s"'`\\\p{Cc}\p{Cf}\u2028\u2029]/u
+/** Printable ASCII but for spaces, quotes and backslashes: text that reads the same however it is rendered. */
+const PLAIN = /^[!#-&(-[\]-_a-~]+$/
 
 /**
- * Text from a config, as it is put in front of the user: as it is when it
- * holds none of UNSAFE, else in quotes with those characters escaped, so a
- * name or a path cannot pass for the app's own words (a server named
- * "x. It runs echo hi. Start it?").
+ * Text from a config, as it is put in front of the user: as it is when it is
+ * PLAIN, else in quotes with every other character escaped, so a name or a
+ * path cannot pass for the app's own words (a server named "x. It runs echo
+ * hi. Start it?"). Only plain ASCII is kept, since blank-looking letters
+ * (U+3164), characters that reorder text and look-alike quotes are all printable.
  */
 export function shown(text: string): string {
-  if (text && !UNSAFE.test(text)) return text
-  const escaped = text
-    .replace(/[\\"]/g, (c) => `\\${c}`)
-    .replace(
-      /[\p{Cc}\p{Cf}\u2028\u2029]/gu,
-      (c) => `\\u${c.codePointAt(0)!.toString(16).padStart(4, '0')}`
-    )
+  if (PLAIN.test(text)) return text
+  let escaped = ''
+  for (const char of text) {
+    const code = char.codePointAt(0)!
+    escaped +=
+      char === '"' || char === '\\'
+        ? `\\${char}`
+        : code >= 0x20 && code <= 0x7e
+          ? char
+          : code > 0xffff
+            ? `\\u{${code.toString(16)}}`
+            : `\\u${code.toString(16).padStart(4, '0')}`
+  }
   return `"${escaped}"`
 }
 

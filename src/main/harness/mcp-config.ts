@@ -92,9 +92,13 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
   const problems: InvalidServer[] = []
   const merge = async (text: string, source: string, dir: string): Promise<void> => {
     try {
-      // Checked before anything from the file is used.
-      const reads = projectFiles.has(source) ? serverReads(text, source, dir) : undefined
-      const config = parseJsonc(await substitute(text, dir), source)
+      let config: unknown
+      let reads: Map<string, string[]> | undefined
+      if (projectFiles.has(source)) {
+        ;({ config, reads } = await substituteProject(text, source, dir))
+      } else {
+        config = parseJsonc(await substitute(text, dir), source)
+      }
       if (!isObject(config) || !isObject(config.mcp)) return
       mcp = mergeDeep(mcp, config.mcp)
       if (reads) {
@@ -254,52 +258,73 @@ function filePath(token: string, dir: string): string {
 }
 
 /**
- * For each server in a project file's "mcp", what its entry pulls in with
- * substitute: $NAME for a variable, the path for a file. Read from the file as
- * the same parser sees it before substitution, keys and values alike, so what
- * is put down to a server is what lands in it. A file's content goes in as
- * string text, so a token stays inside the string that holds it. A project
- * file that names a server with a token, or puts one outside a string, is refused.
+ * A project file's "mcp", with {env:} and {file:} replaced as substitute does,
+ * and for each server what its entry pulled in ($NAME for a variable, the path
+ * for a file). The user's own files are substituted as text, as opencode does;
+ * a project's file is parsed once and substituted inside its strings, keys and
+ * values, so what the question says a server pulls in is exactly what lands in
+ * it: text substitution also reaches into comments, where a file's content can
+ * end one early and turn what was commented out into config. A project file
+ * that names a server with a token, or puts one outside a string, is refused.
  */
-function serverReads(text: string, source: string, dir: string): Map<string, string[]> {
-  let original: unknown
+async function substituteProject(
+  text: string,
+  source: string,
+  dir: string
+): Promise<{ config: unknown; reads: Map<string, string[]> }> {
+  let config: unknown
   try {
-    original = parseJsonc(text, source)
-  } catch {
-    throw new Error(
-      `${source} uses {env:} or {file:} outside a string, which a project's config may not do.`
-    )
+    config = parseJsonc(text, source)
+  } catch (error) {
+    if (/\{(env|file):/.test(text)) {
+      throw new Error(
+        `${source} uses {env:} or {file:} outside a string, which a project's config may not do.`
+      )
+    }
+    throw error
   }
   const reads = new Map<string, string[]>()
-  if (!isObject(original) || !isObject(original.mcp)) return reads
-  const tokens = /\{(env|file):[^}]+\}/g
-  for (const [name, entry] of Object.entries(original.mcp)) {
-    if (name.match(tokens)) {
+  if (!isObject(config) || !isObject(config.mcp)) return { config, reads }
+  const servers: Record<string, unknown> = {}
+  for (const [name, entry] of Object.entries(config.mcp)) {
+    if (/\{(env|file):/.test(name)) {
       throw new Error(
         `${source} names an MCP server with {env:} or {file:}, which a project's config may not do.`
       )
     }
     const found = new Set<string>()
-    const walk = (value: unknown): void => {
-      if (typeof value === 'string') {
-        for (const match of value.matchAll(tokens)) {
-          found.add(
-            match[1] === 'env' ? `$${match[0].slice('{env:'.length, -1)}` : filePath(match[0], dir)
-          )
+    const replace = async (value: string): Promise<string> => {
+      const withEnv = value.replace(/\{env:([^}]+)\}/g, (_, variable: string) => {
+        found.add(`$${variable}`)
+        return process.env[variable] || ''
+      })
+      let out = ''
+      let cursor = 0
+      for (const match of withEnv.matchAll(/\{file:[^}]+\}/g)) {
+        out += withEnv.slice(cursor, match.index)
+        cursor = match.index + match[0].length
+        const full = filePath(match[0], dir)
+        const content = await readText(full)
+        if (content === undefined) {
+          throw new Error(`bad file reference: "${match[0]}" ${full} does not exist`)
         }
-      } else if (Array.isArray(value)) {
-        value.forEach(walk)
-      } else if (isObject(value)) {
-        for (const [key, inner] of Object.entries(value)) {
-          walk(key)
-          walk(inner)
-        }
+        found.add(full)
+        out += content.trim()
       }
+      return out + withEnv.slice(cursor)
     }
-    walk(entry)
+    const walk = async (value: unknown): Promise<unknown> => {
+      if (typeof value === 'string') return replace(value)
+      if (Array.isArray(value)) return Promise.all(value.map(walk))
+      if (!isObject(value)) return value
+      const out: Record<string, unknown> = {}
+      for (const [key, inner] of Object.entries(value)) out[await replace(key)] = await walk(inner)
+      return out
+    }
+    servers[name] = await walk(entry)
     reads.set(name, [...found])
   }
-  return reads
+  return { config: { ...config, mcp: servers }, reads }
 }
 
 /** JSON with comments and trailing commas, as opencode parses its config. */
