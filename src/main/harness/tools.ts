@@ -12,7 +12,7 @@ import {
   SERVER_NAME as BROWSER_SERVER,
   type BrowserMcpEndpoint
 } from '../browser-mcp'
-import { SERVER_NAME as CHATS_SERVER } from '../chats-mcp'
+import { chatKey, SERVER_NAME as CHATS_SERVER } from '../chats-mcp'
 import { exaKey } from '../exa-key'
 import { loadShellPath } from '../shell-env'
 import type { Part, ToolSpec } from './types'
@@ -592,6 +592,8 @@ interface AppServer {
   endpoint: () => BrowserMcpEndpoint
   /** The argument that names the chat, which the harness fills in itself. */
   chatArg: string
+  /** Its value for a chat. */
+  chatValue: (chatId: string) => string
   /** The prefix of the titles the chat shows its calls with. */
   server: string
   kind: Tool['kind']
@@ -619,16 +621,18 @@ function appServerTools(server: AppServer): () => Promise<Tool[]> {
 export const browserTools = appServerTools({
   endpoint: browserMcpEndpoint,
   chatArg: 'browser',
+  chatValue: browserId,
   server: BROWSER_SERVER,
   kind: 'fetch',
   paths: (name, args) =>
     name === 'upload' || name === 'paste_image' ? Object.values(args).flatMap(stringsIn) : []
 })
 
-/** The tools that start and message other chats, with the chat's own ID filled in the same way. */
+/** The tools that start and message other chats, with the chat's own key filled in the same way. */
 export const chatTools = appServerTools({
   endpoint: chatsMcpEndpoint,
   chatArg: 'chat',
+  chatValue: chatKey,
   server: CHATS_SERVER,
   kind: 'other',
   paths: () => []
@@ -688,7 +692,7 @@ function appServerTool(
     paths: (args) => server.paths(name, args),
     async run(args, { chatId, signal }) {
       const result = await client.callTool(
-        { name, arguments: { ...args, [server.chatArg]: browserId(chatId) } },
+        { name, arguments: { ...args, [server.chatArg]: server.chatValue(chatId) } },
         undefined,
         { signal }
       )

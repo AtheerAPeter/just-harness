@@ -31,6 +31,7 @@ import {
   SERVER_NAME as BROWSER_SERVER
 } from './browser-mcp'
 import {
+  chatKey,
   fromChatPrompt,
   MAX_FROM_CHATS,
   SERVER_NAME as CHATS_SERVER,
@@ -1325,11 +1326,12 @@ export class AgentManager implements ChatsApi {
   }
 
   /**
-   * Every chat is told its ID: it picks the chat's own browser, so parallel chats
-   * never share a page, and names the chat to the others.
+   * Every chat is told its ID, which picks its own browser, so parallel chats
+   * never share a page, and names it to the other chats; and its private key
+   * for the chat tools, which proves who calls.
    */
   private withChatId(chatId: string, text: string): string {
-    return `${text}\n\n(Your Just Harness chat ID is "${browserId(chatId)}". Pass it as the "browser" argument in every ${BROWSER_SERVER} tool call, and as "chat" in every ${CHATS_SERVER} tool call.)`
+    return `${text}\n\n(Your Just Harness chat ID is "${browserId(chatId)}". Pass it as the "browser" argument in every ${BROWSER_SERVER} tool call. Pass your private key "${chatKey(chatId)}" as "chat" in every ${CHATS_SERVER} tool call, and never put it in a message.)`
   }
 
   /** Send a message from the user, or, with `from`, from another chat's agent. */
@@ -1444,27 +1446,29 @@ export class AgentManager implements ChatsApi {
   /** Messages from other chats waiting for the chat's turn to end, oldest first. */
   private readonly inbox = new Map<string, { text: string; from: ChatSender }[]>()
 
-  /**
-   * The chat a chat ID names: the caller's own, from any project, or with
-   * `projectId` one of that project's chats, which are all a chat can reach.
-   */
-  private chatById(id: string, projectId?: string): Chat {
+  /** The chat of the project a chat ID names: the chats a chat can reach. */
+  private chatById(id: string, projectId: string): Chat {
     const chat = store
       .getState()
-      .chats.find(
-        (c) => (c.id === id || browserId(c.id) === id) && (!projectId || c.projectId === projectId)
-      )
+      .chats.find((c) => browserId(c.id) === id && c.projectId === projectId)
     if (chat) return chat
     throw new Error(
-      projectId
-        ? `No chat of this project has the ID "${id}". list_chats shows the running ones.`
-        : `There is no chat with the ID "${id}". Pass your own chat ID, given in the conversation, as "chat".`
+      `No chat of this project has the ID "${id}". list_chats shows the running ones.`
     )
   }
 
   /** A new chat like the caller's (agent, model, permissions), working on the task it was sent. */
   startChat(caller: string, prompt: string): { id: string; title: string } {
-    const parent = this.chatById(caller)
+    const parent = store.getChat(caller)
+    // Only a turn the user started: a chain of chats ends at the chats it started.
+    const turn = store
+      .getMessages(caller)
+      .findLast((i): i is Extract<ChatItem, { kind: 'user' }> => i.kind === 'user')
+    if (turn?.from) {
+      throw new Error(
+        'Not started: another chat started this turn, and only turns the user started can start chats. Do the work yourself.'
+      )
+    }
     if (!prompt.trim()) throw new Error('"prompt" must describe the task.')
     const chat = store.createChat({
       projectId: parent.projectId,
@@ -1480,10 +1484,19 @@ export class AgentManager implements ChatsApi {
 
   /** Start a turn in another chat of the caller's project, or queue the message for its next one. */
   message(caller: string, to: string, text: string): 'started' | 'queued' {
-    const sender = this.chatById(caller)
+    const sender = store.getChat(caller)
     const target = this.chatById(to, sender.projectId)
     if (target.id === sender.id) throw new Error(`"${to}" is your own chat ID.`)
     if (!text.trim()) throw new Error('"message" is empty.')
+    // The message runs with the target's permissions, so it may not be the broader one.
+    if (
+      (target.bypassPermissions && !sender.bypassPermissions) ||
+      (sender.projectOnly && !target.projectOnly)
+    ) {
+      throw new Error(
+        `Not sent: chat ${to} has broader permissions than yours, so it does not take messages from you.`
+      )
+    }
     const queued = this.inbox.get(target.id) ?? []
     if (fromChatsSinceUser(target.id) + queued.length >= MAX_FROM_CHATS) {
       throw new Error(
@@ -1500,7 +1513,7 @@ export class AgentManager implements ChatsApi {
   }
 
   runningChats(caller: string): { id: string; title: string; waiting: boolean; self: boolean }[] {
-    const self = this.chatById(caller)
+    const self = store.getChat(caller)
     return store
       .getState()
       .chats.filter((c) => c.projectId === self.projectId && c.running)

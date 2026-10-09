@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
@@ -12,6 +13,11 @@ import { z } from 'zod'
  * (GUIDANCE, which agents put in their system prompt), and a chat takes only
  * so many messages from other chats between the user's own, so two chats
  * cannot keep each other going.
+ *
+ * A chat calls with its own private key, which proves who calls: chat IDs are
+ * how chats name each other, so anyone may know them. A message cannot reach a
+ * chat with broader permissions than the sender's, and a chat whose turn
+ * another chat started cannot start chats, so a chain of chats ends there.
  */
 
 export const SERVER_NAME = 'harness_chats'
@@ -27,7 +33,28 @@ export const CHATS_GUIDANCE =
   'send_message; its report arrives as a new message once your turn has ended, so never wait or ' +
   'poll for it.'
 
-/** What the chat tools do, implemented by the agent manager. Chats are named by their short IDs. */
+/** Each chat's private key, kept for this launch only (see chatKey). */
+const keys = new Map<string, string>()
+
+/** The key a chat passes to these tools, made on first use. */
+export function chatKey(chatId: string): string {
+  let key = keys.get(chatId)
+  if (!key) keys.set(chatId, (key = randomBytes(16).toString('hex')))
+  return key
+}
+
+/** The chat a key belongs to; throws a message the model can act on. */
+function chatForKey(key: string): string {
+  for (const [chatId, k] of keys) if (k === key) return chatId
+  throw new Error(
+    'Unknown key. Pass your own harness_chats key, given in the conversation, as "chat".'
+  )
+}
+
+/**
+ * What the chat tools do, implemented by the agent manager. The caller is a
+ * chat's full id, taken from its key; other chats are named by their chat IDs.
+ */
 export interface ChatsApi {
   /** Start a chat like the caller's and send it the task; returns its ID and title. */
   startChat(caller: string, prompt: string): { id: string; title: string }
@@ -58,7 +85,9 @@ type ToolResult = { content: { type: 'text'; text: string }[] }
 const text = (value: string): ToolResult => ({ content: [{ type: 'text', text: value }] })
 
 const chatArg = {
-  chat: z.string().describe('Your chat ID, given in the conversation.')
+  chat: z
+    .string()
+    .describe('Your harness_chats key, given in the conversation. Never put it in a message.')
 }
 
 /** The chat tools for one request; a refusal is thrown and reaches the model as an error. */
@@ -74,14 +103,14 @@ export async function buildChatsServer(chats: ChatsApi): Promise<McpServer> {
   server.registerTool(
     'start_chat',
     {
-      description: `Start a new chat in this project, with the same agent, model and permissions as yours, and send it a task. Only when the user asks for new chats; otherwise do the work yourself. The new chat sees none of this conversation: put everything it needs in "prompt" (the goal, the relevant paths, constraints, and what to report). It works on its own, alongside you, and reports back with send_message. Its report arrives here as a new message once your turn has ended, so do not wait or poll for it: start the chats you need, tell the user, and end your turn.`,
+      description: `Start a new chat in this project, with the same agent, model and permissions as yours, and send it a task. Only when the user asks for new chats; otherwise do the work yourself. A chat another chat started cannot start chats. The new chat sees none of this conversation: put everything it needs in "prompt" (the goal, the relevant paths, constraints, and what to report). It works on its own, alongside you, and reports back with send_message. Its report arrives here as a new message once your turn has ended, so do not wait or poll for it: start the chats you need, tell the user, and end your turn.`,
       inputSchema: {
         prompt: z.string().describe('The complete task, with all the context it needs'),
         ...chatArg
       }
     },
     ({ prompt, chat }) => {
-      const started = chats.startChat(chat, prompt)
+      const started = chats.startChat(chatForKey(chat), prompt)
       return text(
         `Started chat ${started.id} ("${started.title}"). It reports back here when it is done.`
       )
@@ -91,7 +120,7 @@ export async function buildChatsServer(chats: ChatsApi): Promise<McpServer> {
   server.registerTool(
     'send_message',
     {
-      description: `Send a message to another chat of this project, by its chat ID (from start_chat, list_chats, or a message it sent you). It starts a turn in that chat; if the chat is working, the message waits until its turn ends. Use it to report back to the chat that started you, or to coordinate with chats working alongside you. Do not send messages only to acknowledge or thank: a chat takes at most ${MAX_FROM_CHATS} messages from other chats between the user's messages.`,
+      description: `Send a message to another chat of this project, by its chat ID (from start_chat, list_chats, or a message it sent you). It starts a turn in that chat; if the chat is working, the message waits until its turn ends. Use it to report back to the chat that started you, or to coordinate with chats working alongside you. Do not send messages only to acknowledge or thank: a chat takes at most ${MAX_FROM_CHATS} messages from other chats between the user's messages. A chat with broader permissions than yours does not take messages from you.`,
       inputSchema: {
         to: z.string().describe('The chat ID of the chat to send it to'),
         message: z.string().describe('The message, with everything the other chat needs'),
@@ -99,7 +128,7 @@ export async function buildChatsServer(chats: ChatsApi): Promise<McpServer> {
       }
     },
     ({ to, message, chat }) =>
-      chats.message(chat, to, message) === 'started'
+      chats.message(chatForKey(chat), to, message) === 'started'
         ? text(`Sent. Chat ${to} is working on it now.`)
         : text(`Chat ${to} is busy, so your message is delivered when its current turn ends.`)
   )
@@ -115,7 +144,7 @@ export async function buildChatsServer(chats: ChatsApi): Promise<McpServer> {
     ({ chat }) =>
       text(
         chats
-          .runningChats(chat)
+          .runningChats(chatForKey(chat))
           .map(
             (c) =>
               `${c.id}\t${c.title}${c.waiting ? '\t(waiting for the user)' : ''}${c.self ? '\t(this chat)' : ''}`
