@@ -5,15 +5,22 @@ import { dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import type { Readable } from 'node:stream'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { browserId, browserMcpEndpoint, SERVER_NAME as BROWSER_SERVER } from '../browser-mcp'
+import {
+  browserId,
+  browserMcpEndpoint,
+  chatsMcpEndpoint,
+  SERVER_NAME as BROWSER_SERVER,
+  type BrowserMcpEndpoint
+} from '../browser-mcp'
+import { SERVER_NAME as CHATS_SERVER } from '../chats-mcp'
 import { exaKey } from '../exa-key'
 import { loadShellPath } from '../shell-env'
 import type { Part, ToolSpec } from './types'
 
 /**
  * The model's tools: pi's four (read, bash, edit, write), opencode's web
- * search, and the built-in browser's, reached through its MCP server. The
- * user's own MCP servers add theirs (see mcp.ts).
+ * search, and the app's own: the built-in browser's and the chats', reached
+ * through their MCP servers. The user's own MCP servers add theirs (see mcp.ts).
  */
 
 export interface ToolContext {
@@ -578,28 +585,60 @@ export const WEB_SEARCH: Tool = {
   }
 }
 
-// --- Browser ---------------------------------------------------------------
+// --- The app's own servers --------------------------------------------------
 
-let browser: Promise<{ client: Client; tools: Tool[] }> | undefined
+/** One of the app's MCP servers (see browser-mcp.ts), as the harness uses it. */
+interface AppServer {
+  endpoint: () => BrowserMcpEndpoint
+  /** The argument that names the chat, which the harness fills in itself. */
+  chatArg: string
+  /** The prefix of the titles the chat shows its calls with. */
+  server: string
+  kind: Tool['kind']
+  /** Files a call touches, for project-only mode. */
+  paths: (name: string, args: Record<string, unknown>) => string[]
+}
+
+/** The tools of one of the app's servers, listed once per launch. */
+function appServerTools(server: AppServer): () => Promise<Tool[]> {
+  let connected: Promise<Tool[]> | undefined
+  return async () => {
+    connected ??= connectAppServer(server).catch((error) => {
+      connected = undefined
+      throw error
+    })
+    return connected
+  }
+}
 
 /**
  * The browser panel's tools, listed once per launch so every request declares
  * the same tools in the same order. The `browser` argument is left out of what
  * the model sees: the harness fills in the chat's own browser.
  */
-export async function browserTools(): Promise<Tool[]> {
-  browser ??= connectBrowser().catch((error) => {
-    browser = undefined
-    throw error
-  })
-  return (await browser).tools
-}
+export const browserTools = appServerTools({
+  endpoint: browserMcpEndpoint,
+  chatArg: 'browser',
+  server: BROWSER_SERVER,
+  kind: 'fetch',
+  paths: (name, args) =>
+    name === 'upload' || name === 'paste_image' ? Object.values(args).flatMap(stringsIn) : []
+})
 
-async function connectBrowser(): Promise<{ client: Client; tools: Tool[] }> {
+/** The tools that start and message other chats, with the chat's own ID filled in the same way. */
+export const chatTools = appServerTools({
+  endpoint: chatsMcpEndpoint,
+  chatArg: 'chat',
+  server: CHATS_SERVER,
+  kind: 'other',
+  paths: () => []
+})
+
+async function connectAppServer(server: AppServer): Promise<Tool[]> {
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
   const { StreamableHTTPClientTransport } =
     await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
-  const endpoint = browserMcpEndpoint()
+  const endpoint = server.endpoint()
   const client = new Client({ name: 'just-harness', version: '1.0.0' })
   await client.connect(
     new StreamableHTTPClientTransport(new URL(endpoint.url), {
@@ -607,22 +646,30 @@ async function connectBrowser(): Promise<{ client: Client; tools: Tool[] }> {
     })
   )
   const { tools } = await client.listTools()
-  return {
-    client,
-    tools: tools
-      .map((tool) => browserTool(client, tool.name, tool.description ?? '', tool.inputSchema))
-      .sort((a, b) => a.spec.name.localeCompare(b.spec.name))
-  }
+  return tools
+    .map((tool) =>
+      appServerTool(
+        client,
+        server,
+        tool.name,
+        tool.description ?? '',
+        tool.inputSchema,
+        tool.annotations?.readOnlyHint === true
+      )
+    )
+    .sort((a, b) => a.spec.name.localeCompare(b.spec.name))
 }
 
-function browserTool(
+function appServerTool(
   client: Client,
+  server: AppServer,
   name: string,
   description: string,
-  schema: { properties?: Record<string, unknown>; required?: string[] }
+  schema: { properties?: Record<string, unknown>; required?: string[] },
+  readOnly: boolean
 ): Tool {
   const properties = { ...schema.properties }
-  delete properties.browser
+  delete properties[server.chatArg]
   return {
     spec: {
       name,
@@ -630,17 +677,18 @@ function browserTool(
       parameters: {
         ...schema,
         properties,
-        ...(schema.required ? { required: schema.required.filter((r) => r !== 'browser') } : {})
+        ...(schema.required
+          ? { required: schema.required.filter((r) => r !== server.chatArg) }
+          : {})
       }
     },
-    kind: 'fetch',
-    readOnly: false,
-    title: `${BROWSER_SERVER}_${name}`,
-    paths: (args) =>
-      name === 'upload' || name === 'paste_image' ? Object.values(args).flatMap(stringsIn) : [],
+    kind: server.kind,
+    readOnly,
+    title: `${server.server}_${name}`,
+    paths: (args) => server.paths(name, args),
     async run(args, { chatId, signal }) {
       const result = await client.callTool(
-        { name, arguments: { ...args, browser: browserId(chatId) } },
+        { name, arguments: { ...args, [server.chatArg]: browserId(chatId) } },
         undefined,
         { signal }
       )

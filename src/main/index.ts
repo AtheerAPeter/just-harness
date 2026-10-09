@@ -16,8 +16,9 @@ import type {
 import * as store from './store'
 import { AgentManager } from './agents'
 import { BuiltinBrowser } from './browser'
-import { startBrowserMcp } from './browser-mcp'
-import { registerBrowserWithCline } from './cline-mcp'
+import { chatsMcpEndpoint, SERVER_NAME as BROWSER_SERVER, startBrowserMcp } from './browser-mcp'
+import { SERVER_NAME as CHATS_SERVER } from './chats-mcp'
+import { registerWithCline } from './cline-mcp'
 import { exaKeyHint, setExaKey } from './exa-key'
 import { installMenu } from './menu'
 import { loadShellPath } from './shell-env'
@@ -199,19 +200,7 @@ function registerIpc(browser: BuiltinBrowser): void {
       settings: Record<string, string>,
       permissions: Pick<Chat, 'bypassPermissions' | 'projectOnly'> = {}
     ) => {
-      const chat: Chat = {
-        id: crypto.randomUUID(),
-        projectId,
-        title: 'New chat',
-        agent,
-        settings,
-        bypassPermissions: permissions.bypassPermissions,
-        projectOnly: permissions.projectOnly,
-        running: false,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      }
-      store.addChat(chat)
+      const chat = store.createChat({ projectId, agent, settings, ...permissions })
       send('state:changed', store.getState())
       return chat
     }
@@ -329,16 +318,26 @@ app.whenReady().then(async () => {
   installMenu((command) => send('menu', command), nativeTheme.themeSource, setTheme)
   browser = createWindow()
   registerIpc(browser)
-  const endpoint = await startBrowserMcp(browser, {
-    chatForBrowserId: (id) => store.getState().chats.find((c) => c.id.startsWith(id))?.id,
-    fallbackChat: () => agents.latestActiveChat()
-  })
+  const endpoint = await startBrowserMcp(
+    browser,
+    {
+      chatForBrowserId: (id) => store.getState().chats.find((c) => c.id.startsWith(id))?.id,
+      fallbackChat: () => agents.latestActiveChat()
+    },
+    agents
+  )
   // Only when cline is installed; failures are logged and the app works without it.
-  agents.status('cline').then(({ available }) => {
+  // One at a time: each rewrites cline's settings file.
+  agents.status('cline').then(async ({ available }) => {
     if (!available) return
-    registerBrowserWithCline(endpoint).catch((error) =>
-      console.error('Could not register the browser tools with cline:', error.message)
-    )
+    for (const [name, at] of [
+      [BROWSER_SERVER, endpoint],
+      [CHATS_SERVER, chatsMcpEndpoint()]
+    ] as const) {
+      await registerWithCline(name, at).catch((error) =>
+        console.error(`Could not register ${name} with cline:`, error.message)
+      )
+    }
   })
 })
 

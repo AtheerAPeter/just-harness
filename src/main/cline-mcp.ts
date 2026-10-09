@@ -3,18 +3,22 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app } from 'electron'
-import { SERVER_NAME, type BrowserMcpEndpoint } from './browser-mcp'
+import { SERVER_NAME as BROWSER_SERVER, type BrowserMcpEndpoint } from './browser-mcp'
 import { loadShellPath } from './shell-env'
 
 /**
  * Cline's ACP mode ignores the MCP servers a client passes in session/new and
- * only loads servers from its own settings. So the browser tools are added there
- * with `cline mcp add`. The last registration is remembered, and cline's own
- * settings are checked against it at launch: an entry another copy of the app
- * pointed at its own address is put back, and an entry the user removed in
- * cline stays removed.
+ * only loads servers from its own settings. So the app's servers (the browser's
+ * and the chats') are added there with `cline mcp add`. Each one's last
+ * registration is remembered, and cline's own settings are checked against it
+ * at launch: an entry another copy of the app pointed at its own address is put
+ * back, and an entry the user removed in cline stays removed.
  */
-const recordFile = join(app.getPath('userData'), 'cline-mcp.json')
+function recordFile(name: string): string {
+  // The browser's record kept its name from before there were others.
+  const file = name === BROWSER_SERVER ? 'cline-mcp.json' : `cline-mcp-${name}.json`
+  return join(app.getPath('userData'), file)
+}
 
 async function run(args: string[]): Promise<void> {
   await loadShellPath()
@@ -40,10 +44,10 @@ export function clineMcpSettingsPath(): string {
   return join(dataDir, 'settings', 'cline_mcp_settings.json')
 }
 
-/** The browser's entry in cline's settings: missing, its address and auth, or unreadable. */
+/** A server's entry in cline's settings: missing, its address and auth, or unreadable. */
 type ClineEntry = 'missing' | 'unknown' | { url?: unknown; authorization?: unknown }
 
-function clineEntry(): ClineEntry {
+function clineEntry(name: string): ClineEntry {
   let settings: unknown
   try {
     settings = JSON.parse(readFileSync(clineMcpSettingsPath(), 'utf8'))
@@ -52,7 +56,7 @@ function clineEntry(): ClineEntry {
   }
   const servers = (settings as { mcpServers?: Record<string, unknown> })?.mcpServers
   if (!servers || typeof servers !== 'object') return 'unknown'
-  const entry = servers[SERVER_NAME] as
+  const entry = servers[name] as
     { transport?: { url?: unknown; headers?: Record<string, unknown> } } | undefined
   if (!entry) return 'missing'
   // Cline 3 nests the address under "transport".
@@ -61,14 +65,15 @@ function clineEntry(): ClineEntry {
   return { url: transport.url, authorization: transport.headers?.Authorization }
 }
 
-export async function registerBrowserWithCline(endpoint: BrowserMcpEndpoint): Promise<void> {
+export async function registerWithCline(name: string, endpoint: BrowserMcpEndpoint): Promise<void> {
+  const file = recordFile(name)
   const record = JSON.stringify(endpoint)
-  const recorded = existsSync(recordFile) && readFileSync(recordFile, 'utf8') === record
-  const entry = clineEntry()
+  const recorded = existsSync(file) && readFileSync(file, 'utf8') === record
+  const entry = clineEntry(name)
   if (typeof entry === 'object') {
     const ours = entry.url === endpoint.url && entry.authorization === `Bearer ${endpoint.token}`
     if (ours) {
-      if (!recorded) remember(record)
+      if (!recorded) remember(file, record)
       return
     }
     // Otherwise the entry points elsewhere: an earlier address of this app, or
@@ -79,11 +84,11 @@ export async function registerBrowserWithCline(endpoint: BrowserMcpEndpoint): Pr
     return
   }
   // Replace an entry from another address; it is fine if there is none yet.
-  await run(['mcp', 'remove', SERVER_NAME]).catch(() => undefined)
+  await run(['mcp', 'remove', name]).catch(() => undefined)
   await run([
     'mcp',
     'add',
-    SERVER_NAME,
+    name,
     '--transport',
     'http',
     '--header',
@@ -91,11 +96,11 @@ export async function registerBrowserWithCline(endpoint: BrowserMcpEndpoint): Pr
     '--yes',
     endpoint.url
   ])
-  remember(record)
+  remember(file, record)
 }
 
 /** Note the registration. It holds the browser token, so only the user may read it. */
-function remember(record: string): void {
-  writeFileSync(recordFile, record, { mode: 0o600 })
-  chmodSync(recordFile, 0o600)
+function remember(file: string, record: string): void {
+  writeFileSync(file, record, { mode: 0o600 })
+  chmodSync(file, 0o600)
 }

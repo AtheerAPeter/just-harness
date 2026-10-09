@@ -18,6 +18,7 @@ import type {
   AgentStatus,
   Chat,
   ChatItem,
+  ChatSender,
   ToolStatus
 } from '../shared/types'
 import { modelOptions, type ModelSource } from '../shared/types'
@@ -26,8 +27,15 @@ import {
   browserId,
   browserMcpServer,
   BROWSER_GUIDANCE,
+  chatsMcpServer,
   SERVER_NAME as BROWSER_SERVER
 } from './browser-mcp'
+import {
+  fromChatPrompt,
+  MAX_FROM_CHATS,
+  SERVER_NAME as CHATS_SERVER,
+  type ChatsApi
+} from './chats-mcp'
 import { listSkills } from './skills'
 import { resolveProjectFile } from './files'
 import { formatRaw, limitOutput } from './tool-output'
@@ -532,13 +540,13 @@ class AgentProcess implements AgentBackend {
     const requestOptions = { cancellationSignal: signal }
     const chat = store.getChat(chatId)
     const cwd = store.getProject(chat.projectId).path
-    // Agents that take HTTP MCP servers over ACP get the browser tools here. Cline's
-    // ACP mode ignores session MCP servers; it is registered in cline's own config
-    // instead (see cline-mcp.ts).
+    // Agents that take HTTP MCP servers over ACP get the browser and chat tools here.
+    // Cline's ACP mode ignores session MCP servers; they are registered in cline's
+    // own config instead (see cline-mcp.ts).
     // One shared address for every chat: opencode keeps MCP servers by name for
     // all its sessions, so a per-chat address would be taken over by whichever
-    // chat opened last. Chats are told their browser ID instead.
-    const mcpServers = this.takesHttpMcp() ? [browserMcpServer()] : []
+    // chat opened last. Chats are told their chat ID instead.
+    const mcpServers = this.takesHttpMcp() ? [browserMcpServer(), chatsMcpServer()] : []
 
     let sessionId: string
     let configOptions: acp.SessionConfigOption[] | null | undefined
@@ -1086,6 +1094,19 @@ function errorMessage(error: unknown, agent: AgentId): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** Messages from other chats a chat got since the user last wrote in it. */
+function fromChatsSinceUser(chatId: string): number {
+  const items = store.getMessages(chatId)
+  let count = 0
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]
+    if (item.kind !== 'user') continue
+    if (!item.from) break
+    count++
+  }
+  return count
+}
+
 /**
  * The end of an agent's stderr, to explain a crash: the last lines, with the
  * home folder shortened and anything that looks like a credential hidden.
@@ -1103,7 +1124,7 @@ function stderrExcerpt(text: string): string {
     )
 }
 
-export class AgentManager {
+export class AgentManager implements ChatsApi {
   private readonly permissions: Permissions = new Map()
   /** Started on first use: one per agent, or per agent and project (see PROCESS_PER_PROJECT). */
   private readonly processes = new Map<string, AgentProcess>()
@@ -1215,6 +1236,7 @@ export class AgentManager {
   }
 
   async deleteChat(chatId: string): Promise<void> {
+    this.inbox.delete(chatId)
     const chat = store.getChat(chatId)
     if (chat.running) await this.cancel(chatId)
     await this.processFor(chatId).release(chatId)
@@ -1302,16 +1324,25 @@ export class AgentManager {
     return this.recentChats.at(-1)
   }
 
-  /** Every chat is told which browser is its own, so parallel chats never share a page. */
-  private withBrowserId(chatId: string, text: string): string {
-    return `${text}\n\n(Your ${BROWSER_SERVER} browser ID is "${browserId(chatId)}". Pass it as the "browser" argument in every ${BROWSER_SERVER} tool call.)`
+  /**
+   * Every chat is told its ID: it picks the chat's own browser, so parallel chats
+   * never share a page, and names the chat to the others.
+   */
+  private withChatId(chatId: string, text: string): string {
+    return `${text}\n\n(Your Just Harness chat ID is "${browserId(chatId)}". Pass it as the "browser" argument in every ${BROWSER_SERVER} tool call, and as "chat" in every ${CHATS_SERVER} tool call.)`
   }
 
-  async send(chatId: string, text: string, attachments: Attachment[] = []): Promise<void> {
+  /** Send a message from the user, or, with `from`, from another chat's agent. */
+  async send(
+    chatId: string,
+    text: string,
+    attachments: Attachment[] = [],
+    from?: ChatSender
+  ): Promise<void> {
     this.recentChats = [...this.recentChats.filter((id) => id !== chatId), chatId]
     const chat = store.getChat(chatId)
     if (chat.running) throw new Error('This chat is already running.')
-    const compact = COMPACT.test(text.trim())
+    const compact = !from && COMPACT.test(text.trim())
     const noCompaction = compact ? NO_COMPACTION[chat.agent] : undefined
     if (noCompaction) {
       for (const item of [
@@ -1338,7 +1369,8 @@ export class AgentManager {
       sentAt,
       ...(attachments.length
         ? { attachments: attachments.map((a) => ({ name: a.name, image: isImage(a) })) }
-        : {})
+        : {}),
+      ...(from ? { from } : {})
     }
     this.events.item(chatId, store.upsertItem(chatId, userItem))
     store.updateChat(chatId, { preview: chatPreview(store.getMessages(chatId)) })
@@ -1346,9 +1378,11 @@ export class AgentManager {
 
     let outcome: TurnOutcome = 'failed'
     try {
-      let prompt = this.expandBrowserTag(chatId, this.expandSkill(chatId, text))
-      // The harness passes each chat's browser ID to the tools itself.
-      if (!isHarnessAgent(chat.agent)) prompt = this.withBrowserId(chatId, prompt)
+      let prompt = from
+        ? fromChatPrompt(from.title, browserId(from.chatId), text, isFirst)
+        : this.expandBrowserTag(chatId, this.expandSkill(chatId, text))
+      // The harness passes each chat's ID to the tools itself.
+      if (!isHarnessAgent(chat.agent)) prompt = this.withChatId(chatId, prompt)
       let blocks = [...this.fileLinks(chatId, text), ...(await attachmentBlocks(attachments))]
       if (TEXT_ONLY_PROMPTS.has(chat.agent)) {
         prompt = await withFilePaths(prompt, attachments)
@@ -1400,8 +1434,108 @@ export class AgentManager {
           preview: chatPreview(store.getMessages(chatId))
         })
         this.events.stateChanged()
+        this.deliverNext(chatId, outcome)
       }
     }
+  }
+
+  // --- Chats that start and message chats (chats-mcp.ts) --------------------
+
+  /** Messages from other chats waiting for the chat's turn to end, oldest first. */
+  private readonly inbox = new Map<string, { text: string; from: ChatSender }[]>()
+
+  /**
+   * The chat a chat ID names: the caller's own, from any project, or with
+   * `projectId` one of that project's chats, which are all a chat can reach.
+   */
+  private chatById(id: string, projectId?: string): Chat {
+    const chat = store
+      .getState()
+      .chats.find(
+        (c) => (c.id === id || browserId(c.id) === id) && (!projectId || c.projectId === projectId)
+      )
+    if (chat) return chat
+    throw new Error(
+      projectId
+        ? `No chat of this project has the ID "${id}". list_chats shows the running ones.`
+        : `There is no chat with the ID "${id}". Pass your own chat ID, given in the conversation, as "chat".`
+    )
+  }
+
+  /** A new chat like the caller's (agent, model, permissions), working on the task it was sent. */
+  startChat(caller: string, prompt: string): { id: string; title: string } {
+    const parent = this.chatById(caller)
+    if (!prompt.trim()) throw new Error('"prompt" must describe the task.')
+    const chat = store.createChat({
+      projectId: parent.projectId,
+      agent: parent.agent,
+      settings: { ...parent.settings },
+      bypassPermissions: parent.bypassPermissions,
+      projectOnly: parent.projectOnly
+    })
+    // Titled from the task before send's first await.
+    void this.send(chat.id, prompt, [], { chatId: parent.id, title: parent.title })
+    return { id: browserId(chat.id), title: chat.title }
+  }
+
+  /** Start a turn in another chat of the caller's project, or queue the message for its next one. */
+  message(caller: string, to: string, text: string): 'started' | 'queued' {
+    const sender = this.chatById(caller)
+    const target = this.chatById(to, sender.projectId)
+    if (target.id === sender.id) throw new Error(`"${to}" is your own chat ID.`)
+    if (!text.trim()) throw new Error('"message" is empty.')
+    const queued = this.inbox.get(target.id) ?? []
+    if (fromChatsSinceUser(target.id) + queued.length >= MAX_FROM_CHATS) {
+      throw new Error(
+        `Not sent: chat ${to} has had ${MAX_FROM_CHATS} messages from other chats since the user last wrote in it, the most it takes. Stop messaging it, and tell the user where things stand instead.`
+      )
+    }
+    const from = { chatId: sender.id, title: sender.title }
+    if (!target.running) {
+      void this.send(target.id, text, [], from)
+      return 'started'
+    }
+    this.inbox.set(target.id, [...queued, { text, from }])
+    return 'queued'
+  }
+
+  runningChats(caller: string): { id: string; title: string; waiting: boolean; self: boolean }[] {
+    const self = this.chatById(caller)
+    return store
+      .getState()
+      .chats.filter((c) => c.projectId === self.projectId && c.running)
+      .map((c) => ({
+        id: browserId(c.id),
+        title: c.title,
+        waiting: c.waiting === true,
+        self: c.id === self.id
+      }))
+  }
+
+  /**
+   * A turn ended: start the next message other chats sent meanwhile. When the
+   * user stopped the turn, they are dropped instead, so Stop really stops.
+   */
+  private deliverNext(chatId: string, outcome: TurnOutcome): void {
+    const queued = this.inbox.get(chatId)
+    if (!queued) return
+    if (outcome === 'stopped') {
+      this.inbox.delete(chatId)
+      const n = queued.length
+      this.events.item(
+        chatId,
+        store.upsertItem(chatId, {
+          kind: 'notice',
+          id: crypto.randomUUID(),
+          text: `${n === 1 ? 'A message' : `${n} messages`} from other chats ${n === 1 ? 'was' : 'were'} not delivered, because the chat was stopped.`
+        })
+      )
+      return
+    }
+    const [next, ...rest] = queued
+    if (rest.length > 0) this.inbox.set(chatId, rest)
+    else this.inbox.delete(chatId)
+    void this.send(chatId, next.text, [], next.from)
   }
 
   cancel(chatId: string): Promise<void> {

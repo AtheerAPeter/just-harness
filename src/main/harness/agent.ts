@@ -8,6 +8,7 @@ import type * as acp from '@agentclientprotocol/sdk'
 import type { AgentCommand, AgentOption, ChatItem, ModelSource } from '../../shared/types'
 import * as store from '../store'
 import { BROWSER_GUIDANCE } from '../browser-mcp'
+import { CHATS_GUIDANCE } from '../chats-mcp'
 import { listSkills } from '../skills'
 import { formatRaw, limitOutput } from '../tool-output'
 import {
@@ -35,7 +36,7 @@ import {
   summaryTurn
 } from './compaction'
 import type { Provider, Source } from './provider'
-import { browserTools, CORE_TOOLS, runTool, WEB_SEARCH, type Tool } from './tools'
+import { browserTools, chatTools, CORE_TOOLS, runTool, WEB_SEARCH, type Tool } from './tools'
 import {
   isServerTool,
   isTrusted,
@@ -182,7 +183,9 @@ export class HarnessAgent {
       }
       if (session.system) return session
     }
-    if (store.getMessages(chatId).some((i) => i.kind === 'user')) {
+    // The chat had a session (set below when it started) whose file is gone. Not
+    // its messages: a chat another chat starts has its first one before it opens.
+    if (store.getChat(chatId).sessionId) {
       this.emit(chatId, {
         kind: 'error',
         id: crypto.randomUUID(),
@@ -226,7 +229,8 @@ How to communicate:
 - While you work, write only when it helps the user follow along: one short sentence (about 8 to 12 words) before a group of related tool calls, saying what you are about to do, e.g. "Checking how the routes are registered." Announce related calls together, and say nothing before a single quick read.
 - Do not narrate each step, restate your plan, or repeat what a tool returned. On a long task, a one-line update now and then is enough: what is done, what is next.
 - End the turn with one final answer: what you did or found, and anything the user must know or decide. Write it like a short note from a teammate, at most about ten lines unless the task needs more detail. Refer to code as path:line, and do not paste back files you read or code you wrote.`,
-      `<browser>\nThe other tools (navigate, snapshot, click and the rest) drive the browser panel in the app. ${BROWSER_GUIDANCE}\n</browser>`
+      `<browser>\nThe other tools (navigate, snapshot, click and the rest) drive the browser panel in the app. ${BROWSER_GUIDANCE}\n</browser>`,
+      `<chats>\nstart_chat, send_message and list_chats work with the other chats of this project. ${CHATS_GUIDANCE}\n</chats>`
     ]
     const instructions = ['AGENTS.md', 'CLAUDE.md']
       .map((name) => join(project.path, name))
@@ -453,7 +457,7 @@ How to communicate:
   private async toolSpecs(session: Session, tools: Tool[]): Promise<ToolSpec[]> {
     if (session.tools) return session.tools
     const core = CORE_TOOLS.map((t) => t.spec)
-    // The browser's tools, then the MCP servers'.
+    // The browser's tools, the chats', then the MCP servers'.
     const others = tools
       .filter((t) => !CORE_TOOLS.includes(t) && t !== WEB_SEARCH)
       .map((t) => t.spec)
@@ -527,20 +531,28 @@ How to communicate:
     await this.append(session, { type: 'turn', turn: { role: 'tool', results } })
   }
 
-  /** pi's four tools first, then web search, the browser's and the MCP servers', the same every request. */
+  /**
+   * pi's four tools first, then web search, the browser's, the chats' and the
+   * MCP servers', the same every request.
+   */
   private async tools(chatId: string, session: Session, signal: AbortSignal): Promise<Tool[]> {
-    let browser: Tool[] = []
-    try {
-      browser = await browserTools()
-    } catch (error) {
-      console.error(`[${this.agent}] browser tools unavailable:`, error)
-    }
     return [
       ...CORE_TOOLS,
       WEB_SEARCH,
-      ...browser,
+      ...(await this.appTools('browser', browserTools)),
+      ...(await this.appTools('chat', chatTools)),
       ...(await this.serverTools(chatId, session, signal))
     ]
+  }
+
+  /** The tools of one of the app's own servers; none when it cannot be reached. */
+  private async appTools(name: string, list: () => Promise<Tool[]>): Promise<Tool[]> {
+    try {
+      return await list()
+    } catch (error) {
+      console.error(`[${this.agent}] ${name} tools unavailable:`, error)
+      return []
+    }
   }
 
   /**

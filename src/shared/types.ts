@@ -118,6 +118,12 @@ export interface AgentStatus {
   error?: string
 }
 
+/** The chat a message came from, as it was titled when it sent it. */
+export interface ChatSender {
+  chatId: string
+  title: string
+}
+
 /** 'interrupted': the turn ended before the agent finished the call. */
 export type ToolStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'interrupted'
 
@@ -132,6 +138,8 @@ export type ChatItem =
       sentAt?: number
       /** How long the agent worked on it, once its turn has ended. */
       workedMs?: number
+      /** Sent by another chat's agent (see chats-mcp.ts), not by the user. */
+      from?: ChatSender
     }
   | { kind: 'text'; id: string; text: string }
   | { kind: 'thought'; id: string; text: string }
