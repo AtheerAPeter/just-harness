@@ -3,6 +3,7 @@ import { AGENTS, type AgentStatus, type AgentId, type AppState } from '../../sha
 import { Sidebar } from './components/Sidebar'
 import { ChatView } from './components/ChatView'
 import { SkillsView } from './components/SkillsView'
+import { SettingsView } from './components/SettingsView'
 import { BrowserPanel } from './components/BrowserPanel'
 import { ChatIcon, GlobeIcon, SidebarIcon } from './components/icons'
 import { readPref, writePref } from './lib/prefs'
@@ -16,7 +17,7 @@ export default function App(): React.JSX.Element {
   const [selectedChatId, setSelectedChatId] = useState<string | undefined>(() =>
     readPref('selectedChat', undefined)
   )
-  const [view, setView] = useState<'chat' | 'skills'>('chat')
+  const [view, setView] = useState<'chat' | 'skills' | 'settings'>('chat')
   const [sidebarOpen, setSidebarOpen] = useState(() => readPref('sidebarOpen', true))
   const [browserWidth, setBrowserWidth] = useState(() => readPref('browserWidth', 520))
   const [statuses, setStatuses] = useState<Partial<Record<AgentId, AgentStatus>>>({})
@@ -75,6 +76,7 @@ export default function App(): React.JSX.Element {
         if (command === 'toggle-sidebar') setSidebarOpen((o) => !o)
         else if (command === 'toggle-browser') toggleBrowser(selectedChatRef.current)
         else if (command === 'open-project') window.api.addProject()
+        else if (command === 'open-settings') setView('settings')
         else if (command === 'new-chat') {
           if (projectRef.current) newChat(projectRef.current.id)
           else window.api.addProject()
@@ -117,6 +119,7 @@ export default function App(): React.JSX.Element {
         }}
         onNewChat={newChat}
         onShowSkills={() => setView('skills')}
+        onShowSettings={() => setView('settings')}
       />
       <main className="main">
         <header className="topbar">
@@ -128,12 +131,20 @@ export default function App(): React.JSX.Element {
             <SidebarIcon />
           </button>
           <div className="topbar-title">
-            {project && (view === 'skills' || chat) && (
+            {project && (view === 'skills' || (view === 'chat' && chat)) && (
               <span className="crumb">{project.name} / </span>
             )}
             <TopbarName
-              id={view === 'skills' ? 'skills' : chat?.id}
-              text={view === 'skills' ? 'Skills' : chat ? chat.title : 'Just Harness'}
+              id={view === 'chat' ? chat?.id : view}
+              text={
+                view === 'skills'
+                  ? 'Skills'
+                  : view === 'settings'
+                    ? 'Settings'
+                    : chat
+                      ? chat.title
+                      : 'Just Harness'
+              }
             />
           </div>
           {view === 'chat' && chat?.waiting && (
@@ -157,6 +168,8 @@ export default function App(): React.JSX.Element {
         </header>
         {view === 'skills' ? (
           <SkillsView key={project?.id} project={project} />
+        ) : view === 'settings' ? (
+          <SettingsView />
         ) : chat && project ? (
           <ChatView
             key={`${chat.id}:${chat.agent}`}

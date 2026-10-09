@@ -659,8 +659,12 @@ function callKind(tool: ToolItem): CallKind {
   }
 }
 
+/** The harness agent's web search, a fetch that reads better as a search. */
+const isWebSearch = (tool: ToolItem): boolean => tool.title === 'websearch'
+
 /** The verb for a call, finished and in progress: "Ran" and "Running". */
 function callVerb(tool: ToolItem): [string, string] {
+  if (isWebSearch(tool)) return ['Searched the web for', 'Searching the web for']
   switch (tool.toolKind) {
     case 'delete':
       return ['Deleted', 'Deleting']
@@ -728,7 +732,8 @@ const CATEGORY_ICONS: Record<Category, (p: React.SVGProps<SVGSVGElement>) => Rea
 
 /** The icon of one call, by what it did. */
 function CallIcon({ tool }: { tool: ToolItem }): React.JSX.Element {
-  const Icon = callKind(tool) === 'search' ? SearchIcon : CATEGORY_ICONS[category(tool)]
+  const Icon =
+    callKind(tool) === 'search' || isWebSearch(tool) ? SearchIcon : CATEGORY_ICONS[category(tool)]
   return <Icon width={15} height={15} className="call-icon" />
 }
 
@@ -742,6 +747,7 @@ function groupSummary(tools: ToolItem[]): string {
     .map((c) => {
       const calls = tools.filter((t) => category(t) === c)
       if (c === 'read' && calls.every((t) => callKind(t) === 'search')) return 'searched the code'
+      if (c === 'fetch' && calls.every(isWebSearch)) return 'searched the web'
       // Edits count the files they touched, not the calls.
       const count =
         c === 'edit' ? new Set(calls.map((t) => toolDetail(t) ?? t.id)).size : calls.length

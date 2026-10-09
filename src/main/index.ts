@@ -18,6 +18,7 @@ import { AgentManager } from './agents'
 import { BuiltinBrowser } from './browser'
 import { startBrowserMcp } from './browser-mcp'
 import { registerBrowserWithCline } from './cline-mcp'
+import { exaKeyHint, setExaKey } from './exa-key'
 import { installMenu } from './menu'
 import { loadShellPath } from './shell-env'
 import * as skills from './skills'
@@ -166,6 +167,8 @@ function registerIpc(browser: BuiltinBrowser): void {
   ipcMain.handle('theme:set', (_e, theme: Theme) => setTheme(theme))
   ipcMain.handle('state:get', () => store.getState())
   ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.handle('exa:keyHint', () => exaKeyHint())
+  ipcMain.handle('exa:setKey', (_e, key: string | null) => setExaKey(key))
 
   ipcMain.handle('project:add', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
