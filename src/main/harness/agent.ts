@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import { appendFile, mkdir, rm } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type * as acp from '@agentclientprotocol/sdk'
@@ -43,7 +44,8 @@ import {
   signIn,
   trust,
   type McpEntry,
-  type McpProblem
+  type McpProblem,
+  type McpServer
 } from './mcp'
 import {
   AGENT_TOOL,
@@ -611,14 +613,9 @@ How to communicate:
       }
       if (server.type === 'invalid' || signal.aborted) continue
       if (this.declinedServers.has(serverHash(server))) continue
-      const file = relative(cwd, server.fromProject!) || server.fromProject!
-      const does =
-        server.type === 'stdio'
-          ? `runs ${[server.command, ...server.args].join(' ')}`
-          : `connects to ${server.url}`
       const response = await askUser(this.events, this.permissions, chatId, {
         title: server.name,
-        question: `This project's ${file} sets up the MCP server ${server.name}, which ${does}. Start it?`,
+        question: describeProjectServer(server, cwd),
         options: [
           { optionId: 'skip', name: "Don't start", kind: 'reject_once' },
           { optionId: 'start', name: 'Start', kind: 'allow_once' }
@@ -1094,6 +1091,38 @@ function userContent(text: string, blocks: acp.ContentBlock[]): Part[] {
     })
   }
   return parts
+}
+
+/**
+ * The question for starting a project's server: what it runs or where it
+ * connects, the variables and headers it sets, and what its config pulled in
+ * from elsewhere on the machine. Names only, never values: they can be
+ * secrets, and the question is kept in the chat.
+ */
+function describeProjectServer(server: McpServer, cwd: string): string {
+  const { file, reads } = server.fromProject!
+  const where = relative(cwd, file) || file
+  const list = (items: string[]): string =>
+    items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`
+  let does: string
+  if (server.type === 'stdio') {
+    const quote = (part: string): string =>
+      /^[\w@%+=:,./~-]+$/.test(part) ? part : JSON.stringify(part)
+    const folder = relative(cwd, server.cwd)
+    does = `It runs ${[server.command, ...server.args].map(quote).join(' ')}`
+    if (folder) does += ` in ${folder}`
+    const env = Object.keys(server.env)
+    if (env.length > 0) does += `, with ${list(env)} set`
+  } else {
+    does = `It connects to ${server.url}`
+    const headers = Object.keys(server.headers)
+    if (headers.length > 0)
+      does += `, sending the ${headers.length === 1 ? 'header' : 'headers'} ${list(headers)}`
+  }
+  const home = homedir()
+  const pulled = reads.map((r) => (r.startsWith(`${home}/`) ? `~${r.slice(home.length)}` : r))
+  const pulls = pulled.length > 0 ? ` Its config pulls in ${list(pulled)}.` : ''
+  return `This project's ${where} sets up or changes the MCP server ${server.name}. ${does}.${pulls} Start it?`
 }
 
 function errorResult(callId: string, message: string): ToolResult {

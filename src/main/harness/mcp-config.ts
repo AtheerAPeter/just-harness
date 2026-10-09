@@ -3,10 +3,10 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import slugify from '@sindresorhus/slugify'
-import { parse, printParseErrorCode, type ParseError } from 'jsonc-parser'
+import { getLocation, parse, printParseErrorCode, type ParseError } from 'jsonc-parser'
 import { z } from 'zod'
 import { clineMcpSettingsPath } from '../cline-mcp'
-import type { InvalidServer, McpEntry, OAuthConfig } from './mcp'
+import type { InvalidServer, McpEntry, OAuthConfig, ProjectSource } from './mcp'
 
 /**
  * The MCP servers each provider's CLI has set up, read the way that CLI reads
@@ -47,6 +47,7 @@ const stringRecord = (value: unknown): Record<string, string> =>
  * the managed folder. Config served by an organization's account or well-known
  * URL, and macOS managed preferences, are opencode's own sign-in and are not read.
  * Servers the project's own files set up or change are marked `fromProject`.
+ * An OAuth redirect that leaves this machine is refused.
  */
 export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
   const env = process.env
@@ -87,15 +88,22 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
 
   let mcp: Record<string, unknown> = {}
   /** The servers a project file set up or changed, with the last such file. */
-  const fromProject = new Map<string, string>()
+  const fromProject = new Map<string, ProjectSource>()
   const problems: InvalidServer[] = []
   const merge = async (text: string, source: string, dir: string): Promise<void> => {
     try {
       const config = parseJsonc(await substitute(text, dir), source)
       if (!isObject(config) || !isObject(config.mcp)) return
       mcp = mergeDeep(mcp, config.mcp)
-      if (projectFiles.has(source))
-        for (const name of Object.keys(config.mcp)) fromProject.set(name, source)
+      if (projectFiles.has(source)) {
+        const reads = serverReads(text, dir)
+        for (const name of Object.keys(config.mcp)) {
+          // Every project file that touched the server counts: an earlier one may have pulled in a secret.
+          const earlier = fromProject.get(name)?.reads ?? []
+          const now = reads.get(name) ?? []
+          fromProject.set(name, { file: source, root, reads: [...new Set([...earlier, ...now])] })
+        }
+      }
     } catch (error) {
       problems.push(invalid(source, (error as Error).message))
     }
@@ -138,13 +146,20 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
     }
     if (entry.type === 'remote') {
       if (typeof entry.url !== 'string') return [invalid(name, '"url" is missing.')]
+      const oauth = entry.oauth === false ? false : opencodeOAuth(entry.oauth)
+      // The app takes the browser back only on this machine; anywhere else, the sign-in code would go to someone else.
+      if (oauth && oauth.redirectUri && !isLoopback(oauth.redirectUri)) {
+        return [
+          invalid(name, 'oauth.redirectUri must be an http address on 127.0.0.1 or localhost.')
+        ]
+      }
       return [
         {
           name,
           type: 'http-or-sse',
           url: entry.url,
           headers: stringRecord(entry.headers),
-          oauth: entry.oauth === false ? false : opencodeOAuth(entry.oauth),
+          oauth,
           ...(timeout ? { timeout } : {}),
           ...project
         }
@@ -170,6 +185,15 @@ function opencodeOAuth(value: unknown): OAuthConfig {
     ...(typeof value.clientSecret === 'string' ? { clientSecret: value.clientSecret } : {}),
     ...(typeof value.scope === 'string' ? { scope: value.scope } : {}),
     ...(redirectUri ? { redirectUri } : {})
+  }
+}
+
+function isLoopback(uri: string): boolean {
+  try {
+    const url = new URL(uri)
+    return url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+  } catch {
+    return false
   }
 }
 
@@ -212,15 +236,40 @@ async function substitute(text: string, dir: string): Promise<string> {
       out += match[0]
       continue
     }
-    let path = match[0].slice('{file:'.length, -1)
-    if (path.startsWith('~/')) path = join(homedir(), path.slice(2))
-    const full = isAbsolute(path) ? path : resolve(dir, path)
+    const full = filePath(match[0], dir)
     const content = await readText(full)
     if (content === undefined)
       throw new Error(`bad file reference: "${match[0]}" ${full} does not exist`)
     out += JSON.stringify(content.trim()).slice(1, -1)
   }
   return out + withEnv.slice(cursor)
+}
+
+/** The file a {file:path} names: ~ is the home folder, other relative paths start at the config's folder. */
+function filePath(token: string, dir: string): string {
+  let path = token.slice('{file:'.length, -1)
+  if (path.startsWith('~/')) path = join(homedir(), path.slice(2))
+  return isAbsolute(path) ? path : resolve(dir, path)
+}
+
+/**
+ * For each server in the text's "mcp", what its entry pulls in with
+ * substitute: $NAME for a variable, the path for a file. A token's place in
+ * the text is where its value lands, since a file's content goes in as string
+ * text, so each is put down to the server whose entry holds it.
+ */
+function serverReads(text: string, dir: string): Map<string, string[]> {
+  const reads = new Map<string, string[]>()
+  for (const match of text.matchAll(/\{(env|file):[^}]+\}/g)) {
+    const line = text.slice(text.lastIndexOf('\n', match.index - 1) + 1, match.index).trimStart()
+    if (match[1] === 'file' && line.startsWith('//')) continue
+    const [key, server] = getLocation(text, match.index).path
+    if (key !== 'mcp' || typeof server !== 'string') continue
+    const read =
+      match[1] === 'env' ? `$${match[0].slice('{env:'.length, -1)}` : filePath(match[0], dir)
+    reads.set(server, [...new Set([...(reads.get(server) ?? []), read])])
+  }
+  return reads
 }
 
 /** JSON with comments and trailing commas, as opencode parses its config. */
