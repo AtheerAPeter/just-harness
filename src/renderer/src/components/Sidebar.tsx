@@ -49,7 +49,10 @@ export function Sidebar({
   onShowSkills,
   onShowSettings
 }: SidebarProps): React.JSX.Element {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  /** Projects the user opened; every project starts closed. */
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  /** The selected chat whose project was last opened for it. */
+  const [revealedChatId, setRevealedChatId] = useState<string>()
   /** How many chats each project shows, and the Recent list under its own key. */
   const [shown, setShown] = useState<Record<string, number>>({})
   /** The chat whose title is being edited in place. */
@@ -65,6 +68,15 @@ export function Sidebar({
   const now = useNow()
 
   const projects = new Map(state.projects.map((p) => [p.id, p]))
+  // Open the project holding a newly selected chat, so a new or picked chat stays in view.
+  // Done while rendering, once per selection; the user can close the project again after.
+  const selectedChatProjectId = state.chats.find((c) => c.id === selectedChatId)?.projectId
+  if (selectedChatProjectId && selectedChatId !== revealedChatId) {
+    setRevealedChatId(selectedChatId)
+    if (!expanded.has(selectedChatProjectId)) {
+      setExpanded(new Set(expanded).add(selectedChatProjectId))
+    }
+  }
   const q = query?.trim().toLowerCase() ?? ''
   const matches = (chat: Chat): boolean =>
     !q ||
@@ -77,7 +89,7 @@ export function Sidebar({
   const rest = chats.filter((c) => !c.running && !c.waiting)
 
   function toggle(projectId: string): void {
-    setCollapsed((current) => {
+    setExpanded((current) => {
       const next = new Set(current)
       if (next.has(projectId)) next.delete(projectId)
       else next.add(projectId)
@@ -143,7 +155,7 @@ export function Sidebar({
     // While searching, only projects with a match are listed, open and in full.
     if (q && own.length === 0) return null
     const total = state.chats.filter((c) => c.projectId === project.id).length
-    const isCollapsed = !q && collapsed.has(project.id)
+    const isCollapsed = !q && !expanded.has(project.id)
     const limit = q ? own.length : (shown[project.id] ?? CHAT_PAGE)
     const visible = own.slice(0, limit)
     // Keep the open chat visible even when it is older than the cutoff.
