@@ -1,7 +1,7 @@
 import { app, shell } from 'electron'
 import { createHash } from 'node:crypto'
-import { readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { SERVER_NAME as BROWSER_SERVER } from '../browser-mcp'
@@ -28,8 +28,8 @@ export interface StdioServer {
   cwd: string
   /** Milliseconds for connecting and for each call; the defaults below when unset. */
   timeout?: number
-  /** As for RemoteServer: the project file that set the server up, if one did. */
-  fromProject?: string
+  /** As for RemoteServer: set when the project's own files set the server up or changed it. */
+  fromProject?: ProjectSource
 }
 
 /** A server at a URL: Streamable HTTP, SSE, or Streamable HTTP falling back to SSE (opencode's "remote"). */
@@ -42,11 +42,20 @@ export interface RemoteServer {
   oauth: OAuthConfig | false
   timeout?: number
   /**
-   * The config file inside the project that set the server up or changed it.
-   * Such a server comes with the code, so it starts only once the user agrees
-   * (see isTrusted).
+   * Set when the project's own files set the server up or changed it. Such a
+   * server comes with the code, so it starts only once the user agrees (see isTrusted).
    */
-  fromProject?: string
+  fromProject?: ProjectSource
+}
+
+/** Where a project's config set a server up. */
+export interface ProjectSource {
+  /** The last of the project's config files that set the server up or changed it. */
+  file: string
+  /** The project's root folder: files in it that the server's command names are part of what the user agrees to. */
+  root: string
+  /** What those files pulled into their config: files read with {file:}, and $VARIABLES. */
+  reads: string[]
 }
 
 /** A pre-registered OAuth client, from the server's config. */
@@ -130,7 +139,7 @@ const keyOf = (server: McpEntry): string => JSON.stringify(server)
 export const serverHash = (server: McpEntry): string =>
   createHash('sha256').update(keyOf(server)).digest('hex')
 
-/** The project servers the user agreed to start, by config hash. */
+/** The project servers the user agreed to start, by trustHash. */
 const trustedFile = join(app.getPath('userData'), 'mcp-trusted.json')
 
 function readTrusted(): string[] {
@@ -143,18 +152,40 @@ function readTrusted(): string[] {
 }
 
 /**
- * Whether a server may start: servers from the user's own config may; one
- * the project's files set up only once the user agreed to that exact config,
- * so a repository that later changes the command is asked about again.
+ * What the user agrees to when starting a project's server: its config, and
+ * the content of the project's files its command line names (`node server.js`,
+ * `./bin/server`), so a repository that later changes either is asked about again.
+ */
+function trustHash(server: McpServer): string {
+  const hash = createHash('sha256').update(keyOf(server))
+  if (server.type === 'stdio' && server.fromProject) {
+    const { root } = server.fromProject
+    for (const part of [server.command, ...server.args]) {
+      const path = isAbsolute(part) ? part : resolve(server.cwd, part)
+      const inside = relative(root, path)
+      if (inside.startsWith('..') || isAbsolute(inside)) continue
+      try {
+        if (statSync(path).isFile()) hash.update(`\0${path}\0`).update(readFileSync(path))
+      } catch {
+        // Not a file: an option or a word, not code from the project.
+      }
+    }
+  }
+  return hash.digest('hex')
+}
+
+/**
+ * Whether a server may start: servers from the user's own config may; one the
+ * project's files set up only once the user agreed to it as it is now (see trustHash).
  */
 export function isTrusted(server: McpEntry): boolean {
   return (
-    server.type === 'invalid' || !server.fromProject || readTrusted().includes(serverHash(server))
+    server.type === 'invalid' || !server.fromProject || readTrusted().includes(trustHash(server))
   )
 }
 
 export function trust(server: McpServer): void {
-  const list = [...new Set([...readTrusted(), serverHash(server)])]
+  const list = [...new Set([...readTrusted(), trustHash(server)])]
   const tmp = `${trustedFile}.tmp`
   writeFileSync(tmp, JSON.stringify(list))
   renameSync(tmp, trustedFile)
