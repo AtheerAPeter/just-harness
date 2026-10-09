@@ -37,6 +37,11 @@ export interface AssistantTurn {
    * one built from `text` and `toolCalls`. Unset for a reply cut off midway.
    */
   native?: unknown
+  /**
+   * Tokens in the context once this reply is in it: the whole request plus the
+   * reply, as the provider counted them. Unset when it did not say.
+   */
+  contextTokens?: number
 }
 
 export type ToolTurn = { role: 'tool'; results: ToolResult[] }

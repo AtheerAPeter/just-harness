@@ -301,8 +301,21 @@ async function streamMessages(
           : toolCalls.length > 0
             ? 'tool_use'
             : 'end'
+  const contextTokens =
+    usage.input_tokens +
+    (usage.cache_read_input_tokens ?? 0) +
+    (usage.cache_creation_input_tokens ?? 0) +
+    usage.output_tokens
   return {
-    turn: { role: 'assistant', model: request.model, api: 'messages', text, toolCalls, native },
+    turn: {
+      role: 'assistant',
+      model: request.model,
+      api: 'messages',
+      text,
+      toolCalls,
+      native,
+      contextTokens
+    },
     stop
   }
 }
@@ -509,7 +522,16 @@ async function streamChat(
           ? 'tool_use'
           : 'end'
   return {
-    turn: { role: 'assistant', model: request.model, api: 'chat', text, toolCalls: calls, native },
+    turn: {
+      role: 'assistant',
+      model: request.model,
+      api: 'chat',
+      text,
+      toolCalls: calls,
+      native,
+      // Prompt tokens include the cached ones.
+      ...(usage ? { contextTokens: usage.prompt_tokens + usage.completion_tokens } : {})
+    },
     stop
   }
 }
