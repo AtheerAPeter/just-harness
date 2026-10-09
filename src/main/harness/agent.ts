@@ -25,7 +25,7 @@ import {
   type Model
 } from './wire'
 import type { Provider, Source } from './provider'
-import { browserTools, CORE_TOOLS, runTool, type Tool } from './tools'
+import { browserTools, CORE_TOOLS, runTool, WEB_SEARCH, type Tool } from './tools'
 import {
   AGENT_TOOL,
   AGENT_TOOL_NAME,
@@ -54,7 +54,7 @@ import type {
 
 /**
  * A minimal coding agent run in the app, after pi: a system prompt, four tools
- * (plus the browser's) and a loop that calls the model until it stops calling
+ * (plus web search and the browser's) and a loop that calls the model until it stops calling
  * tools. Everything it sends is kept byte-stable for the prompt cache: the
  * system prompt is fixed when the chat starts, the tools are always listed the
  * same way, and the transcript only ever grows.
@@ -189,6 +189,7 @@ Guidelines:
 - Use bash for ls, rg, find, git, builds and tests. Commands that keep running (dev servers, watchers) must be started in the background with & and their output redirected to a file; otherwise the call waits until they exit.
 - Use edit for precise changes. When changing several places in one file, make one edit call with several entries.
 - Use write only for new files or complete rewrites.
+- Use websearch to look things up on the web: documentation, releases, error messages, anything recent.
 
 How to communicate:
 - While you work, write only when it helps the user follow along: one short sentence (about 8 to 12 words) before a group of related tool calls, saying what you are about to do, e.g. "Checking how the routes are registered." Announce related calls together, and say nothing before a single quick read.
@@ -407,14 +408,19 @@ How to communicate:
    * invalidate the thinking that newer Claude models replay (a 400 on accounts
    * where that is enforced) and miss the prompt cache, so app updates and a
    * browser that fails to connect leave a chat's tools as they were. Chats from
-   * before tools were stored keep the ones they had, which had no subagents.
+   * before tools were stored keep the ones they had, which had no subagents and
+   * no web search.
    */
   private async toolSpecs(session: Session, tools: Tool[]): Promise<ToolSpec[]> {
     if (session.tools) return session.tools
     const core = CORE_TOOLS.map((t) => t.spec)
-    const browser = tools.filter((t) => !CORE_TOOLS.includes(t)).map((t) => t.spec)
+    const browser = tools
+      .filter((t) => !CORE_TOOLS.includes(t) && t !== WEB_SEARCH)
+      .map((t) => t.spec)
     const specs =
-      session.turns.length === 0 ? [...core, AGENT_TOOL, ...browser] : [...core, ...browser]
+      session.turns.length === 0
+        ? [...core, AGENT_TOOL, WEB_SEARCH.spec, ...browser]
+        : [...core, ...browser]
     await this.append(session, { type: 'tools', tools: specs })
     return specs
   }
@@ -429,13 +435,13 @@ How to communicate:
     await this.append(session, { type: 'turn', turn: { role: 'tool', results } })
   }
 
-  /** pi's four tools first, then the browser's, the same every request. */
+  /** pi's four tools first, then web search and the browser's, the same every request. */
   private async tools(): Promise<Tool[]> {
     try {
-      return [...CORE_TOOLS, ...(await browserTools())]
+      return [...CORE_TOOLS, WEB_SEARCH, ...(await browserTools())]
     } catch (error) {
       console.error(`[${this.agent}] browser tools unavailable:`, error)
-      return CORE_TOOLS
+      return [...CORE_TOOLS, WEB_SEARCH]
     }
   }
 
@@ -733,9 +739,10 @@ How to communicate:
     args: Record<string, unknown>,
     cwd: string
   ): Promise<'allow' | 'reject' | 'cancelled'> {
+    const target = args.command ?? args.path ?? args.url ?? args.query
     const toolCall: acp.ToolCallUpdate = {
       toolCallId: crypto.randomUUID(),
-      title: `${tool.title}: ${typeof (args.command ?? args.path ?? args.url) === 'string' ? (args.command ?? args.path ?? args.url) : JSON.stringify(args)}`,
+      title: `${tool.title}: ${typeof target === 'string' ? target : JSON.stringify(args)}`,
       rawInput: args,
       locations: tool.paths(args, cwd).map((path) => ({ path }))
     }

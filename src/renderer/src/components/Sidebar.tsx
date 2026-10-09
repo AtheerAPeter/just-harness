@@ -12,7 +12,8 @@ import {
   FolderPlusIcon,
   MoreIcon,
   PlusIcon,
-  SearchIcon
+  SearchIcon,
+  SlidersIcon
 } from './icons'
 
 /** Chats listed per project before "Show more", and how many each click adds. */
@@ -30,10 +31,11 @@ interface SidebarProps {
   state: AppState
   selectedChatId?: string
   selectedProjectId?: string
-  view: 'chat' | 'skills'
+  view: 'chat' | 'skills' | 'settings'
   onSelectChat: (chatId: string) => void
   onNewChat: (projectId: string) => void
   onShowSkills: () => void
+  onShowSettings: () => void
 }
 
 export function Sidebar({
@@ -44,7 +46,8 @@ export function Sidebar({
   view,
   onSelectChat,
   onNewChat,
-  onShowSkills
+  onShowSkills,
+  onShowSettings
 }: SidebarProps): React.JSX.Element {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   /** How many chats each project shows, and the Recent list under its own key. */
@@ -352,6 +355,13 @@ export function Sidebar({
         {q && chats.length === 0 && <div className="side-empty">No matching chats</div>}
       </div>
       <div className="sidebar-footer">
+        <button
+          className={`icon-btn${view === 'settings' ? ' on' : ''}`}
+          title="Settings (⌘,)"
+          onClick={onShowSettings}
+        >
+          <SlidersIcon />
+        </button>
         <ThemeToggle />
         {version && <span className="app-version">v{version}</span>}
       </div>

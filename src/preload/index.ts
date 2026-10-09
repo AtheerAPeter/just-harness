@@ -36,6 +36,13 @@ const api = {
   onMenu: (listener: (command: MenuCommand) => void) => on('menu', listener),
   setTheme: (theme: Theme): Promise<void> => ipcRenderer.invoke('theme:set', theme),
 
+  exa: {
+    /** The saved Exa API key's last four characters; null when none is saved. */
+    keyHint: (): Promise<string | null> => ipcRenderer.invoke('exa:keyHint'),
+    /** Save a key, or remove the saved one (null); returns the new hint. */
+    setKey: (key: string | null): Promise<string | null> => ipcRenderer.invoke('exa:setKey', key)
+  },
+
   addProject: (): Promise<Project | null> => ipcRenderer.invoke('project:add'),
   removeProject: (projectId: string): Promise<void> =>
     ipcRenderer.invoke('project:remove', projectId),

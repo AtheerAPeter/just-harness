@@ -3,7 +3,8 @@ import { is } from '@electron-toolkit/utils'
 import type { Theme } from '../shared/types'
 
 /** Commands the renderer handles; menu items send these. */
-export type MenuCommand = 'new-chat' | 'open-project' | 'toggle-sidebar' | 'toggle-browser'
+export type MenuCommand =
+  'new-chat' | 'open-project' | 'toggle-sidebar' | 'toggle-browser' | 'open-settings'
 
 /**
  * The native menu bar. Its accelerators work wherever focus is, including
@@ -21,7 +22,23 @@ export function installMenu(
     click: () => setTheme(value)
   })
   const template: MenuItemConstructorOptions[] = [
-    { role: 'appMenu' },
+    {
+      // The standard app menu, with Settings where Mac apps put it.
+      role: 'appMenu',
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => run('open-settings') },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    },
     {
       label: 'File',
       submenu: [

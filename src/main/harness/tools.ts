@@ -6,12 +6,13 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import type { Readable } from 'node:stream'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { browserId, browserMcpEndpoint, SERVER_NAME as BROWSER_SERVER } from '../browser-mcp'
+import { exaKey } from '../exa-key'
 import { loadShellPath } from '../shell-env'
 import type { Part, ToolSpec } from './types'
 
 /**
- * The model's tools: pi's four (read, bash, edit, write) and the built-in
- * browser's, reached through its MCP server.
+ * The model's tools: pi's four (read, bash, edit, write), opencode's web
+ * search, and the built-in browser's, reached through its MCP server.
  */
 
 export interface ToolContext {
@@ -460,6 +461,121 @@ function tail(output: string): string {
 }
 
 export const CORE_TOOLS: Tool[] = [read, bash, edit, write]
+
+// --- Web search ------------------------------------------------------------
+
+/** Exa's hosted MCP server, which opencode's websearch tool calls. It answers without a key too. */
+const EXA_MCP_URL = 'https://mcp.exa.ai/mcp'
+/** A search that takes longer is stopped, as in opencode. */
+const SEARCH_TIMEOUT_MS = 25_000
+/** About 7 KB of page text each, so the default stays well under MAX_BYTES. */
+const DEFAULT_RESULTS = 5
+
+/** A JSON-RPC answer from an MCP server: a tool result or an error. */
+interface McpMessage {
+  result?: { content?: { type: string; text?: string }[]; isError?: boolean }
+  error?: { message?: string }
+}
+
+/** The answer in an MCP server's reply, sent as plain JSON or as server-sent events. */
+function mcpMessage(body: string): McpMessage | undefined {
+  const trimmed = body.trim()
+  const payloads = trimmed.startsWith('{')
+    ? [trimmed]
+    : body
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trim())
+  for (const payload of payloads) {
+    try {
+      const message = JSON.parse(payload) as McpMessage
+      if (message?.result || message?.error) return message
+    } catch {
+      // Not JSON; the next event may be.
+    }
+  }
+  return undefined
+}
+
+/**
+ * opencode's websearch: one call to Exa's web_search_exa tool, which returns
+ * the text of the best matching pages. The key saved in Settings goes along
+ * when there is one.
+ */
+export const WEB_SEARCH: Tool = {
+  spec: {
+    name: 'websearch',
+    description: `Search the web with Exa. Returns the title, URL and text of the most relevant pages. Use it for documentation, releases, error messages, current events and anything after your knowledge cutoff. Describe the page you hope to find rather than listing keywords. The current year is ${new Date().getFullYear()}: use it when searching for recent information.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'What to search for' },
+        numResults: {
+          type: 'number',
+          description: `How many pages to return (default ${DEFAULT_RESULTS})`
+        }
+      },
+      required: ['query']
+    }
+  },
+  kind: 'fetch',
+  // The query leaves the machine, so Ask mode asks first, as for the browser.
+  readOnly: false,
+  title: 'websearch',
+  paths: () => [],
+  async run(args, { signal }) {
+    const query = stringArg(args, 'query').trim()
+    if (!query) throw new Error('"query" is empty.')
+    const numResults = Math.max(1, Math.floor(numberArg(args, 'numResults') ?? DEFAULT_RESULTS))
+    const key = exaKey()
+    let response: Response
+    try {
+      response = await fetch(EXA_MCP_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          ...(key ? { 'x-api-key': key } : {})
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'web_search_exa', arguments: { query, numResults } }
+        }),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(SEARCH_TIMEOUT_MS)])
+      })
+    } catch (error) {
+      if ((error as Error).name === 'TimeoutError') {
+        throw new Error(`The search took longer than ${SEARCH_TIMEOUT_MS / 1000} seconds.`)
+      }
+      throw error
+    }
+    const body = await response.text()
+    if (response.status === 429 && !key) {
+      throw new Error(
+        "Exa's free search limit was reached. The user can add an Exa API key in Just Harness Settings."
+      )
+    }
+    if (!response.ok) throw new Error(`Exa answered ${response.status}: ${body.slice(0, 500)}`)
+    const message = mcpMessage(body)
+    if (!message) throw new Error(`Exa's answer could not be read: ${body.slice(0, 500)}`)
+    if (message.error) throw new Error(`Exa: ${message.error.message ?? 'unknown error'}`)
+    const found = message.result?.content?.find((c) => c.type === 'text' && c.text)?.text
+    if (!found) return { content: text('No results. Try a different query.') }
+    const isError = message.result?.isError === true
+    const bytes = Buffer.from(found)
+    if (bytes.length <= MAX_BYTES) return { content: text(found), isError }
+    // Cut at the last whole line within the limit.
+    const kept = bytes.subarray(0, MAX_BYTES).toString('utf8')
+    return {
+      content: text(
+        `${kept.slice(0, kept.lastIndexOf('\n'))}\n\n[Results cut to ${MAX_BYTES / 1024} KB. Ask for fewer results to see each one whole.]`
+      ),
+      isError
+    }
+  }
+}
 
 // --- Browser ---------------------------------------------------------------
 
