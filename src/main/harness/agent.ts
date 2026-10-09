@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import { appendFile, mkdir, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type * as acp from '@agentclientprotocol/sdk'
 import type { AgentCommand, AgentOption, ChatItem, ModelSource } from '../../shared/types'
@@ -35,7 +35,16 @@ import {
 } from './compaction'
 import type { Provider, Source } from './provider'
 import { browserTools, CORE_TOOLS, runTool, WEB_SEARCH, type Tool } from './tools'
-import { isServerTool, mcpTools, signIn, type McpProblem } from './mcp'
+import {
+  isServerTool,
+  isTrusted,
+  mcpTools,
+  serverHash,
+  signIn,
+  trust,
+  type McpEntry,
+  type McpProblem
+} from './mcp'
 import {
   AGENT_TOOL,
   AGENT_TOOL_NAME,
@@ -130,6 +139,8 @@ export class HarnessAgent {
   private owners = new Map<string, Map<string, string>>()
   /** MCP servers the user chose not to sign in to, not offered again until the app restarts. */
   private skippedSignIns = new Set<string>()
+  /** Project MCP servers the user chose not to start, by config hash, not asked again until the app restarts. */
+  private declinedServers = new Set<string>()
 
   constructor(
     private readonly provider: Provider,
@@ -549,6 +560,8 @@ How to communicate:
     if (session.tools) {
       const declared = session.tools.map((t) => t.name)
       servers = servers.filter((s) => declared.some((name) => isServerTool(s.name, name)))
+      // The project's config may have changed since the chat started.
+      servers = await this.allowProjectServers(chatId, cwd, servers, signal)
       if (servers.length === 0) return []
       const { tools, problems } = await mcpTools(servers)
       for (const { server, message } of problems) {
@@ -556,11 +569,12 @@ How to communicate:
       }
       return tools
     }
+    servers = await this.allowProjectServers(chatId, cwd, servers, signal)
     const { tools, problems } = await mcpTools(servers)
     for (const problem of problems) {
       if (signal.aborted) break
       const { name } = problem.server
-      if (problem.signIn && !this.skippedSignIns.has(JSON.stringify(problem.server))) {
+      if (problem.signIn && !this.skippedSignIns.has(serverHash(problem.server))) {
         if (!(await this.offerSignIn(chatId, problem, signal))) continue
         const after = await mcpTools([problem.server])
         tools.push(...after.tools)
@@ -574,6 +588,56 @@ How to communicate:
       })
     }
     return tools.sort((a, b) => a.spec.name.localeCompare(b.spec.name))
+  }
+
+  /**
+   * The servers that may start. One the project's own files set up comes with
+   * the code: a cloned repository could otherwise run a program, or send a file
+   * its config reads with {file:} to an address of its choosing, as soon as a
+   * chat starts. Ask mode covers tool calls, not this, so the user is asked in
+   * every mode, once for each exact config (see isTrusted).
+   */
+  private async allowProjectServers(
+    chatId: string,
+    cwd: string,
+    servers: McpEntry[],
+    signal: AbortSignal
+  ): Promise<McpEntry[]> {
+    const allowed: McpEntry[] = []
+    for (const server of servers) {
+      if (isTrusted(server)) {
+        allowed.push(server)
+        continue
+      }
+      if (server.type === 'invalid' || signal.aborted) continue
+      if (this.declinedServers.has(serverHash(server))) continue
+      const file = relative(cwd, server.fromProject!) || server.fromProject!
+      const does =
+        server.type === 'stdio'
+          ? `runs ${[server.command, ...server.args].join(' ')}`
+          : `connects to ${server.url}`
+      const response = await askUser(this.events, this.permissions, chatId, {
+        title: server.name,
+        question: `This project's ${file} sets up the MCP server ${server.name}, which ${does}. Start it?`,
+        options: [
+          { optionId: 'skip', name: "Don't start", kind: 'reject_once' },
+          { optionId: 'start', name: 'Start', kind: 'allow_once' }
+        ]
+      })
+      if (response.outcome.outcome === 'cancelled') continue
+      if (response.outcome.optionId === 'start') {
+        trust(server)
+        allowed.push(server)
+        continue
+      }
+      this.declinedServers.add(serverHash(server))
+      this.emit(chatId, {
+        kind: 'notice',
+        id: crypto.randomUUID(),
+        text: `Did not start ${server.name}, so its tools are not in this chat.`
+      })
+    }
+    return allowed
   }
 
   /** Ask to sign in to a server and, if the user agrees, do it in their browser; whether it worked. */
@@ -593,7 +657,7 @@ How to communicate:
     })
     if (response.outcome.outcome === 'cancelled') return false
     if (response.outcome.optionId !== 'sign_in') {
-      this.skippedSignIns.add(JSON.stringify(problem.server))
+      this.skippedSignIns.add(serverHash(problem.server))
       this.emit(chatId, {
         kind: 'notice',
         id: crypto.randomUUID(),

@@ -1,5 +1,7 @@
 import { app, shell } from 'electron'
 import { createHash } from 'node:crypto'
+import { readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { SERVER_NAME as BROWSER_SERVER } from '../browser-mcp'
@@ -26,6 +28,8 @@ export interface StdioServer {
   cwd: string
   /** Milliseconds for connecting and for each call; the defaults below when unset. */
   timeout?: number
+  /** As for RemoteServer: the project file that set the server up, if one did. */
+  fromProject?: string
 }
 
 /** A server at a URL: Streamable HTTP, SSE, or Streamable HTTP falling back to SSE (opencode's "remote"). */
@@ -37,6 +41,12 @@ export interface RemoteServer {
   /** How to sign in when the server asks for it; false when the config turns sign-in off. */
   oauth: OAuthConfig | false
   timeout?: number
+  /**
+   * The config file inside the project that set the server up or changed it.
+   * Such a server comes with the code, so it starts only once the user agrees
+   * (see isTrusted).
+   */
+  fromProject?: string
 }
 
 /** A pre-registered OAuth client, from the server's config. */
@@ -115,6 +125,40 @@ const connections = new Map<string, Promise<Connection>>()
 const signingIn = new Map<string, Promise<void>>()
 
 const keyOf = (server: McpEntry): string => JSON.stringify(server)
+
+/** A server's config as a hash: configs can hold secrets (headers, env), which are not written down. */
+export const serverHash = (server: McpEntry): string =>
+  createHash('sha256').update(keyOf(server)).digest('hex')
+
+/** The project servers the user agreed to start, by config hash. */
+const trustedFile = join(app.getPath('userData'), 'mcp-trusted.json')
+
+function readTrusted(): string[] {
+  try {
+    const list = JSON.parse(readFileSync(trustedFile, 'utf8')) as unknown
+    return Array.isArray(list) ? list.filter((h) => typeof h === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Whether a server may start: servers from the user's own config may; one
+ * the project's files set up only once the user agreed to that exact config,
+ * so a repository that later changes the command is asked about again.
+ */
+export function isTrusted(server: McpEntry): boolean {
+  return (
+    server.type === 'invalid' || !server.fromProject || readTrusted().includes(serverHash(server))
+  )
+}
+
+export function trust(server: McpServer): void {
+  const list = [...new Set([...readTrusted(), serverHash(server)])]
+  const tmp = `${trustedFile}.tmp`
+  writeFileSync(tmp, JSON.stringify(list))
+  renameSync(tmp, trustedFile)
+}
 
 /**
  * Connect to the servers and return their tools in a fixed order (servers by

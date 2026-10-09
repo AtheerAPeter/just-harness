@@ -1,7 +1,7 @@
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import slugify from '@sindresorhus/slugify'
 import { parse, printParseErrorCode, type ParseError } from 'jsonc-parser'
 import { z } from 'zod'
@@ -46,11 +46,19 @@ const stringRecord = (value: unknown): Record<string, string> =>
  * project; the .opencode folders and OPENCODE_CONFIG_DIR; OPENCODE_CONFIG_CONTENT;
  * the managed folder. Config served by an organization's account or well-known
  * URL, and macOS managed preferences, are opencode's own sign-in and are not read.
+ * Servers the project's own files set up or change are marked `fromProject`.
  */
 export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
   const env = process.env
   const globalDir = join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode')
   const root = gitRoot(cwd)
+  // Folders above the home folder are the system's and the home folder itself is the user's:
+  // outside a git checkout, opencode looks there too.
+  const isProject = (dir: string): boolean => {
+    const fromHome = relative(dir, homedir())
+    return fromHome !== '' && (fromHome.startsWith('..') || isAbsolute(fromHome))
+  }
+  const projectFiles = new Set<string>()
   const files = [
     join(globalDir, 'config.json'),
     join(globalDir, 'opencode.json'),
@@ -59,7 +67,9 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
   ]
   if (!env.OPENCODE_DISABLE_PROJECT_CONFIG) {
     // Nearest folder last, so it wins; in one folder, .jsonc over .json.
-    files.push(...up(cwd, root, ['opencode.jsonc', 'opencode.json']).reverse())
+    const found = up(cwd, root, ['opencode.jsonc', 'opencode.json']).reverse()
+    for (const file of found) if (isProject(dirname(file))) projectFiles.add(file)
+    files.push(...found)
   }
   // As opencode lists them: the project's .opencode folders nearest first, then ~/.opencode.
   const dirs = [
@@ -68,15 +78,24 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
     ...(env.OPENCODE_CONFIG_DIR ? [env.OPENCODE_CONFIG_DIR] : [])
   ]
   for (const dir of [...new Set(dirs)]) {
-    files.push(join(dir, 'opencode.json'), join(dir, 'opencode.jsonc'))
+    const inDir = [join(dir, 'opencode.json'), join(dir, 'opencode.jsonc')]
+    if (isProject(dirname(dir)) && dir !== env.OPENCODE_CONFIG_DIR) {
+      for (const file of inDir) projectFiles.add(file)
+    }
+    files.push(...inDir)
   }
 
   let mcp: Record<string, unknown> = {}
+  /** The servers a project file set up or changed, with the last such file. */
+  const fromProject = new Map<string, string>()
   const problems: InvalidServer[] = []
   const merge = async (text: string, source: string, dir: string): Promise<void> => {
     try {
       const config = parseJsonc(await substitute(text, dir), source)
-      if (isObject(config) && isObject(config.mcp)) mcp = mergeDeep(mcp, config.mcp)
+      if (!isObject(config) || !isObject(config.mcp)) return
+      mcp = mergeDeep(mcp, config.mcp)
+      if (projectFiles.has(source))
+        for (const name of Object.keys(config.mcp)) fromProject.set(name, source)
     } catch (error) {
       problems.push(invalid(source, (error as Error).message))
     }
@@ -96,6 +115,7 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
   const servers = Object.entries(mcp).flatMap(([name, entry]): McpEntry[] => {
     if (!isObject(entry) || entry.enabled === false) return []
     const timeout = positiveInt(entry.timeout)
+    const project = fromProject.has(name) ? { fromProject: fromProject.get(name)! } : {}
     if (entry.type === 'local') {
       const command = Array.isArray(entry.command) ? entry.command : []
       if (command.length === 0 || command.some((part) => typeof part !== 'string')) {
@@ -111,7 +131,8 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
           args: command.slice(1) as string[],
           env: stringRecord(entry.environment),
           cwd: typeof entry.cwd === 'string' ? resolve(cwd, entry.cwd) : cwd,
-          ...(timeout ? { timeout } : {})
+          ...(timeout ? { timeout } : {}),
+          ...project
         }
       ]
     }
@@ -124,7 +145,8 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
           url: entry.url,
           headers: stringRecord(entry.headers),
           oauth: entry.oauth === false ? false : opencodeOAuth(entry.oauth),
-          ...(timeout ? { timeout } : {})
+          ...(timeout ? { timeout } : {}),
+          ...project
         }
       ]
     }
