@@ -3,6 +3,7 @@ import { ThemeToggle } from './ThemeToggle'
 import { Collapse } from './Collapse'
 import type { AppState, Chat, Project } from '../../../shared/types'
 import { readPref, writePref } from '../lib/prefs'
+import { useOverlay } from '../lib/overlays'
 import {
   BookIcon,
   ChevronIcon,
@@ -446,6 +447,8 @@ interface RowMenuItem {
 function RowMenu({ label, items }: { label: string; items: RowMenuItem[] }): React.JSX.Element {
   const [at, setAt] = useState<React.CSSProperties>()
   const rootRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useOverlay(menuRef, Boolean(at))
 
   useEffect(() => {
     if (!at) return
@@ -494,7 +497,7 @@ function RowMenu({ label, items }: { label: string; items: RowMenuItem[] }): Rea
         <MoreIcon width={14} height={14} />
       </button>
       {at && (
-        <div className="menu" role="menu" style={at}>
+        <div className="menu" role="menu" style={at} ref={menuRef}>
           {items.map((item) => (
             <button
               key={item.name}

@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { BrowserState, BrowserTab } from '../../../shared/types'
+import { onOverlays, overlaysCover } from '../lib/overlays'
 import {
   BackIcon,
   CloseIcon,
@@ -26,6 +27,13 @@ export function BrowserPanel({ width, onResize, onClose }: BrowserPanelProps): R
   /** The text being typed in the address bar; null shows the current page URL. */
   const [draft, setDraft] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
+  /** A picture of the page, shown in its place while a popup reaches into the panel. */
+  const [still, setStill] = useState<string>()
+  /** The picture is on screen, so the page can be parked without a gap. */
+  const [stillShown, setStillShown] = useState(false)
+  const covered = useSyncExternalStore(onOverlays, () =>
+    viewportRef.current ? overlaysCover(viewportRef.current) : false
+  )
 
   useEffect(() => {
     window.api.browser.getState().then(setState)
@@ -51,13 +59,32 @@ export function BrowserPanel({ width, onResize, onClose }: BrowserPanelProps): R
     }
   }, [])
 
-  // The native view would swallow pointer events mid-drag, so hide it until the
-  // drag ends. Hiding is not closing: the page stays loaded.
+  // The native page is drawn over all HTML, popups included. While one reaches
+  // into the panel, a picture of the page takes its place and the page is parked.
+  useEffect(() => {
+    if (!covered) return
+    let current = true
+    window.api.browser.capture().then((image) => {
+      if (!current) return
+      if (image) setStill(image)
+      // No page in the panel: nothing to picture, but one that opens meanwhile stays parked.
+      else setStillShown(true)
+    })
+    return () => {
+      current = false
+      setStill(undefined)
+      setStillShown(false)
+    }
+  }, [covered])
+
+  // Park the page for a popup, and mid-drag, where the native view would swallow
+  // pointer events. Parking is not closing: the page stays loaded.
+  const parked = dragging || stillShown
   useLayoutEffect(() => {
-    if (!dragging) return
+    if (!parked) return
     window.api.browser.setHidden(true)
     return () => window.api.browser.setHidden(false)
-  }, [dragging])
+  }, [parked])
 
   function startDrag(event: React.PointerEvent): void {
     event.preventDefault()
@@ -171,7 +198,25 @@ export function BrowserPanel({ width, onResize, onClose }: BrowserPanelProps): R
           <CloseIcon />
         </button>
       </div>
-      <div className="browser-viewport" ref={viewportRef} />
+      <div className="browser-viewport" ref={viewportRef}>
+        {still && (
+          <img
+            // A new element per picture, so a load always belongs to the current one.
+            key={still}
+            className="browser-still"
+            src={still}
+            alt=""
+            draggable={false}
+            onLoad={(e) => {
+              const img = e.currentTarget
+              // Park the page once the picture has been painted under it.
+              requestAnimationFrame(() => {
+                if (img.isConnected) setStillShown(true)
+              })
+            }}
+          />
+        )}
+      </div>
     </aside>
   )
 }

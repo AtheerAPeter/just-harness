@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { useOverlay } from '../lib/overlays'
 
 export interface CompletionItem {
   name: string
@@ -21,6 +22,7 @@ export function CompletionMenu({
   onChoose
 }: CompletionMenuProps): React.JSX.Element {
   const listRef = useRef<HTMLDivElement>(null)
+  useOverlay(listRef, true)
 
   useEffect(() => {
     listRef.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' })

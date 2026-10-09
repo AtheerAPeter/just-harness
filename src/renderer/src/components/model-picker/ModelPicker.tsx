@@ -8,12 +8,12 @@ import {
   type AgentStatus,
   type ModelSource
 } from '../../../../shared/types'
-import { SearchIcon, UpDownIcon } from '../icons'
+import { useOverlay } from '../../lib/overlays'
+import { BackIcon, SearchIcon, UpDownIcon } from '../icons'
 import { AgentLogo } from './AgentLogo'
 import { groupsOf, matches, settingOf, sourceKey, type ModelRow, type Source } from './catalog'
-import { ModelColumn, type ModelSection } from './ModelColumn'
-import { ProviderColumn } from './ProviderColumn'
-import { SourceColumn } from './SourceColumn'
+import { ModelList, type ModelSection } from './ModelList'
+import { SourceList } from './SourceList'
 
 interface ModelPickerProps {
   agent: AgentId
@@ -28,9 +28,10 @@ interface ModelPickerProps {
 }
 
 /**
- * Picks the agent and its model in one menu, in three columns: where the models
- * come from (an agent, or one of its providers), the providers within that, and
- * the models. A search looks through every model of every agent.
+ * Picks the agent and its model in one menu. It opens on the models of where the
+ * chat's model comes from (an agent, or one of its providers), by provider; a
+ * row above them goes back to every agent and provider. A search looks through
+ * every model of every agent.
  */
 export function ModelPicker({
   agent,
@@ -44,11 +45,12 @@ export function ModelPicker({
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const [shownKey, setShownKey] = useState<string>()
-  /** The provider the model list is narrowed to; undefined shows them all. */
-  const [shownProvider, setShownProvider] = useState<string>()
+  /** The list of agents and providers, instead of the models of one. */
+  const [choosingSource, setChoosingSource] = useState(false)
   /** Every agent's model lists, read when the picker opens. */
   const [lists, setLists] = useState<Partial<Record<AgentId, AgentModels>>>({})
   const rootRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
@@ -78,6 +80,7 @@ export function ModelPicker({
   }
 
   const sources = AGENTS.flatMap((a) => sourcesOf(a.id))
+  const pickable = sources.filter((s) => !disabledReason(s.agent))
   const shown = sources.find((s) => s.key === (shownKey ?? currentKey)) ?? sources[0]
   const groups = groupsOf(shown)
   const isCurrent = (row: ModelRow): boolean =>
@@ -93,9 +96,9 @@ export function ModelPicker({
     [label(source.agent), source.setting?.name].filter(Boolean).join(' · ')
 
   const q = query.trim().toLowerCase()
+  const showingSources = choosingSource && !q
   const sections: ModelSection[] = q
-    ? sources
-        .filter((s) => !disabledReason(s.agent))
+    ? pickable
         .flatMap((s) =>
           groupsOf(s).map((g) => ({
             key: `${s.key}/${g.provider}`,
@@ -104,15 +107,17 @@ export function ModelPicker({
           }))
         )
         .filter((section) => section.rows.length > 0)
-    : groups
-        .filter((g) => shownProvider === undefined || g.provider === shownProvider)
-        .map((g) => ({
-          key: g.provider,
-          // One unnamed group needs no heading.
-          title: g.provider || (groups.length > 1 ? 'Other' : undefined),
-          rows: g.rows
-        }))
+    : groups.map((g) => ({
+        key: g.provider,
+        // One unnamed group needs no heading.
+        title: g.provider || (groups.length > 1 ? 'Other' : undefined),
+        rows: g.rows
+      }))
   const rows = sections.flatMap((s) => s.rows)
+  /** How many entries the arrow keys move through. */
+  const count = showingSources ? pickable.length : rows.length
+
+  useOverlay(menuRef, open)
 
   useEffect(() => {
     if (!open) return
@@ -126,7 +131,7 @@ export function ModelPicker({
   // A different list starts at its top, not where the previous one was scrolled to.
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = 0
-  }, [shownKey, shownProvider, q])
+  }, [shownKey, showingSources, q])
 
   useEffect(() => {
     if (!open) return
@@ -140,7 +145,7 @@ export function ModelPicker({
     }
     setQuery('')
     setShownKey(currentKey)
-    setShownProvider(undefined)
+    setChoosingSource(false)
     setActive(
       Math.max(
         0,
@@ -163,15 +168,21 @@ export function ModelPicker({
 
   function showSource(source: Source): void {
     setShownKey(source.key)
-    setShownProvider(undefined)
+    setChoosingSource(false)
     setQuery('')
     setActive(0)
     searchRef.current?.focus()
   }
 
-  function showProvider(provider: string | undefined): void {
-    setShownProvider(provider)
-    setActive(0)
+  function showSources(): void {
+    setChoosingSource(true)
+    setQuery('')
+    setActive(
+      Math.max(
+        0,
+        pickable.findIndex((s) => s.key === shown.key)
+      )
+    )
     searchRef.current?.focus()
   }
 
@@ -192,13 +203,18 @@ export function ModelPicker({
       setOpen(false)
     } else if (event.key === 'ArrowDown') {
       event.preventDefault()
-      setActive((i) => Math.min(rows.length - 1, i + 1))
+      setActive((i) => Math.min(count - 1, i + 1))
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
       setActive((i) => Math.max(0, i - 1))
     } else if (event.key === 'Enter') {
       event.preventDefault()
-      choose(rows[active])
+      if (!showingSources) choose(rows[active])
+      else if (pickable[active]) showSource(pickable[active])
+    } else if (event.key === 'Backspace' && !query && !showingSources) {
+      // Backspace in an empty search goes back, as the row above the models does.
+      event.preventDefault()
+      showSources()
     }
   }
 
@@ -228,7 +244,7 @@ export function ModelPicker({
         <UpDownIcon width={10} height={10} className="picker-chevron" />
       </button>
       {open && (
-        <div className="picker-menu model-menu" role="listbox">
+        <div className="picker-menu model-menu" role="listbox" ref={menuRef}>
           <label className="model-search">
             <SearchIcon width={15} height={15} />
             <input
@@ -242,33 +258,44 @@ export function ModelPicker({
               }}
             />
           </label>
-          <div className="model-body">
-            <SourceColumn
+          {showingSources ? (
+            <SourceList
               sources={sources}
-              shownKey={q ? undefined : shown.key}
+              active={active}
               currentKey={currentKey}
               disabledReason={disabledReason}
+              listRef={listRef}
+              onHover={setActive}
               onShow={showSource}
             />
-            {!q && groups.length > 1 && (
-              <ProviderColumn
-                title={shown.setting ? `Via ${shown.setting.name}` : 'Providers'}
-                groups={groups}
-                shown={shownProvider}
-                current={shown.key === currentKey ? current?.provider : undefined}
-                onShow={showProvider}
+          ) : (
+            <>
+              {!q && (
+                <button
+                  type="button"
+                  className="model-source-back"
+                  title="All agents and providers"
+                  onClick={showSources}
+                >
+                  <BackIcon width={14} height={14} />
+                  <AgentLogo agent={shown.agent} size={16} />
+                  <span className="model-source-name">{sourceName(shown)}</span>
+                  {shown.option && (
+                    <span className="model-count">{shown.option.values.length}</span>
+                  )}
+                </button>
+              )}
+              <ModelList
+                sections={sections}
+                active={active}
+                emptyText={emptyText()}
+                listRef={listRef}
+                isCurrent={isCurrent}
+                onHover={setActive}
+                onChoose={choose}
               />
-            )}
-            <ModelColumn
-              sections={sections}
-              active={active}
-              emptyText={emptyText()}
-              listRef={listRef}
-              isCurrent={isCurrent}
-              onHover={setActive}
-              onChoose={choose}
-            />
-          </div>
+            </>
+          )}
         </div>
       )}
     </div>

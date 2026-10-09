@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { useOverlay } from '../lib/overlays'
 import { CheckIcon, UpDownIcon } from './icons'
 
 export interface PickerValue {
@@ -34,9 +35,11 @@ export function Picker({
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const searchable = values.length > 8
   const current = values.find((v) => v.value === value)
+  useOverlay(menuRef, open)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -116,7 +119,7 @@ export function Picker({
         <UpDownIcon width={10} height={10} className="picker-chevron" />
       </button>
       {open && (
-        <div className="picker-menu" role="listbox">
+        <div className="picker-menu" role="listbox" ref={menuRef}>
           {searchable && (
             <input
               className="picker-search"
