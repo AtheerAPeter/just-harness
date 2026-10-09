@@ -24,6 +24,14 @@ import {
   streamReply,
   type Model
 } from './wire'
+import {
+  COMPACT_AT,
+  contextTokens,
+  formatTokens,
+  SUMMARY_FAILURES,
+  SUMMARY_PROMPT,
+  summaryTurn
+} from './compaction'
 import type { Provider, Source } from './provider'
 import { browserTools, CORE_TOOLS, runTool, WEB_SEARCH, type Tool } from './tools'
 import {
@@ -72,6 +80,8 @@ type Entry =
   | { type: 'tools'; tools: ToolSpec[] }
   | { type: 'turn'; turn: Turn }
   | { type: 'allow'; tool: string }
+  /** The turns before it were replaced by the summary turn after it. */
+  | { type: 'compact'; tokensBefore: number }
 
 interface Session {
   file: string
@@ -149,6 +159,7 @@ export class HarnessAgent {
         if (entry.type === 'session') session.system = entry.system
         else if (entry.type === 'tools') session.tools = entry.tools
         else if (entry.type === 'turn') session.turns.push(entry.turn)
+        else if (entry.type === 'compact') session.turns.length = 0
         else session.allowed.add(entry.tool)
       }
       if (session.system) return session
@@ -169,6 +180,8 @@ export class HarnessAgent {
 
   private async append(session: Session, entry: Entry): Promise<void> {
     if (entry.type === 'turn') session.turns.push(entry.turn)
+    // Emptied in place: a running turn's request holds this array.
+    if (entry.type === 'compact') session.turns.length = 0
     if (entry.type === 'tools') session.tools = entry.tools
     if (entry.type === 'allow') session.allowed.add(entry.tool)
     await appendFile(session.file, `${JSON.stringify(entry)}\n`)
@@ -340,6 +353,9 @@ How to communicate:
       const tools = await this.tools()
       const specs = await this.toolSpecs(session, tools)
       await this.closeOpenCalls(session)
+      // Compacted before the message is added, so the message stays word for word.
+      // A failed compaction is not tried again in the same turn.
+      let compactable = await this.compactIfFull(chatId, session, specs, signal, false)
       await this.append(session, {
         type: 'turn',
         turn: { role: 'user', content: userContent(text, blocks) }
@@ -349,6 +365,11 @@ How to communicate:
       const subagentsAsked = asksForSubagents(text)
       for (;;) {
         if (signal.aborted) return { stopReason: 'cancelled' }
+        // Between the requests of a turn, after its tool results.
+        if (compactable && session.turns.at(-1)?.role === 'tool') {
+          compactable = await this.compactIfFull(chatId, session, specs, signal, true)
+          if (signal.aborted) return { stopReason: 'cancelled' }
+        }
         const choice = await this.choice(chatId)
         const reply = await this.reply(chatId, request, choice, signal, {
           keep: (partial) => this.append(session, { type: 'turn', turn: partial })
@@ -423,6 +444,58 @@ How to communicate:
         : [...core, ...browser]
     await this.append(session, { type: 'tools', tools: specs })
     return specs
+  }
+
+  /**
+   * Replace the transcript with a summary once it holds COMPACT_AT tokens. The
+   * summary is asked for at the end of the chat's usual request, with its model
+   * and effort, so the whole transcript is read from the prompt cache. Returns
+   * false when compacting failed: the chat goes on uncompacted.
+   */
+  private async compactIfFull(
+    chatId: string,
+    session: Session,
+    tools: ToolSpec[],
+    signal: AbortSignal,
+    midTurn: boolean
+  ): Promise<boolean> {
+    const before = contextTokens(session.system, tools, session.turns)
+    if (before < COMPACT_AT) return true
+    const notice: ChatItem = {
+      kind: 'notice',
+      id: crypto.randomUUID(),
+      text: `Compacting the conversation (${formatTokens(before)} tokens)…`
+    }
+    this.emit(chatId, notice)
+    try {
+      const question: Turn = { role: 'user', content: [{ type: 'text', text: SUMMARY_PROMPT }] }
+      const reply = await this.reply(
+        chatId,
+        { system: session.system, tools, turns: [...session.turns, question] },
+        await this.choice(chatId),
+        signal
+      )
+      if (signal.aborted) {
+        this.emit(chatId, { ...notice, text: 'Stopped compacting the conversation.' })
+        return false
+      }
+      const summary = reply.turn.text.trim()
+      if (reply.stop !== 'end' || !summary) throw new Error(SUMMARY_FAILURES[reply.stop])
+      await this.append(session, { type: 'compact', tokensBefore: before })
+      await this.append(session, { type: 'turn', turn: summaryTurn(summary, midTurn) })
+      this.emit(chatId, {
+        ...notice,
+        text: `Compacted the conversation (${formatTokens(before)} tokens) into a summary.`
+      })
+      return true
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      this.emit(chatId, {
+        ...notice,
+        text: `Could not compact the conversation, so it goes on uncompacted. ${reason}`
+      })
+      return false
+    }
   }
 
   /** Calls the app quit or crashed during were never answered; answer them so the transcript stays valid. */

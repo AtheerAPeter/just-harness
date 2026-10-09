@@ -42,6 +42,7 @@ import {
 } from './permissions'
 import { chatPreview } from './preview'
 import { HarnessAgent } from './harness/agent'
+import { COMPACT_AT, formatTokens } from './harness/compaction'
 import { stopLeftRunning } from './harness/tools'
 import { isHarnessAgent, type HarnessAgentId, type Provider } from './harness/provider'
 import { commandCode } from './harness/commandcode'
@@ -209,8 +210,7 @@ const UNLISTED_COMMANDS: Record<AcpAgent, AgentCommand[]> = {
 /** A prompt asking to compact the conversation. */
 const COMPACT = /^\/compact(\s|$)/
 
-const HARNESS_NO_COMPACTION =
-  "The app's own agents do not compact conversations. Start a new chat when this one gets long."
+const HARNESS_NO_COMPACTION = `The app's own agents compact the conversation on their own when it reaches ${formatTokens(COMPACT_AT)} tokens. They have no command to do it now.`
 
 /** What /compact shows for agents that cannot compact on request. */
 const NO_COMPACTION: Partial<Record<AgentId, string>> = {
