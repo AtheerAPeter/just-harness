@@ -69,8 +69,12 @@ export function groupsOf(source: Source): ProviderGroup[] {
     .sort((a, b) => a.provider.localeCompare(b.provider))
 }
 
+/** Whether a model of the shown source matches the search. */
 export function matches(row: ModelRow, query: string): boolean {
-  return [row.name, row.value, row.provider, row.source.setting?.name].some((text) =>
-    text?.toLowerCase().includes(query)
-  )
+  return [row.name, row.value, row.provider].some((text) => text.toLowerCase().includes(query))
+}
+
+/** Whether a source in the list of agents and providers matches the search, by its agent or its own name. */
+export function sourceMatches(source: Source, agentLabel: string, query: string): boolean {
+  return [agentLabel, source.setting?.name].some((text) => text?.toLowerCase().includes(query))
 }

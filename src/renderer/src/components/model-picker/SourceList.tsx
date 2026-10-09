@@ -31,8 +31,11 @@ export function SourceList({
   let index = 0
   return (
     <div className="model-list" ref={listRef}>
+      {sources.length === 0 && <div className="picker-empty">No matches</div>}
       {AGENTS.map(({ id, label }) => {
         const own = sources.filter((s) => s.agent === id)
+        // An agent the search left out is not listed at all.
+        if (own.length === 0) return null
         const reason = disabledReason(id)
         const item = (source: Source, text: string, nested: boolean): React.JSX.Element => {
           const i = reason ? undefined : index++

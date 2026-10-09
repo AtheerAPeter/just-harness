@@ -11,7 +11,15 @@ import {
 import { useOverlay } from '../../lib/overlays'
 import { BackIcon, SearchIcon, UpDownIcon } from '../icons'
 import { AgentLogo } from './AgentLogo'
-import { groupsOf, matches, settingOf, sourceKey, type ModelRow, type Source } from './catalog'
+import {
+  groupsOf,
+  matches,
+  settingOf,
+  sourceKey,
+  sourceMatches,
+  type ModelRow,
+  type Source
+} from './catalog'
 import { ModelList, type ModelSection } from './ModelList'
 import { SourceList } from './SourceList'
 
@@ -30,8 +38,8 @@ interface ModelPickerProps {
 /**
  * Picks the agent and its model in one menu. It opens on the models of where the
  * chat's model comes from (an agent, or one of its providers), by provider; a
- * row above them goes back to every agent and provider. A search looks through
- * every model of every agent.
+ * row above them goes back to every agent and provider. The search looks only
+ * through the list on screen: the shown source's models, or the agents and providers.
  */
 export function ModelPicker({
   agent,
@@ -79,9 +87,13 @@ export function ModelPicker({
     })
   }
 
+  const q = query.trim().toLowerCase()
   const sources = AGENTS.flatMap((a) => sourcesOf(a.id))
-  const pickable = sources.filter((s) => !disabledReason(s.agent))
   const shown = sources.find((s) => s.key === (shownKey ?? currentKey)) ?? sources[0]
+  const listedSources = choosingSource
+    ? sources.filter((s) => sourceMatches(s, label(s.agent), q))
+    : sources
+  const pickable = listedSources.filter((s) => !disabledReason(s.agent))
   const groups = groupsOf(shown)
   const isCurrent = (row: ModelRow): boolean =>
     row.source.key === currentKey && row.value === live.model?.currentValue
@@ -95,27 +107,17 @@ export function ModelPicker({
   const sourceName = (source: Source): string =>
     [label(source.agent), source.setting?.name].filter(Boolean).join(' · ')
 
-  const q = query.trim().toLowerCase()
-  const showingSources = choosingSource && !q
-  const sections: ModelSection[] = q
-    ? pickable
-        .flatMap((s) =>
-          groupsOf(s).map((g) => ({
-            key: `${s.key}/${g.provider}`,
-            title: [sourceName(s), g.provider].filter(Boolean).join(' · '),
-            rows: g.rows.filter((r) => matches(r, q))
-          }))
-        )
-        .filter((section) => section.rows.length > 0)
-    : groups.map((g) => ({
-        key: g.provider,
-        // One unnamed group needs no heading.
-        title: g.provider || (groups.length > 1 ? 'Other' : undefined),
-        rows: g.rows
-      }))
+  const sections: ModelSection[] = groups
+    .map((g) => ({
+      key: g.provider,
+      // One unnamed group needs no heading.
+      title: g.provider || (groups.length > 1 ? 'Other' : undefined),
+      rows: q ? g.rows.filter((r) => matches(r, q)) : g.rows
+    }))
+    .filter((section) => section.rows.length > 0)
   const rows = sections.flatMap((s) => s.rows)
   /** How many entries the arrow keys move through. */
-  const count = showingSources ? pickable.length : rows.length
+  const count = choosingSource ? pickable.length : rows.length
 
   useOverlay(menuRef, open)
 
@@ -131,7 +133,7 @@ export function ModelPicker({
   // A different list starts at its top, not where the previous one was scrolled to.
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = 0
-  }, [shownKey, showingSources, q])
+  }, [shownKey, choosingSource, q])
 
   useEffect(() => {
     if (!open) return
@@ -209,9 +211,9 @@ export function ModelPicker({
       setActive((i) => Math.max(0, i - 1))
     } else if (event.key === 'Enter') {
       event.preventDefault()
-      if (!showingSources) choose(rows[active])
+      if (!choosingSource) choose(rows[active])
       else if (pickable[active]) showSource(pickable[active])
-    } else if (event.key === 'Backspace' && !query && !showingSources) {
+    } else if (event.key === 'Backspace' && !query && !choosingSource) {
       // Backspace in an empty search goes back, as the row above the models does.
       event.preventDefault()
       showSources()
@@ -250,7 +252,11 @@ export function ModelPicker({
             <input
               ref={searchRef}
               autoFocus
-              placeholder="Search all models…"
+              placeholder={
+                choosingSource
+                  ? 'Search agents and providers…'
+                  : `Search ${sourceName(shown)} models…`
+              }
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value)
@@ -258,9 +264,9 @@ export function ModelPicker({
               }}
             />
           </label>
-          {showingSources ? (
+          {choosingSource ? (
             <SourceList
-              sources={sources}
+              sources={listedSources}
               active={active}
               currentKey={currentKey}
               disabledReason={disabledReason}
@@ -270,21 +276,17 @@ export function ModelPicker({
             />
           ) : (
             <>
-              {!q && (
-                <button
-                  type="button"
-                  className="model-source-back"
-                  title="All agents and providers"
-                  onClick={showSources}
-                >
-                  <BackIcon width={14} height={14} />
-                  <AgentLogo agent={shown.agent} size={16} />
-                  <span className="model-source-name">{sourceName(shown)}</span>
-                  {shown.option && (
-                    <span className="model-count">{shown.option.values.length}</span>
-                  )}
-                </button>
-              )}
+              <button
+                type="button"
+                className="model-source-back"
+                title="All agents and providers"
+                onClick={showSources}
+              >
+                <BackIcon width={14} height={14} />
+                <AgentLogo agent={shown.agent} size={16} />
+                <span className="model-source-name">{sourceName(shown)}</span>
+                {shown.option && <span className="model-count">{shown.option.values.length}</span>}
+              </button>
               <ModelList
                 sections={sections}
                 active={active}
