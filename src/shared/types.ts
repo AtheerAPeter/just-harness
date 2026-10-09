@@ -159,6 +159,11 @@ export type ChatItem =
       auto?: boolean
       /** Project-only mode: the path outside the project this request touches. */
       outside?: string
+      /**
+       * Set when the app asks the user something other than whether a tool may
+       * run (signing in to an MCP server): shown in place of "Allow …?".
+       */
+      question?: string
     }
   | { kind: 'error'; id: string; text: string }
   /** Something the app tells the user about the chat, such as a finished compaction. */

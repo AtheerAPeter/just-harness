@@ -12,7 +12,8 @@ import type { Part, ToolSpec } from './types'
 
 /**
  * The model's tools: pi's four (read, bash, edit, write), opencode's web
- * search, and the built-in browser's, reached through its MCP server.
+ * search, and the built-in browser's, reached through its MCP server. The
+ * user's own MCP servers add theirs (see mcp.ts).
  */
 
 export interface ToolContext {
@@ -32,7 +33,7 @@ export interface ToolOutput {
 export interface Tool {
   spec: ToolSpec
   /** The ACP tool kind the chat shows the call as. */
-  kind: 'read' | 'edit' | 'execute' | 'fetch'
+  kind: 'read' | 'edit' | 'execute' | 'fetch' | 'other'
   /** Runs without asking, even in Ask mode. */
   readOnly: boolean
   /** The title the chat shows; browser tools carry the prefix the chat recognises them by. */
@@ -44,7 +45,7 @@ export interface Tool {
 
 /** Output sent to the model is cut to its last (bash) or first (read) lines, as pi does. */
 const MAX_LINES = 2000
-const MAX_BYTES = 50 * 1024
+export const MAX_BYTES = 50 * 1024
 
 const IMAGE_TYPES: Record<string, string> = {
   '.png': 'image/png',

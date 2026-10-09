@@ -10,6 +10,7 @@ import { BROWSER_GUIDANCE } from '../browser-mcp'
 import { listSkills } from '../skills'
 import { formatRaw, limitOutput } from '../tool-output'
 import {
+  askUser,
   emitItem,
   outsidePath,
   requestPermission,
@@ -34,6 +35,7 @@ import {
 } from './compaction'
 import type { Provider, Source } from './provider'
 import { browserTools, CORE_TOOLS, runTool, WEB_SEARCH, type Tool } from './tools'
+import { isServerTool, mcpTools, signIn, type McpProblem } from './mcp'
 import {
   AGENT_TOOL,
   AGENT_TOOL_NAME,
@@ -126,6 +128,8 @@ export class HarnessAgent {
   private limiters = new Map<string, Limiter>()
   /** Per chat, the files running implement subagents own, by the agent call's item id. */
   private owners = new Map<string, Map<string, string>>()
+  /** MCP servers the user chose not to sign in to, not offered again until the app restarts. */
+  private skippedSignIns = new Set<string>()
 
   constructor(
     private readonly provider: Provider,
@@ -350,7 +354,7 @@ How to communicate:
     try {
       await this.ensureSession(chatId)
       const session = this.sessions.get(chatId)!
-      const tools = await this.tools()
+      const tools = await this.tools(chatId, session, signal)
       const specs = await this.toolSpecs(session, tools)
       await this.closeOpenCalls(session)
       // Compacted before the message is added, so the message stays word for word.
@@ -435,13 +439,14 @@ How to communicate:
   private async toolSpecs(session: Session, tools: Tool[]): Promise<ToolSpec[]> {
     if (session.tools) return session.tools
     const core = CORE_TOOLS.map((t) => t.spec)
-    const browser = tools
+    // The browser's tools, then the MCP servers'.
+    const others = tools
       .filter((t) => !CORE_TOOLS.includes(t) && t !== WEB_SEARCH)
       .map((t) => t.spec)
     const specs =
       session.turns.length === 0
-        ? [...core, AGENT_TOOL, WEB_SEARCH.spec, ...browser]
-        : [...core, ...browser]
+        ? [...core, AGENT_TOOL, WEB_SEARCH.spec, ...others]
+        : [...core, ...others]
     await this.append(session, { type: 'tools', tools: specs })
     return specs
   }
@@ -508,13 +513,112 @@ How to communicate:
     await this.append(session, { type: 'turn', turn: { role: 'tool', results } })
   }
 
-  /** pi's four tools first, then web search and the browser's, the same every request. */
-  private async tools(): Promise<Tool[]> {
+  /** pi's four tools first, then web search, the browser's and the MCP servers', the same every request. */
+  private async tools(chatId: string, session: Session, signal: AbortSignal): Promise<Tool[]> {
+    let browser: Tool[] = []
     try {
-      return [...CORE_TOOLS, WEB_SEARCH, ...(await browserTools())]
+      browser = await browserTools()
     } catch (error) {
       console.error(`[${this.agent}] browser tools unavailable:`, error)
-      return [...CORE_TOOLS, WEB_SEARCH]
+    }
+    return [
+      ...CORE_TOOLS,
+      WEB_SEARCH,
+      ...browser,
+      ...(await this.serverTools(chatId, session, signal))
+    ]
+  }
+
+  /**
+   * The tools of the MCP servers the provider's CLI has set up. A chat's first
+   * request connects every one, offers to sign in where a server asks for it,
+   * and says in the chat which could not be used; its tools are fixed then (see
+   * toolSpecs). Later requests connect only the servers those tools came from,
+   * and a server that is down then shows as failed calls.
+   */
+  private async serverTools(
+    chatId: string,
+    session: Session,
+    signal: AbortSignal
+  ): Promise<Tool[]> {
+    const cwd = store.getProject(store.getChat(chatId).projectId).path
+    let servers = await this.provider.mcpServers(cwd).catch((error: Error) => {
+      console.error(`[${this.agent}] MCP config:`, error)
+      return []
+    })
+    if (session.tools) {
+      const declared = session.tools.map((t) => t.name)
+      servers = servers.filter((s) => declared.some((name) => isServerTool(s.name, name)))
+      if (servers.length === 0) return []
+      const { tools, problems } = await mcpTools(servers)
+      for (const { server, message } of problems) {
+        console.error(`[${this.agent}] MCP server ${server.name}: ${message}`)
+      }
+      return tools
+    }
+    const { tools, problems } = await mcpTools(servers)
+    for (const problem of problems) {
+      if (signal.aborted) break
+      const { name } = problem.server
+      if (problem.signIn && !this.skippedSignIns.has(JSON.stringify(problem.server))) {
+        if (!(await this.offerSignIn(chatId, problem, signal))) continue
+        const after = await mcpTools([problem.server])
+        tools.push(...after.tools)
+        problem.message = after.problems[0]?.message ?? ''
+        if (!problem.message) continue
+      }
+      this.emit(chatId, {
+        kind: 'notice',
+        id: crypto.randomUUID(),
+        text: `The MCP server ${name} could not be used, so its tools are not in this chat: ${problem.message}`
+      })
+    }
+    return tools.sort((a, b) => a.spec.name.localeCompare(b.spec.name))
+  }
+
+  /** Ask to sign in to a server and, if the user agrees, do it in their browser; whether it worked. */
+  private async offerSignIn(
+    chatId: string,
+    problem: McpProblem,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    const { name } = problem.server
+    const response = await askUser(this.events, this.permissions, chatId, {
+      title: name,
+      question: `Sign in to the MCP server ${name}? Its tools need it. Your browser opens to sign in.`,
+      options: [
+        { optionId: 'skip', name: 'Skip', kind: 'reject_once' },
+        { optionId: 'sign_in', name: 'Sign in', kind: 'allow_once' }
+      ]
+    })
+    if (response.outcome.outcome === 'cancelled') return false
+    if (response.outcome.optionId !== 'sign_in') {
+      this.skippedSignIns.add(JSON.stringify(problem.server))
+      this.emit(chatId, {
+        kind: 'notice',
+        id: crypto.randomUUID(),
+        text: `Skipped signing in to ${name}, so its tools are not in this chat.`
+      })
+      return false
+    }
+    const notice: ChatItem = {
+      kind: 'notice',
+      id: crypto.randomUUID(),
+      text: `Waiting for you to sign in to ${name} in your browser…`
+    }
+    this.emit(chatId, notice)
+    try {
+      await signIn(problem, signal)
+      this.emit(chatId, { ...notice, text: `Signed in to ${name}.` })
+      return true
+    } catch (error) {
+      this.emit(chatId, {
+        ...notice,
+        text: signal.aborted
+          ? `Stopped signing in to ${name}.`
+          : `Could not sign in to ${name}, so its tools are not in this chat: ${(error as Error).message}.`
+      })
+      return false
     }
   }
 

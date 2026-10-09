@@ -215,8 +215,9 @@ function toBlocks(items: ChatItem[]): Block[] {
   }
   const blocks: Block[] = []
   for (const item of items) {
-    // Requests bypass mode approved are not shown, so they do not split a group.
-    if (item.kind === 'permission' && item.auto) continue
+    // Requests bypass mode approved are not shown, so they do not split a group. Neither
+    // are answered questions (signing in to a server): a notice says how they went.
+    if (item.kind === 'permission' && (item.auto || (item.question && item.resolved))) continue
     // A subagent's calls are shown under it.
     if (item.kind === 'tool' && item.parentId) continue
     const last = blocks.at(-1)
@@ -477,10 +478,14 @@ const Item = memo(function Item({
               <ShieldIcon width={15} height={15} />
             </span>
             <div className="ask-question">
-              Allow <span className="ask-tool">{toolLabel(item.title)}</span>?
+              {item.question ?? (
+                <>
+                  Allow <span className="ask-tool">{toolLabel(item.title)}</span>?
+                </>
+              )}
             </div>
           </div>
-          {args.trim() && <div className="ask-args">{args.trim()}</div>}
+          {!item.question && args.trim() && <div className="ask-args">{args.trim()}</div>}
           {item.outside && (
             <div className="permission-note">
               <LockIcon width={12} height={12} /> Outside the project: {item.outside}
@@ -525,11 +530,12 @@ const BROWSER_TOOL = /^harness_browser_{1,2}(\w+)/
 
 /**
  * A short name for a tool call: drops arguments (agents put them after ":") and
- * MCP server prefixes, e.g. "harness_browser__click: {...}" -> "Browser · click".
+ * MCP server prefixes, e.g. "harness_browser__click: {...}" -> "Browser · click",
+ * and the app's own agent's "mcp__github__create_issue" -> "Github · Create issue".
  */
 function toolLabel(title: string): string {
   const name = title.split(':')[0].trim()
-  const mcp = name.match(/^harness_(\w+?)_{1,2}(\w+)$/)
+  const mcp = name.match(/^mcp__(.+?)__(.+)$/) ?? name.match(/^harness_(\w+?)_{1,2}(\w+)$/)
   // Snake-case tool ids read better humanized; commands and paths stay as typed.
   const label = mcp
     ? `${humanize(mcp[1])} · ${humanize(mcp[2])}`

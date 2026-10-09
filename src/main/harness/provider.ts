@@ -1,3 +1,4 @@
+import type { McpEntry } from './mcp'
 import type { Endpoint, Model } from './wire'
 
 /** The agents the app runs itself, one per provider API. */
@@ -28,4 +29,6 @@ export interface Provider {
   endpoint(source: string, chatId: string): Promise<Endpoint>
   /** The model the provider's own CLI is set to, to start new chats on. */
   preferred(): Promise<{ source?: string; model: string } | undefined>
+  /** The MCP servers the provider's own CLI has set up for the project (see mcp-config.ts). */
+  mcpServers(cwd: string): Promise<McpEntry[]>
 }

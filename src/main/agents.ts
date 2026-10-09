@@ -44,6 +44,7 @@ import { chatPreview } from './preview'
 import { HarnessAgent } from './harness/agent'
 import { COMPACT_AT, formatTokens } from './harness/compaction'
 import { stopLeftRunning } from './harness/tools'
+import { closeMcp } from './harness/mcp'
 import { isHarnessAgent, type HarnessAgentId, type Provider } from './harness/provider'
 import { commandCode } from './harness/commandcode'
 import { openCode } from './harness/opencode'
@@ -1435,7 +1436,7 @@ export class AgentManager {
     this.events.stateChanged()
     if (!bypassPermissions) return
     for (const [permissionId, pending] of this.permissions) {
-      if (pending.chatId !== chatId) continue
+      if (pending.chatId !== chatId || pending.question) continue
       const item = store.findItem(chatId, permissionId)
       if (item?.kind !== 'permission') continue
       if (projectOnly && pending.outside) {
@@ -1449,9 +1450,11 @@ export class AgentManager {
     }
   }
 
-  stopAll(): void {
+  /** Stop everything; resolves once the MCP servers the harness started have stopped. */
+  stopAll(): Promise<void> {
     for (const agentProcess of this.processes.values()) agentProcess.stop()
     for (const agent of this.harness.values()) agent.stop()
     stopLeftRunning()
+    return closeMcp()
   }
 }

@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { getJson, readJson, savedCatalog } from './catalog'
+import { opencodeMcpServers } from './mcp-config'
 import type { Provider, Source } from './provider'
 import type { Model } from './wire'
 
@@ -126,5 +127,6 @@ export const openCode: Provider = {
     )
     const recent = state?.recent?.find((r) => PLANS.some((p) => p.id === r.providerID))
     return recent ? { source: recent.providerID, model: recent.modelID } : undefined
-  }
+  },
+  mcpServers: opencodeMcpServers
 }

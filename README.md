@@ -16,6 +16,8 @@ Just Harness has no model providers and no API keys of its own. It starts the CL
 
 The exceptions are **Command Code API**, **OpenCode API** and **Cline API**. For these the app runs its own small agent, modeled on [pi](https://github.com/earendil-works/pi): four tools (read, bash, edit, write), opencode's Exa web search, and the browser panel. Web search works without a key on Exa's free tier; add your own Exa API key in Settings (⌘,) to use your Exa account. It calls each provider's API directly with the login its CLI already saved: `cmd login`, `opencode auth login` (Zen and Go) or `cline auth` (usage billing and ClinePass). Model lists come from the providers live, so new models show up without an update. The free models of OpenCode and Cline are not listed: both serve them only to their own apps.
 
+The API agents also get the MCP servers you set up in the matching CLI: OpenCode API reads opencode's `mcp` config, Cline API reads `cline_mcp_settings.json`, and Command Code API reads Command Code's `mcp.json` files and the project's `.mcp.json`. When a server asks for an OAuth sign-in, the chat offers to open your browser for it. The app keeps that login itself, so you sign in once in the app even if the CLI is already signed in.
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |
@@ -62,6 +64,7 @@ npx electron-vite build && npx electron-builder --mac dmg   # build the .app and
 - `src/main/browser.ts` owns the browser panel, a `WebContentsView` on a persistent session partition, so cookies and logins are stored on disk.
 - `src/main/page-driver.ts` drives a page for agents over the DevTools protocol, with Playwright's in-page script for snapshots and element checks (the approach is adapted from ZCode's browser). `src/preload/page.ts` sends a page's alerts and confirms to the app.
 - `src/main/browser-mcp.ts` is an MCP server on `127.0.0.1` (bearer-token protected) that exposes the panel to agents. Opencode and Command Code receive it through ACP; Cline's ACP mode ignores MCP servers sent by clients, so the app registers it with `cline mcp add`.
+- `src/main/harness/mcp-config.ts` reads each CLI's MCP servers the way that CLI does: file locations, merge order, variable substitution, and servers turned off. `mcp.ts` connects to them with the MCP SDK (stdio, Streamable HTTP, SSE). A chat's first request takes their tools, named `mcp__<server>__<tool>`, into its fixed tool list. `mcp-auth.ts` handles OAuth sign-in through the SDK and keeps the tokens in `mcp-auth.json`, readable only by you.
 - `src/main/skills.ts` reads skills from `.claude/skills`, `.opencode/skills`, `.agents/skills`, `.cline/skills`, `.commandcode/skills` and their global equivalents.
 
 Chats, settings and the browser profile are stored in `~/Library/Application Support/Just Harness`. The agent sessions themselves are stored by each CLI.
@@ -70,6 +73,8 @@ Chats, settings and the browser profile are stored in `~/Library/Application Sup
 
 - Cline's ACP mode currently ignores reasoning effort (`--thinking`), so there's no effort picker for Cline.
 - Command Code API has no compaction. Start a new chat when one gets long.
+- An API chat's MCP tools are set when the chat starts. A server you add or sign in to later shows up in the next new chat.
+- The app reads only `PATH` from your login shell. Other variables exported in `.zshrc` are not seen by `{env:…}` or `${…}` in MCP configs, or by stdio servers.
 - Cline starts a background "hub" process of its own that keeps running after the app quits.
 - Apple Silicon only for now, and not notarized (see Install).
 

@@ -1,6 +1,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { getJson, readJson, savedCatalog } from './catalog'
+import { commandCodeMcpServers } from './mcp-config'
 import type { Provider } from './provider'
 import type { Model } from './wire'
 
@@ -72,5 +73,6 @@ export const commandCode: Provider = {
       join(homedir(), '.commandcode', 'config.json')
     )
     return config?.model ? { model: config.model } : undefined
-  }
+  },
+  mcpServers: commandCodeMcpServers
 }

@@ -346,7 +346,7 @@ app.on('before-quit', (event) => {
   if (quitting) return
   quitting = true
   event.preventDefault()
-  agents.stopAll()
+  const stopped = agents.stopAll()
   // A failed save (a full disk) must not keep the app from quitting.
   try {
     store.flush()
@@ -354,7 +354,7 @@ app.on('before-quit', (event) => {
     console.error('Could not save before quitting:', error)
   }
   browser?.closeAll()
-  ;(browser?.flush() ?? Promise.resolve()).finally(() => app.quit())
+  Promise.allSettled([stopped, browser?.flush()]).finally(() => app.quit())
 })
 
 // Closing the window only hides it, so it closes for good only while quitting.

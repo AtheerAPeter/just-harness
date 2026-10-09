@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { chmod, rename, writeFile } from 'node:fs/promises'
 import { getJson, readJson, savedCatalog } from './catalog'
+import { clineMcpServers } from './mcp-config'
 import type { Provider } from './provider'
 import type { Model } from './wire'
 
@@ -231,5 +232,6 @@ export const cline: Provider = {
     const model = used ? file?.providers?.[used]?.settings?.model : undefined
     if (!model) return undefined
     return { source: used === 'cline-pass' ? 'cline-pass' : 'cline', model }
-  }
+  },
+  mcpServers: clineMcpServers
 }
