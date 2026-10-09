@@ -39,7 +39,7 @@ export interface Chat {
   projectOnly?: boolean
   /** The chat's browser tabs, reopened when its browser comes back. */
   browserTabs?: SavedTabs
-  /** Whether the browser panel is open in this chat. */
+  /** Whether the browser panel is open in this chat; every chat starts closed at launch. */
   browserOpen?: boolean
   createdAt: number
   updatedAt: number
