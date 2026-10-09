@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import slugify from '@sindresorhus/slugify'
-import { getLocation, parse, printParseErrorCode, type ParseError } from 'jsonc-parser'
+import { parse, printParseErrorCode, type ParseError } from 'jsonc-parser'
 import { z } from 'zod'
 import { clineMcpSettingsPath } from '../cline-mcp'
 import type { InvalidServer, McpEntry, OAuthConfig, ProjectSource } from './mcp'
@@ -92,11 +92,12 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
   const problems: InvalidServer[] = []
   const merge = async (text: string, source: string, dir: string): Promise<void> => {
     try {
+      // Checked before anything from the file is used.
+      const reads = projectFiles.has(source) ? serverReads(text, source, dir) : undefined
       const config = parseJsonc(await substitute(text, dir), source)
       if (!isObject(config) || !isObject(config.mcp)) return
       mcp = mergeDeep(mcp, config.mcp)
-      if (projectFiles.has(source)) {
-        const reads = serverReads(text, dir)
+      if (reads) {
         for (const name of Object.keys(config.mcp)) {
           // Every project file that touched the server counts: an earlier one may have pulled in a secret.
           const earlier = fromProject.get(name)?.reads ?? []
@@ -253,21 +254,50 @@ function filePath(token: string, dir: string): string {
 }
 
 /**
- * For each server in the text's "mcp", what its entry pulls in with
- * substitute: $NAME for a variable, the path for a file. A token's place in
- * the text is where its value lands, since a file's content goes in as string
- * text, so each is put down to the server whose entry holds it.
+ * For each server in a project file's "mcp", what its entry pulls in with
+ * substitute: $NAME for a variable, the path for a file. Read from the file as
+ * the same parser sees it before substitution, keys and values alike, so what
+ * is put down to a server is what lands in it. A file's content goes in as
+ * string text, so a token stays inside the string that holds it. A project
+ * file that names a server with a token, or puts one outside a string, is refused.
  */
-function serverReads(text: string, dir: string): Map<string, string[]> {
+function serverReads(text: string, source: string, dir: string): Map<string, string[]> {
+  let original: unknown
+  try {
+    original = parseJsonc(text, source)
+  } catch {
+    throw new Error(
+      `${source} uses {env:} or {file:} outside a string, which a project's config may not do.`
+    )
+  }
   const reads = new Map<string, string[]>()
-  for (const match of text.matchAll(/\{(env|file):[^}]+\}/g)) {
-    const line = text.slice(text.lastIndexOf('\n', match.index - 1) + 1, match.index).trimStart()
-    if (match[1] === 'file' && line.startsWith('//')) continue
-    const [key, server] = getLocation(text, match.index).path
-    if (key !== 'mcp' || typeof server !== 'string') continue
-    const read =
-      match[1] === 'env' ? `$${match[0].slice('{env:'.length, -1)}` : filePath(match[0], dir)
-    reads.set(server, [...new Set([...(reads.get(server) ?? []), read])])
+  if (!isObject(original) || !isObject(original.mcp)) return reads
+  const tokens = /\{(env|file):[^}]+\}/g
+  for (const [name, entry] of Object.entries(original.mcp)) {
+    if (name.match(tokens)) {
+      throw new Error(
+        `${source} names an MCP server with {env:} or {file:}, which a project's config may not do.`
+      )
+    }
+    const found = new Set<string>()
+    const walk = (value: unknown): void => {
+      if (typeof value === 'string') {
+        for (const match of value.matchAll(tokens)) {
+          found.add(
+            match[1] === 'env' ? `$${match[0].slice('{env:'.length, -1)}` : filePath(match[0], dir)
+          )
+        }
+      } else if (Array.isArray(value)) {
+        value.forEach(walk)
+      } else if (isObject(value)) {
+        for (const [key, inner] of Object.entries(value)) {
+          walk(key)
+          walk(inner)
+        }
+      }
+    }
+    walk(entry)
+    reads.set(name, [...found])
   }
   return reads
 }
