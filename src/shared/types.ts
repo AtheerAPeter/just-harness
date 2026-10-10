@@ -10,6 +10,14 @@ export const AGENTS: { id: AgentId; label: string }[] = [
   { id: 'cline-api', label: 'Cline API' }
 ]
 
+/** The agents the app runs itself, one per provider API. */
+export const HARNESS_AGENTS = ['commandcode-api', 'opencode-api', 'cline-api'] as const
+export type HarnessAgentId = (typeof HARNESS_AGENTS)[number]
+
+export function isHarnessAgent(agent: string): agent is HarnessAgentId {
+  return (HARNESS_AGENTS as readonly string[]).includes(agent)
+}
+
 export interface Project {
   id: string
   name: string
@@ -31,6 +39,8 @@ export interface Chat {
   running: boolean
   /** True while a permission request in this chat waits for the user. */
   waiting?: boolean
+  /** The user's messages sent while the chat works, waiting to join its turn or follow it. */
+  waitingMessages?: string[]
   /** The first line of the chat's last message, shown under its title in the sidebar. */
   preview?: string
   /** Approve every permission request automatically (allow once). */

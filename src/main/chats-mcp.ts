@@ -23,7 +23,7 @@ import { z } from 'zod'
 export const SERVER_NAME = 'harness_chats'
 
 /** Messages from other chats a chat takes since the user last wrote in it. */
-export const MAX_FROM_CHATS = 5
+export const MAX_FROM_CHATS = 20
 
 /** Sent to the model as the server's instructions; the harness puts it in its system prompt. */
 export const CHATS_GUIDANCE =
@@ -58,8 +58,11 @@ function chatForKey(key: string): string {
 export interface ChatsApi {
   /** Start a chat like the caller's and send it the task; returns its ID and title. */
   startChat(caller: string, prompt: string): { id: string; title: string }
-  /** Send a message; 'started' when it started a turn, 'queued' when it waits for one to end. */
-  message(caller: string, to: string, text: string): 'started' | 'queued'
+  /**
+   * Send a message: 'started' when it started a turn, 'steering' when it joins
+   * the running turn at its next step, 'queued' when it waits for the turn to end.
+   */
+  message(caller: string, to: string, text: string): 'started' | 'steering' | 'queued'
   /** The project's running chats. */
   runningChats(caller: string): { id: string; title: string; waiting: boolean; self: boolean }[]
 }
@@ -120,7 +123,7 @@ export async function buildChatsServer(chats: ChatsApi): Promise<McpServer> {
   server.registerTool(
     'send_message',
     {
-      description: `Send a message to another chat of this project, by its chat ID (from start_chat, list_chats, or a message it sent you). It starts a turn in that chat; if the chat is working, the message waits until its turn ends. Use it to report back to the chat that started you, or to coordinate with chats working alongside you. Do not send messages only to acknowledge or thank: a chat takes at most ${MAX_FROM_CHATS} messages from other chats between the user's messages. A chat with broader permissions than yours does not take messages from you, except the chat that started you.`,
+      description: `Send a message to another chat of this project, by its chat ID (from start_chat, list_chats, or a message it sent you). It starts a turn in that chat. If the chat is working, the message joins its turn at the next step where the agent supports that, so you can steer it, or else waits until its turn ends. Use it to report back to the chat that started you, or to coordinate with chats working alongside you. Do not send messages only to acknowledge or thank: a chat takes at most ${MAX_FROM_CHATS} messages from other chats between the user's messages. A chat with broader permissions than yours does not take messages from you, except the chat that started you.`,
       inputSchema: {
         to: z.string().describe('The chat ID of the chat to send it to'),
         message: z.string().describe('The message, with everything the other chat needs'),
@@ -128,9 +131,13 @@ export async function buildChatsServer(chats: ChatsApi): Promise<McpServer> {
       }
     },
     ({ to, message, chat }) =>
-      chats.message(chatForKey(chat), to, message) === 'started'
-        ? text(`Sent. Chat ${to} is working on it now.`)
-        : text(`Chat ${to} is busy, so your message is delivered when its current turn ends.`)
+      text(
+        {
+          started: `Sent. Chat ${to} is working on it now.`,
+          steering: `Sent. Chat ${to} is working, and reads your message at its next step.`,
+          queued: `Chat ${to} is busy, so your message is delivered when its current turn ends.`
+        }[chats.message(chatForKey(chat), to, message)]
+      )
   )
 
   server.registerTool(

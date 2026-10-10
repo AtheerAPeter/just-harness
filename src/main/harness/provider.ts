@@ -1,13 +1,8 @@
 import type { McpEntry } from './mcp'
 import type { Endpoint, Model } from './wire'
 
-/** The agents the app runs itself, one per provider API. */
-export const HARNESS_AGENTS = ['commandcode-api', 'opencode-api', 'cline-api'] as const
-export type HarnessAgentId = (typeof HARNESS_AGENTS)[number]
-
-export function isHarnessAgent(agent: string): agent is HarnessAgentId {
-  return (HARNESS_AGENTS as readonly string[]).includes(agent)
-}
+import type { HarnessAgentId } from '../../shared/types'
+export { HARNESS_AGENTS, isHarnessAgent, type HarnessAgentId } from '../../shared/types'
 
 /** One list of models with one bill: a plan, a key, or the free tier. */
 export interface Source {
