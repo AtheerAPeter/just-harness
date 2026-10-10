@@ -1096,6 +1096,27 @@ function errorMessage(error: unknown, agent: AgentId): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+type UserItem = Extract<ChatItem, { kind: 'user' }>
+
+/** A message's item, with the names of the files sent with it. */
+function newUserItem(text: string, attachments: Attachment[]): UserItem {
+  return {
+    kind: 'user',
+    id: crypto.randomUUID(),
+    text,
+    ...(attachments.length
+      ? { attachments: attachments.map((a) => ({ name: a.name, image: isImage(a) })) }
+      : {})
+  }
+}
+
+/** A message waiting for a busy chat: the user's own, or with `from` another chat's. */
+interface Waiting {
+  text: string
+  attachments: Attachment[]
+  from?: ChatSender
+}
+
 /** Messages from other chats a chat got since the user last wrote in it. */
 function fromChatsSinceUser(chatId: string): number {
   const items = store.getMessages(chatId)
@@ -1140,7 +1161,10 @@ export class AgentManager implements ChatsApi {
     private readonly browserPage: (chatId: string) => BrowserState | undefined
   ) {
     for (const provider of PROVIDERS) {
-      this.harness.set(provider.id, new HarnessAgent(provider, events, this.permissions))
+      this.harness.set(
+        provider.id,
+        new HarnessAgent(provider, events, this.permissions, (chatId) => this.steer(chatId))
+      )
     }
   }
 
@@ -1348,7 +1372,10 @@ export class AgentManager implements ChatsApi {
     return `${text}\n\n(Your Just Harness chat ID is "${browserId(chatId)}". Pass it as the "browser" argument in every ${BROWSER_SERVER} tool call. Pass your private key "${chatKey(chatId)}" as "chat" in every ${CHATS_SERVER} tool call, and never put it in a message.)`
   }
 
-  /** Send a message from the user, or, with `from`, from another chat's agent. */
+  /**
+   * Send a message from the user, or, with `from`, from another chat's agent.
+   * The user's message to a working chat waits for it (see wait).
+   */
   async send(
     chatId: string,
     text: string,
@@ -1357,7 +1384,11 @@ export class AgentManager implements ChatsApi {
   ): Promise<void> {
     this.recentChats = [...this.recentChats.filter((id) => id !== chatId), chatId]
     const chat = store.getChat(chatId)
-    if (chat.running) throw new Error('This chat is already running.')
+    if (chat.running) {
+      if (from) throw new Error('This chat is already running.')
+      this.wait(chatId, text, attachments)
+      return
+    }
     const compact = !from && COMPACT.test(text.trim())
     const noCompaction = compact ? NO_COMPACTION[chat.agent] : undefined
     if (noCompaction) {
@@ -1378,14 +1409,9 @@ export class AgentManager implements ChatsApi {
         : {})
     })
     const sentAt = Date.now()
-    const userItem: Extract<ChatItem, { kind: 'user' }> = {
-      kind: 'user',
-      id: crypto.randomUUID(),
-      text,
+    const userItem: UserItem = {
+      ...newUserItem(text, attachments),
       sentAt,
-      ...(attachments.length
-        ? { attachments: attachments.map((a) => ({ name: a.name, image: isImage(a) })) }
-        : {}),
       ...(from ? { from } : {})
     }
     this.events.item(chatId, store.upsertItem(chatId, userItem))
@@ -1394,16 +1420,7 @@ export class AgentManager implements ChatsApi {
 
     let outcome: TurnOutcome = 'failed'
     try {
-      let prompt = from
-        ? fromChatPrompt(from.title, browserId(from.chatId), text, isFirst)
-        : this.expandChatsTag(chatId, this.expandBrowserTag(chatId, this.expandSkill(chatId, text)))
-      // The harness passes each chat's ID to the tools itself.
-      if (!isHarnessAgent(chat.agent)) prompt = this.withChatId(chatId, prompt)
-      let blocks = [...this.fileLinks(chatId, text), ...(await attachmentBlocks(attachments))]
-      if (TEXT_ONLY_PROMPTS.has(chat.agent)) {
-        prompt = await withFilePaths(prompt, attachments)
-        blocks = []
-      }
+      const { prompt, blocks } = await this.promptFor(chatId, text, attachments, from, isFirst)
       const response = await this.processFor(chatId).prompt(chatId, prompt, blocks)
       outcome = response.stopReason === 'cancelled' ? 'stopped' : 'done'
       // opencode reports nothing while it compacts, so say when it is done.
@@ -1439,11 +1456,20 @@ export class AgentManager implements ChatsApi {
     } finally {
       if (store.getState().chats.some((c) => c.id === chatId)) {
         this.processFor(chatId).endTurn(chatId, outcome)
-        // How long the turn took, shown as "Worked for …" above its answer.
+        // How long the turn took, shown as "Worked for …" above its answer; and
+        // for messages that joined it, from when they did.
         this.events.item(
           chatId,
           store.upsertItem(chatId, { ...userItem, workedMs: Date.now() - sentAt })
         )
+        for (const item of store.getMessages(chatId)) {
+          if (item.kind !== 'user' || item.workedMs !== undefined) continue
+          if ((item.sentAt ?? 0) <= sentAt) continue
+          this.events.item(
+            chatId,
+            store.upsertItem(chatId, { ...item, workedMs: Date.now() - item.sentAt! })
+          )
+        }
         store.updateChat(chatId, {
           running: false,
           updatedAt: Date.now(),
@@ -1455,10 +1481,49 @@ export class AgentManager implements ChatsApi {
     }
   }
 
+  /** What the agent is sent for a message: the text as it reads it, and the files with it. */
+  private async promptFor(
+    chatId: string,
+    text: string,
+    attachments: Attachment[],
+    from: ChatSender | undefined,
+    first: boolean
+  ): Promise<{ prompt: string; blocks: acp.ContentBlock[] }> {
+    const { agent } = store.getChat(chatId)
+    let prompt = from
+      ? fromChatPrompt(from.title, browserId(from.chatId), text, first)
+      : this.expandChatsTag(chatId, this.expandBrowserTag(chatId, this.expandSkill(chatId, text)))
+    // The harness passes each chat's ID to the tools itself.
+    if (!isHarnessAgent(agent)) prompt = this.withChatId(chatId, prompt)
+    let blocks = [...this.fileLinks(chatId, text), ...(await attachmentBlocks(attachments))]
+    if (TEXT_ONLY_PROMPTS.has(agent)) {
+      prompt = await withFilePaths(prompt, attachments)
+      blocks = []
+    }
+    return { prompt, blocks }
+  }
+
+  /**
+   * Keep the user's message to a working chat for the turn's next step (the
+   * app's own agents, see steer) or its end (ACP agents). It shows above the
+   * composer until then, and joins the chat where the agent reads it.
+   */
+  private wait(chatId: string, text: string, attachments: Attachment[]): void {
+    this.inbox.set(chatId, [...(this.inbox.get(chatId) ?? []), { text, attachments }])
+    this.showWaiting(chatId)
+  }
+
+  /** The user's waiting messages, for the composer. */
+  private showWaiting(chatId: string): void {
+    const waiting = (this.inbox.get(chatId) ?? []).filter((m) => !m.from).map((m) => m.text)
+    store.updateChat(chatId, { waitingMessages: waiting.length > 0 ? waiting : undefined })
+    this.events.stateChanged()
+  }
+
   // --- Chats that start and message chats (chats-mcp.ts) --------------------
 
-  /** Messages from other chats waiting for the chat's turn to end, oldest first. */
-  private readonly inbox = new Map<string, { text: string; from: ChatSender }[]>()
+  /** Messages waiting for the chat's turn to go on or end, oldest first. */
+  private readonly inbox = new Map<string, Waiting[]>()
 
   /** The chat of the project a chat ID names: the chats a chat can reach. */
   private chatById(id: string, projectId: string): Chat {
@@ -1487,9 +1552,7 @@ export class AgentManager implements ChatsApi {
    * back. Checked again on delivery, since permissions can change meanwhile.
    */
   private mayMessage(sender: Chat, target: Chat): boolean {
-    const first = store
-      .getMessages(sender.id)
-      .find((i): i is Extract<ChatItem, { kind: 'user' }> => i.kind === 'user')
+    const first = store.getMessages(sender.id).find((i): i is UserItem => i.kind === 'user')
     if (first?.from?.chatId === target.id) return true
     return !(
       (target.bypassPermissions && !sender.bypassPermissions) ||
@@ -1501,9 +1564,7 @@ export class AgentManager implements ChatsApi {
   startChat(caller: string, prompt: string): { id: string; title: string } {
     const parent = this.caller(caller)
     // Only a turn the user started: a chain of chats ends at the chats it started.
-    const turn = store
-      .getMessages(caller)
-      .findLast((i): i is Extract<ChatItem, { kind: 'user' }> => i.kind === 'user')
+    const turn = store.getMessages(caller).findLast((i): i is UserItem => i.kind === 'user')
     if (turn?.from) {
       throw new Error(
         'Not started: another chat started this turn, and only turns the user started can start chats. Do the work yourself.'
@@ -1523,7 +1584,7 @@ export class AgentManager implements ChatsApi {
   }
 
   /** Start a turn in another chat of the caller's project, or queue the message for its next one. */
-  message(caller: string, to: string, text: string): 'started' | 'queued' {
+  message(caller: string, to: string, text: string): 'started' | 'steering' | 'queued' {
     const sender = this.caller(caller)
     const target = this.chatById(to, sender.projectId)
     if (target.id === sender.id) throw new Error(`"${to}" is your own chat ID.`)
@@ -1534,7 +1595,7 @@ export class AgentManager implements ChatsApi {
       )
     }
     const queued = this.inbox.get(target.id) ?? []
-    if (fromChatsSinceUser(target.id) + queued.length >= MAX_FROM_CHATS) {
+    if (fromChatsSinceUser(target.id) + queued.filter((m) => m.from).length >= MAX_FROM_CHATS) {
       throw new Error(
         `Not sent: chat ${to} has had ${MAX_FROM_CHATS} messages from other chats since the user last wrote in it, the most it takes. Stop messaging it, and tell the user where things stand instead.`
       )
@@ -1544,8 +1605,9 @@ export class AgentManager implements ChatsApi {
       void this.send(target.id, text, [], from)
       return 'started'
     }
-    this.inbox.set(target.id, [...queued, { text, from }])
-    return 'queued'
+    this.inbox.set(target.id, [...queued, { text, attachments: [], from }])
+    // The app's own agents take it at their next step (see steer); ACP has no way to.
+    return isHarnessAgent(target.agent) ? 'steering' : 'queued'
   }
 
   runningChats(caller: string): { id: string; title: string; waiting: boolean; self: boolean }[] {
@@ -1562,41 +1624,87 @@ export class AgentManager implements ChatsApi {
   }
 
   /**
-   * A turn ended: start the next message other chats sent meanwhile. When the
-   * user stopped the turn, they are dropped instead, so Stop really stops; so
-   * are messages whose sender was deleted, or may no longer message this chat.
+   * The waiting messages that may still be delivered: those from a chat that
+   * was deleted, or may no longer message this one, are dropped with a notice.
    */
-  private deliverNext(chatId: string, outcome: TurnOutcome): void {
-    const queued = this.inbox.get(chatId)
-    if (!queued) return
-    this.inbox.delete(chatId)
-    const notice = (text: string): void =>
-      this.events.item(
-        chatId,
-        store.upsertItem(chatId, { kind: 'notice', id: crypto.randomUUID(), text })
-      )
-    if (outcome === 'stopped') {
-      const n = queued.length
-      notice(
-        `${n === 1 ? 'A message' : `${n} messages`} from other chats ${n === 1 ? 'was' : 'were'} not delivered, because the chat was stopped.`
-      )
-      return
-    }
+  private deliverable(chatId: string, queued: Waiting[]): Waiting[] {
     const target = store.getChat(chatId)
-    const kept = queued.filter(({ from }) => {
+    return queued.filter(({ from }) => {
+      if (!from) return true
       const sender = store.getState().chats.find((c) => c.id === from.chatId)
       if (sender && this.mayMessage(sender, target)) return true
-      notice(
-        sender
-          ? `A message from "${from.title}" was not delivered: this chat now has broader permissions than that chat.`
-          : `A message from "${from.title}" was not delivered: that chat was deleted.`
+      this.events.item(
+        chatId,
+        store.upsertItem(chatId, {
+          kind: 'notice',
+          id: crypto.randomUUID(),
+          text: sender
+            ? `A message from "${from.title}" was not delivered: this chat now has broader permissions than that chat.`
+            : `A message from "${from.title}" was not delivered: that chat was deleted.`
+        })
       )
       return false
     })
-    const [next, ...rest] = kept
-    if (!next) return
+  }
+
+  /**
+   * Take the messages waiting for a running chat of the app's own agents, to
+   * join its turn at the next step, as the agent reads them. A compaction
+   * command waits for the turn to end, and so does what came after it.
+   */
+  private async steer(chatId: string): Promise<{ prompt: string; blocks: acp.ContentBlock[] }[]> {
+    const queued = this.inbox.get(chatId)
+    if (!queued) return []
+    const compact = queued.findIndex((m) => !m.from && COMPACT.test(m.text.trim()))
+    const now = compact === -1 ? queued : queued.slice(0, compact)
+    if (now.length === 0) return []
+    const later = queued.slice(now.length)
+    if (later.length > 0) this.inbox.set(chatId, later)
+    else this.inbox.delete(chatId)
+    const messages = this.deliverable(chatId, now)
+    for (const { text, attachments, from } of messages) {
+      this.events.item(
+        chatId,
+        store.upsertItem(chatId, {
+          ...newUserItem(text, attachments),
+          sentAt: Date.now(),
+          ...(from ? { from } : {})
+        })
+      )
+    }
+    store.updateChat(chatId, { preview: chatPreview(store.getMessages(chatId)) })
+    this.showWaiting(chatId)
+    return Promise.all(
+      messages.map((m) => this.promptFor(chatId, m.text, m.attachments, m.from, false))
+    )
+  }
+
+  /**
+   * A turn ended: start the next message that waited for it. When the user
+   * stopped the turn, messages from other chats are dropped, so Stop really
+   * stops them.
+   */
+  private deliverNext(chatId: string, outcome: TurnOutcome): void {
+    let queued = this.inbox.get(chatId)
+    if (!queued) return
+    this.inbox.delete(chatId)
+    // The user's own messages still go: they are what the user wants next.
+    const n = queued.filter((m) => m.from).length
+    if (outcome === 'stopped' && n > 0) {
+      queued = queued.filter((m) => !m.from)
+      this.events.item(
+        chatId,
+        store.upsertItem(chatId, {
+          kind: 'notice',
+          id: crypto.randomUUID(),
+          text: `${n === 1 ? 'A message' : `${n} messages`} from other chats ${n === 1 ? 'was' : 'were'} not delivered, because the chat was stopped.`
+        })
+      )
+    }
+    const [next, ...rest] = this.deliverable(chatId, queued)
     if (rest.length > 0) this.inbox.set(chatId, rest)
-    void this.send(chatId, next.text, [], next.from)
+    this.showWaiting(chatId)
+    if (next) void this.send(chatId, next.text, next.attachments, next.from)
   }
 
   cancel(chatId: string): Promise<void> {

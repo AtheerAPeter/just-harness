@@ -149,7 +149,11 @@ export class HarnessAgent {
   constructor(
     private readonly provider: Provider,
     private readonly events: AgentEvents,
-    private readonly permissions: Permissions
+    private readonly permissions: Permissions,
+    /** Messages sent to the chat while its turn runs (the user's, other chats'), as the model reads them. */
+    private readonly steering: (
+      chatId: string
+    ) => Promise<{ prompt: string; blocks: acp.ContentBlock[] }[]>
   ) {
     this.agent = provider.id
   }
@@ -391,6 +395,20 @@ How to communicate:
         if (compactable && session.turns.at(-1)?.role === 'tool') {
           compactable = await this.compactIfFull(chatId, session, specs, signal, true)
           if (signal.aborted) return { stopReason: 'cancelled' }
+        }
+        // Messages sent while the turn runs (the user's, other chats') join it
+        // here, so they can steer it. Both APIs take a user message after tool results.
+        if (session.turns.at(-1)?.role !== 'user') {
+          const steer = await this.steering(chatId)
+          if (steer.length > 0) {
+            await this.append(session, {
+              type: 'turn',
+              turn: {
+                role: 'user',
+                content: steer.flatMap(({ prompt, blocks }) => userContent(prompt, blocks))
+              }
+            })
+          }
         }
         const choice = await this.choice(chatId)
         const reply = await this.reply(chatId, request, choice, signal, {

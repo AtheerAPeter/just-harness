@@ -88,6 +88,7 @@ for (const chat of state.chats) {
   // Nothing can be running or waiting right after launch.
   chat.running = false
   chat.waiting = false
+  delete chat.waitingMessages
   // The browser panel starts closed; an agent or the header button opens it.
   chat.browserOpen = false
   // Chats from before sidebar previews get theirs once; it is saved from then on.

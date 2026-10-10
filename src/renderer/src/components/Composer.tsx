@@ -7,7 +7,8 @@ import {
   type AgentStatus,
   type Chat,
   type Skill,
-  type Attachment
+  type Attachment,
+  isHarnessAgent
 } from '../../../shared/types'
 import { Picker } from './Picker'
 import { ModelPicker } from './model-picker/ModelPicker'
@@ -178,10 +179,8 @@ export function Composer({
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [dragging, setDragging] = useState(false)
 
-  const canSend =
-    (text.trim().length > 0 || attachments.length > 0) &&
-    !chat.running &&
-    status?.available !== false
+  // While the agent works, a message steers it (see AgentManager.wait).
+  const canSend = (text.trim().length > 0 || attachments.length > 0) && status?.available !== false
 
   const addAttachments = (added: Attachment[]): void =>
     setAttachments((current) => [
@@ -269,6 +268,20 @@ export function Composer({
           ))}
         </div>
       )}
+      {chat.waitingMessages && (
+        <div className="waiting-messages">
+          <div className="waiting-label">
+            {isHarnessAgent(chat.agent)
+              ? 'Joins the turn at its next step'
+              : 'Sends when this turn ends'}
+          </div>
+          {chat.waitingMessages.map((message, index) => (
+            <div className="waiting-message" key={index} title={message}>
+              {message}
+            </div>
+          ))}
+        </div>
+      )}
       {menuOpen && (
         <CompletionMenu
           items={menuItems}
@@ -285,7 +298,7 @@ export function Composer({
           chat.waiting
             ? 'Waiting for your answer above'
             : chat.running
-              ? 'Working…'
+              ? 'Working… send a message to steer it'
               : `Ask ${AGENTS.find((a) => a.id === chat.agent)?.label}…`
         }
         onChange={(e) => {
@@ -379,7 +392,7 @@ export function Composer({
           />
         </div>
         <div className="spacer" />
-        {chat.running ? (
+        {chat.running && !canSend ? (
           <button
             className="send-button stop"
             title="Stop (Esc)"

@@ -1635,6 +1635,27 @@ kbd {
   padding: 10px 14px 0;
 }
 
+/* The user's messages sent while the agent works, until they join the chat. */
+.waiting-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 16px 0;
+}
+
+.waiting-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.waiting-message {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-soft);
+}
+
 .msg-attachments {
   margin-top: 6px;
 }
