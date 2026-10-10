@@ -32,6 +32,7 @@ import {
 } from './browser-mcp'
 import {
   chatKey,
+  CHATS_GUIDANCE,
   fromChatPrompt,
   MAX_FROM_CHATS,
   SERVER_NAME as CHATS_SERVER,
@@ -1292,6 +1293,19 @@ export class AgentManager implements ChatsApi {
     return `${text}\n\n@browser: use the ${BROWSER_SERVER} tools for this.${where} ${BROWSER_GUIDANCE}`
   }
 
+  /**
+   * `@chats` asks the agent to split the work into new chats. As with
+   * `@browser`, the agent sees only text, so say which tools that means.
+   */
+  private expandChatsTag(chatId: string, text: string): string {
+    if (!/(^|\s)@chats\b/.test(text)) return text
+    const ask =
+      '@chats: do this with new chats. Start one with start_chat for each part that can be done on its own, each with a complete task, then tell me what you started and end your turn. Their reports arrive here as new messages.'
+    // The harness has the guidance in its system prompt already.
+    if (isHarnessAgent(store.getChat(chatId).agent)) return `${text}\n\n${ask}`
+    return `${text}\n\n${ask} start_chat is one of the ${CHATS_SERVER} tools. ${CHATS_GUIDANCE}`
+  }
+
   /** `@path` mentions of project files become ACP resource links next to the text. */
   private fileLinks(chatId: string, text: string): acp.ContentBlock[] {
     const project = store.getProject(store.getChat(chatId).projectId)
@@ -1382,7 +1396,7 @@ export class AgentManager implements ChatsApi {
     try {
       let prompt = from
         ? fromChatPrompt(from.title, browserId(from.chatId), text, isFirst)
-        : this.expandBrowserTag(chatId, this.expandSkill(chatId, text))
+        : this.expandChatsTag(chatId, this.expandBrowserTag(chatId, this.expandSkill(chatId, text)))
       // The harness passes each chat's ID to the tools itself.
       if (!isHarnessAgent(chat.agent)) prompt = this.withChatId(chatId, prompt)
       let blocks = [...this.fileLinks(chatId, text), ...(await attachmentBlocks(attachments))]
@@ -1457,9 +1471,35 @@ export class AgentManager implements ChatsApi {
     )
   }
 
+  /** The calling chat. It must be working on a turn: a key used between turns does nothing. */
+  private caller(chatId: string): Chat {
+    const chat = store.getChat(chatId)
+    if (!chat.running) {
+      throw new Error('Not done: these tools work only while your chat is working on a turn.')
+    }
+    return chat
+  }
+
+  /**
+   * Whether `sender` may message `target`. The message runs with the target's
+   * permissions, so the target may not have broader ones than the sender, unless
+   * it started the sender (sent its first message): a chat can always report
+   * back. Checked again on delivery, since permissions can change meanwhile.
+   */
+  private mayMessage(sender: Chat, target: Chat): boolean {
+    const first = store
+      .getMessages(sender.id)
+      .find((i): i is Extract<ChatItem, { kind: 'user' }> => i.kind === 'user')
+    if (first?.from?.chatId === target.id) return true
+    return !(
+      (target.bypassPermissions && !sender.bypassPermissions) ||
+      (sender.projectOnly && !target.projectOnly)
+    )
+  }
+
   /** A new chat like the caller's (agent, model, permissions), working on the task it was sent. */
   startChat(caller: string, prompt: string): { id: string; title: string } {
-    const parent = store.getChat(caller)
+    const parent = this.caller(caller)
     // Only a turn the user started: a chain of chats ends at the chats it started.
     const turn = store
       .getMessages(caller)
@@ -1484,15 +1524,11 @@ export class AgentManager implements ChatsApi {
 
   /** Start a turn in another chat of the caller's project, or queue the message for its next one. */
   message(caller: string, to: string, text: string): 'started' | 'queued' {
-    const sender = store.getChat(caller)
+    const sender = this.caller(caller)
     const target = this.chatById(to, sender.projectId)
     if (target.id === sender.id) throw new Error(`"${to}" is your own chat ID.`)
     if (!text.trim()) throw new Error('"message" is empty.')
-    // The message runs with the target's permissions, so it may not be the broader one.
-    if (
-      (target.bypassPermissions && !sender.bypassPermissions) ||
-      (sender.projectOnly && !target.projectOnly)
-    ) {
+    if (!this.mayMessage(sender, target)) {
       throw new Error(
         `Not sent: chat ${to} has broader permissions than yours, so it does not take messages from you.`
       )
@@ -1513,7 +1549,7 @@ export class AgentManager implements ChatsApi {
   }
 
   runningChats(caller: string): { id: string; title: string; waiting: boolean; self: boolean }[] {
-    const self = store.getChat(caller)
+    const self = this.caller(caller)
     return store
       .getState()
       .chats.filter((c) => c.projectId === self.projectId && c.running)
@@ -1527,27 +1563,39 @@ export class AgentManager implements ChatsApi {
 
   /**
    * A turn ended: start the next message other chats sent meanwhile. When the
-   * user stopped the turn, they are dropped instead, so Stop really stops.
+   * user stopped the turn, they are dropped instead, so Stop really stops; so
+   * are messages whose sender was deleted, or may no longer message this chat.
    */
   private deliverNext(chatId: string, outcome: TurnOutcome): void {
     const queued = this.inbox.get(chatId)
     if (!queued) return
-    if (outcome === 'stopped') {
-      this.inbox.delete(chatId)
-      const n = queued.length
+    this.inbox.delete(chatId)
+    const notice = (text: string): void =>
       this.events.item(
         chatId,
-        store.upsertItem(chatId, {
-          kind: 'notice',
-          id: crypto.randomUUID(),
-          text: `${n === 1 ? 'A message' : `${n} messages`} from other chats ${n === 1 ? 'was' : 'were'} not delivered, because the chat was stopped.`
-        })
+        store.upsertItem(chatId, { kind: 'notice', id: crypto.randomUUID(), text })
+      )
+    if (outcome === 'stopped') {
+      const n = queued.length
+      notice(
+        `${n === 1 ? 'A message' : `${n} messages`} from other chats ${n === 1 ? 'was' : 'were'} not delivered, because the chat was stopped.`
       )
       return
     }
-    const [next, ...rest] = queued
+    const target = store.getChat(chatId)
+    const kept = queued.filter(({ from }) => {
+      const sender = store.getState().chats.find((c) => c.id === from.chatId)
+      if (sender && this.mayMessage(sender, target)) return true
+      notice(
+        sender
+          ? `A message from "${from.title}" was not delivered: this chat now has broader permissions than that chat.`
+          : `A message from "${from.title}" was not delivered: that chat was deleted.`
+      )
+      return false
+    })
+    const [next, ...rest] = kept
+    if (!next) return
     if (rest.length > 0) this.inbox.set(chatId, rest)
-    else this.inbox.delete(chatId)
     void this.send(chatId, next.text, [], next.from)
   }
 

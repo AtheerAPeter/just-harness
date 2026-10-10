@@ -120,7 +120,7 @@ export async function buildChatsServer(chats: ChatsApi): Promise<McpServer> {
   server.registerTool(
     'send_message',
     {
-      description: `Send a message to another chat of this project, by its chat ID (from start_chat, list_chats, or a message it sent you). It starts a turn in that chat; if the chat is working, the message waits until its turn ends. Use it to report back to the chat that started you, or to coordinate with chats working alongside you. Do not send messages only to acknowledge or thank: a chat takes at most ${MAX_FROM_CHATS} messages from other chats between the user's messages. A chat with broader permissions than yours does not take messages from you.`,
+      description: `Send a message to another chat of this project, by its chat ID (from start_chat, list_chats, or a message it sent you). It starts a turn in that chat; if the chat is working, the message waits until its turn ends. Use it to report back to the chat that started you, or to coordinate with chats working alongside you. Do not send messages only to acknowledge or thank: a chat takes at most ${MAX_FROM_CHATS} messages from other chats between the user's messages. A chat with broader permissions than yours does not take messages from you, except the chat that started you.`,
       inputSchema: {
         to: z.string().describe('The chat ID of the chat to send it to'),
         message: z.string().describe('The message, with everything the other chat needs'),
