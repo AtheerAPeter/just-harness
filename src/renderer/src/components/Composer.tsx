@@ -62,9 +62,13 @@ function permissionMode(chat: Chat): string {
   return chat.projectOnly ? 'project' : 'full'
 }
 
-/** @-tags. `@browser` tells the agent to work in the built-in browser panel. */
+/**
+ * @-tags. `@browser` tells the agent to work in the built-in browser panel;
+ * `@chats` to split the work into new chats that report back.
+ */
 const TAGS: CompletionItem[] = [
-  { name: 'browser', description: 'Use the built-in browser (keeps your logins)', kind: 'tag' }
+  { name: 'browser', description: 'Use the built-in browser (keeps your logins)', kind: 'tag' },
+  { name: 'chats', description: 'Split the work into new chats that report back', kind: 'tag' }
 ]
 
 export function Composer({
