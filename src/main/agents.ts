@@ -1,4 +1,4 @@
-import { spawn, execFile, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
 import { basename, extname, join } from 'node:path'
 import { statSync } from 'node:fs'
@@ -41,7 +41,7 @@ import {
 import { listSkills } from './skills'
 import { resolveProjectFile } from './files'
 import { formatRaw, limitOutput } from './tool-output'
-import { loadShellPath } from './shell-env'
+import { commandVersion, loadShellPath } from './shell-env'
 import { withTimeout } from './page-driver'
 import {
   bypassOption,
@@ -143,7 +143,8 @@ async function loadSdk(): Promise<typeof acp> {
  * Opencode ships a built-in `browser` tool that drives the user's own desktop
  * browser, and models sometimes pick it over the built-in panel. Deny it for the
  * opencode this app starts; OPENCODE_CONFIG_CONTENT is applied on top of the
- * user's config, so their own settings stay in effect.
+ * user's config, so their own settings stay in effect. Opencode 2 reads this
+ * opencode 1 form too, as a rule denying its `browser` permission.
  */
 function agentEnv(agent: AgentId): NodeJS.ProcessEnv {
   if (agent !== 'opencode') return process.env
@@ -256,6 +257,9 @@ async function withFilePaths(text: string, attachments: Attachment[]): Promise<s
 
 /** ACP's error code for an unknown session (RequestError.resourceNotFound). */
 const RESOURCE_NOT_FOUND = -32002
+
+/** ACP's error code for a request with bad parameters (RequestError.invalidParams). */
+const INVALID_PARAMS = -32602
 
 /** ACP's error code for "authentication required" (RequestError.authRequired). */
 const AUTH_REQUIRED = -32000
@@ -633,7 +637,7 @@ class AgentProcess implements AgentBackend {
         { cancellationSignal: signal }
       )
     } catch (error) {
-      if (error instanceof RequestError && error.code === RESOURCE_NOT_FOUND) {
+      if (error instanceof RequestError && sessionGone(error, sessionId)) {
         this.sessionChats.delete(sessionId)
         return undefined
       }
@@ -1072,13 +1076,16 @@ function normalizeOptions(configOptions: acp.SessionConfigOption[]): AgentOption
   })
 }
 
-async function cliVersion(agent: AcpAgent): Promise<string | undefined> {
-  await loadShellPath()
-  return new Promise((resolve) => {
-    execFile(COMMANDS[agent].command, ['--version'], { timeout: 10_000 }, (error, stdout) =>
-      resolve(error ? undefined : stdout.trim().split('\n').pop())
-    )
-  })
+/**
+ * Whether session/load failed because the agent does not have the session.
+ * Opencode 1 answers resourceNotFound. Opencode 2 answers invalidParams naming
+ * the session, both for one it never stored (every session opencode 1 saved)
+ * and for one that belongs to another folder.
+ */
+function sessionGone(error: acp.RequestError, sessionId: string): boolean {
+  if (error.code === RESOURCE_NOT_FOUND) return true
+  const data = error.data as { sessionId?: unknown } | undefined
+  return error.code === INVALID_PARAMS && data?.sessionId === sessionId
 }
 
 function errorMessage(error: unknown, agent: AgentId): string {
@@ -1208,7 +1215,7 @@ export class AgentManager implements ChatsApi {
     }
     let cached = this.statuses.get(agent)
     if (!cached) {
-      cached = cliVersion(agent).then((version) =>
+      cached = commandVersion(COMMANDS[agent].command).then((version) =>
         version
           ? { agent, available: true, version }
           : {

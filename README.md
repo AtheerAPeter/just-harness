@@ -43,7 +43,7 @@ It downloads the latest release, installs Just Harness in Applications and opens
 Or download the `.dmg` from [Releases](https://github.com/AtheerAPeter/just-harness/releases/latest) and drag Just Harness to Applications. The app isn't notarized by Apple, so the first launch from a browser download is blocked: click **Done**, then **System Settings → Privacy & Security → Open Anyway** (once).
 
 Apple Silicon only. You also need at least one agent installed and signed in:
-- opencode: `curl -fsSL https://opencode.ai/install | bash`, then `opencode auth login`
+- opencode (1 or 2): `curl -fsSL https://opencode.ai/install | bash`, then `opencode auth login`. OpenCode API follows the opencode you have installed: opencode 2 keeps its keys in its database and reads its config in its own order, opencode 1 keeps them in `auth.json`.
 - Cline: `npm i -g cline`, then `cline auth`
 - Command Code (1.74 or newer): `npm i -g command-code`, then `cmd login`. Command Code API uses the same login; its API access needs a GOAT plan or higher. OpenCode API and Cline API use the opencode and Cline logins above.
 

@@ -6,7 +6,7 @@ import slugify from '@sindresorhus/slugify'
 import { parse, printParseErrorCode, type ParseError } from 'jsonc-parser'
 import { z } from 'zod'
 import { clineMcpSettingsPath } from '../cline-mcp'
-import type { InvalidServer, McpEntry, OAuthConfig, ProjectSource } from './mcp'
+import type { InvalidServer, McpEntry, OAuthConfig, ProjectSource, Timeouts } from './mcp'
 
 /**
  * The MCP servers each provider's CLI has set up, read the way that CLI reads
@@ -26,6 +26,9 @@ async function readText(path: string): Promise<string | undefined> {
 }
 
 const invalid = (name: string, error: string): InvalidServer => ({ name, type: 'invalid', error })
+
+/** One limit for starting a server, listing its tools and each call, as opencode 1 and Cline set it. */
+const everyStep = (ms: number): Timeouts => ({ connect: ms, list: ms, call: ms })
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -53,12 +56,6 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
   const env = process.env
   const globalDir = join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode')
   const root = gitRoot(cwd)
-  // Folders above the home folder are the system's and the home folder itself is the user's:
-  // outside a git checkout, opencode looks there too.
-  const isProject = (dir: string): boolean => {
-    const fromHome = relative(dir, homedir())
-    return fromHome !== '' && (fromHome.startsWith('..') || isAbsolute(fromHome))
-  }
   const projectFiles = new Set<string>()
   const files = [
     join(globalDir, 'config.json'),
@@ -69,7 +66,7 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
   if (!env.OPENCODE_DISABLE_PROJECT_CONFIG) {
     // Nearest folder last, so it wins; in one folder, .jsonc over .json.
     const found = up(cwd, root, ['opencode.jsonc', 'opencode.json']).reverse()
-    for (const file of found) if (isProject(dirname(file))) projectFiles.add(file)
+    for (const file of found) if (isProjectDir(dirname(file))) projectFiles.add(file)
     files.push(...found)
   }
   // As opencode lists them: the project's .opencode folders nearest first, then ~/.opencode.
@@ -80,7 +77,7 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
   ]
   for (const dir of [...new Set(dirs)]) {
     const inDir = [join(dir, 'opencode.json'), join(dir, 'opencode.jsonc')]
-    if (isProject(dirname(dir)) && dir !== env.OPENCODE_CONFIG_DIR) {
+    if (isProjectDir(dirname(dir)) && dir !== env.OPENCODE_CONFIG_DIR) {
       for (const file of inDir) projectFiles.add(file)
     }
     files.push(...inDir)
@@ -127,7 +124,8 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
 
   const servers = Object.entries(mcp).flatMap(([name, entry]): McpEntry[] => {
     if (!isObject(entry) || entry.enabled === false) return []
-    const timeout = positiveInt(entry.timeout)
+    const ms = positiveInt(entry.timeout)
+    const timeout = ms ? everyStep(ms) : undefined
     const project = fromProject.has(name) ? { fromProject: fromProject.get(name)! } : {}
     if (entry.type === 'local') {
       const command = Array.isArray(entry.command) ? entry.command : []
@@ -176,6 +174,270 @@ export async function opencodeMcpServers(cwd: string): Promise<McpEntry[]> {
   return [...problems, ...servers]
 }
 
+/**
+ * opencode 2's config, in its order, later documents over earlier ones: the
+ * global folder's opencode.json and opencode.jsonc (OPENCODE_CONFIG_DIR is that
+ * folder when set); OPENCODE_CONFIG; opencode.json and opencode.jsonc in every
+ * folder from the filesystem root down to the project; opencode.json and
+ * opencode.jsonc in the .opencode folders on that walk, root first;
+ * OPENCODE_CONFIG_CONTENT. Config served by an organization's well-known URL or
+ * Console account is opencode's own sign-in and is not read.
+ *
+ * Unlike opencode 1, a later document replaces a server whole instead of
+ * merging into it, and an entry that only turns a server on or off is ignored.
+ * Servers come in opencode 1's form ("mcp": {name: …}) or opencode 2's own
+ * ("mcp": {"servers": {name: …}, "timeout": …}), which `opencode mcp add`
+ * writes. Servers the project's own files set up are marked `fromProject`.
+ */
+export async function opencodeV2McpServers(cwd: string): Promise<McpEntry[]> {
+  const env = process.env
+  const home = homedir()
+  const names = ['opencode.json', 'opencode.jsonc']
+  const globalDir = env.OPENCODE_CONFIG_DIR
+    ? resolve(env.OPENCODE_CONFIG_DIR)
+    : join(env.XDG_CONFIG_HOME || join(home, '.config'), 'opencode')
+  const root = gitRoot(cwd)
+
+  const files = [
+    ...names.map((name) => join(globalDir, name)),
+    ...(env.OPENCODE_CONFIG ? [resolve(cwd, env.OPENCODE_CONFIG)] : [])
+  ]
+  const projectFiles = new Set<string>()
+  const projectDisabled = /^(1|true)$/i.test(
+    env.OPENCODE_CONFIG_PROJECT_DISABLE ?? env.OPENCODE_DISABLE_PROJECT_CONFIG ?? ''
+  )
+  if (!projectDisabled && realPath(cwd) !== realPath(globalDir)) {
+    // The walk skips the global folder and its files, and ~/.claude and ~/.agents.
+    const global = new Set(
+      [globalDir, join(home, '.claude'), join(home, '.agents'), ...files.slice(0, 2)].map(realPath)
+    )
+    const visible = (path: string): boolean => !global.has(realPath(path))
+    const walk: string[] = []
+    for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+      walk.unshift(dir)
+      if (dirname(dir) === dir) break
+    }
+    const direct = walk.flatMap((dir) => names.map((name) => join(dir, name)).filter(visible))
+    const dotDirs = walk
+      .map((dir) => join(dir, '.opencode'))
+      .filter((d) => visible(d) && isDirectory(d))
+    for (const file of direct) if (isProjectDir(dirname(file))) projectFiles.add(file)
+    for (const dir of dotDirs) {
+      if (isProjectDir(dirname(dir))) for (const name of names) projectFiles.add(join(dir, name))
+    }
+    files.push(...direct, ...dotDirs.flatMap((dir) => names.map((name) => join(dir, name))))
+  }
+
+  const servers = new Map<string, Record<string, unknown>>()
+  /** The servers whose last definition is in a project file, with that file. */
+  const fromProject = new Map<string, ProjectSource>()
+  /** Global timeouts, merged key by key across documents. */
+  const timeouts: V2Timeouts = {}
+  const problems = new Map<string, InvalidServer>()
+  const load = async (text: string, source: string, dir: string): Promise<void> => {
+    let config: unknown
+    let reads: Map<string, string[]> | undefined
+    try {
+      if (projectFiles.has(source)) {
+        ;({ config, reads } = await substituteProject(text, source, dir, true))
+      } else {
+        config = parseJsonc(await substitute(text, dir), source)
+      }
+    } catch (error) {
+      problems.set(source, invalid(source, (error as Error).message))
+      return
+    }
+    if (!isObject(config)) return
+    const document = v2Document(config)
+    Object.assign(timeouts, document.timeout)
+    for (const [name, server] of Object.entries(document.servers)) {
+      // opencode drops a server it cannot read; one of that name from an earlier document stays.
+      const problem = v2Problem(server)
+      if (problem) {
+        problems.set(name, invalid(name, `${problem} (in ${source})`))
+        continue
+      }
+      servers.set(name, server as Record<string, unknown>)
+      if (reads) fromProject.set(name, { file: source, root, reads: reads.get(name) ?? [] })
+      else fromProject.delete(name)
+    }
+  }
+  for (const file of files) {
+    const text = await readText(file).catch(() => undefined)
+    if (text !== undefined) await load(text, file, dirname(file))
+  }
+  if (env.OPENCODE_CONFIG_CONTENT)
+    await load(env.OPENCODE_CONFIG_CONTENT, 'OPENCODE_CONFIG_CONTENT', cwd)
+
+  const entries = [...servers].flatMap(([name, server]): McpEntry[] => {
+    problems.delete(name)
+    if (server.disabled === true) return []
+    const timeout = v2Timeouts({ ...timeouts, ...v2TimeoutsOf(server.timeout) })
+    const project = fromProject.has(name) ? { fromProject: fromProject.get(name)! } : {}
+    if (server.type === 'local') {
+      const command = server.command as string[]
+      return [
+        {
+          name,
+          type: 'stdio',
+          command: command[0],
+          args: command.slice(1),
+          env: stringRecord(server.environment),
+          cwd: typeof server.cwd === 'string' ? resolve(cwd, server.cwd) : cwd,
+          timeout,
+          ...project
+        }
+      ]
+    }
+    if (server.type === 'remote') {
+      const oauth = server.oauth === false ? false : opencodeV2OAuth(server.oauth)
+      if (oauth && oauth.redirectUri && !isLoopback(oauth.redirectUri)) {
+        return [
+          invalid(name, 'oauth.redirect_uri must be an http address on 127.0.0.1 or localhost.')
+        ]
+      }
+      return [
+        {
+          name,
+          type: 'http-or-sse',
+          url: server.url as string,
+          headers: stringRecord(server.headers),
+          oauth,
+          timeout,
+          ...project
+        }
+      ]
+    }
+    return []
+  })
+  return [...problems.values(), ...entries]
+}
+
+/** Why opencode 2 cannot use a server, or undefined when it can. */
+function v2Problem(server: unknown): string | undefined {
+  if (!isObject(server)) return 'is not an object'
+  if (server.type === 'local') {
+    const command = server.command
+    if (
+      !Array.isArray(command) ||
+      command.length === 0 ||
+      command.some((p) => typeof p !== 'string')
+    ) {
+      return '"command" must be a list of strings, the command and its arguments'
+    }
+    return undefined
+  }
+  if (server.type === 'remote')
+    return typeof server.url === 'string' ? undefined : '"url" is missing'
+  return '"type" must be "local" or "remote"'
+}
+
+/** opencode 2's limits for a server, in milliseconds. */
+interface V2Timeouts {
+  startup?: number
+  catalog?: number
+  execution?: number
+}
+
+/** opencode 2 lets a tool call run 12 hours unless the config says otherwise (its client.ts). */
+const V2_EXECUTION_MS = 12 * 60 * 60_000
+
+const v2Timeouts = (t: V2Timeouts): Timeouts => ({
+  ...(t.startup ? { connect: t.startup } : {}),
+  ...(t.catalog ? { list: t.catalog } : {}),
+  call: t.execution ?? V2_EXECUTION_MS
+})
+
+function v2TimeoutsOf(value: unknown): V2Timeouts {
+  if (!isObject(value)) return {}
+  const startup = positiveInt(value.startup)
+  const catalog = positiveInt(value.catalog)
+  const execution = positiveInt(value.execution)
+  return {
+    ...(startup ? { startup } : {}),
+    ...(catalog ? { catalog } : {}),
+    ...(execution ? { execution } : {})
+  }
+}
+
+/** A server in opencode 1's form: it says its type. */
+const isLegacyServer = (value: unknown): boolean =>
+  isObject(value) && (value.type === 'local' || value.type === 'remote')
+
+/**
+ * One document's servers in opencode 2's form, as its normalizeMcp reads them:
+ * opencode 1 entries are carried over (enabled becomes disabled, a timeout in
+ * milliseconds limits listing and calls, OAuth fields become snake_case), and
+ * a server in "servers" wins over an opencode 1 entry of the same name.
+ */
+function v2Document(config: Record<string, unknown>): {
+  servers: Record<string, unknown>
+  timeout: V2Timeouts
+} {
+  const timeout: V2Timeouts = {}
+  const legacyTimeout = isObject(config.experimental)
+    ? positiveInt(config.experimental.mcp_timeout)
+    : undefined
+  if (legacyTimeout) Object.assign(timeout, { catalog: legacyTimeout, execution: legacyTimeout })
+  const legacy: Record<string, unknown> = {}
+  const native: Record<string, unknown> = {}
+  if (isObject(config.mcp)) {
+    for (const [name, value] of Object.entries(config.mcp)) {
+      // An entry without a type that only turns a server on or off.
+      if (isObject(value) && !('type' in value) && typeof value.enabled === 'boolean') continue
+      if (name === 'servers' && !isLegacyServer(value)) {
+        if (isObject(value)) Object.assign(native, value)
+      } else if (name === 'timeout' && !isLegacyServer(value)) {
+        Object.assign(timeout, v2TimeoutsOf(value))
+      } else {
+        legacy[name] = isObject(value) ? fromV1(value) : value
+      }
+    }
+  }
+  return { servers: { ...legacy, ...native }, timeout }
+}
+
+/** An opencode 1 server in opencode 2's form, as its ConfigMigrateV1.migrateMcp. */
+function fromV1(server: Record<string, unknown>): Record<string, unknown> {
+  const { enabled, timeout, oauth, ...rest } = server
+  const ms = positiveInt(timeout)
+  return {
+    ...rest,
+    ...(typeof enabled === 'boolean' ? { disabled: !enabled } : {}),
+    ...(ms ? { timeout: { catalog: ms, execution: ms } } : {}),
+    ...(oauth === undefined
+      ? {}
+      : {
+          oauth: isObject(oauth)
+            ? {
+                client_id: oauth.clientId,
+                client_secret: oauth.clientSecret,
+                scope: oauth.scope,
+                callback_port: oauth.callbackPort,
+                redirect_uri: oauth.redirectUri
+              }
+            : oauth
+        })
+  }
+}
+
+function opencodeV2OAuth(value: unknown): OAuthConfig {
+  if (!isObject(value)) return {}
+  const port = positiveInt(value.callback_port)
+  const redirectUri =
+    typeof value.redirect_uri === 'string'
+      ? value.redirect_uri
+      : port
+        ? `http://127.0.0.1:${port}/callback`
+        : undefined
+  return {
+    ...(typeof value.client_id === 'string' ? { clientId: value.client_id } : {}),
+    ...(typeof value.client_secret === 'string' ? { clientSecret: value.client_secret } : {}),
+    ...(typeof value.scope === 'string' ? { scope: value.scope } : {}),
+    ...(redirectUri ? { redirectUri } : {})
+  }
+}
+
 function opencodeOAuth(value: unknown): OAuthConfig {
   if (!isObject(value)) return {}
   const port = positiveInt(value.callbackPort)
@@ -204,6 +466,16 @@ function isLoopback(uri: string): boolean {
 
 const positiveInt = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
+
+/**
+ * Whether opencode config in this folder is the project's: folders above the
+ * home folder are the system's and the home folder itself is the user's
+ * (outside a git checkout, opencode looks there too).
+ */
+function isProjectDir(dir: string): boolean {
+  const fromHome = relative(dir, homedir())
+  return fromHome !== '' && (fromHome.startsWith('..') || isAbsolute(fromHome))
+}
 
 /** The folder the git checkout starts at, where opencode stops looking for project config; / outside git. */
 function gitRoot(cwd: string): string {
@@ -270,7 +542,8 @@ function filePath(token: string, dir: string): string {
 async function substituteProject(
   text: string,
   source: string,
-  dir: string
+  dir: string,
+  native = false
 ): Promise<{ config: unknown; reads: Map<string, string[]> }> {
   let config: unknown
   try {
@@ -285,8 +558,7 @@ async function substituteProject(
   }
   const reads = new Map<string, string[]>()
   if (!isObject(config) || !isObject(config.mcp)) return { config, reads }
-  const servers: Record<string, unknown> = {}
-  for (const [name, entry] of Object.entries(config.mcp)) {
+  const substituteServer = async (name: string, entry: unknown): Promise<unknown> => {
     if (/\{(env|file):/.test(name)) {
       throw new Error(
         `${source} names an MCP server with {env:} or {file:}, which a project's config may not do.`
@@ -321,8 +593,22 @@ async function substituteProject(
       for (const [key, inner] of Object.entries(value)) out[await replace(key)] = await walk(inner)
       return out
     }
-    servers[name] = await walk(entry)
+    const substituted = await walk(entry)
     reads.set(name, [...found])
+    return substituted
+  }
+  const servers: Record<string, unknown> = {}
+  for (const [name, entry] of Object.entries(config.mcp)) {
+    // opencode 2's own form keeps the servers in "servers", each named there.
+    if (native && name === 'servers' && isObject(entry) && !isLegacyServer(entry)) {
+      const inner: Record<string, unknown> = {}
+      for (const [innerName, server] of Object.entries(entry)) {
+        inner[innerName] = await substituteServer(innerName, server)
+      }
+      servers[name] = inner
+    } else {
+      servers[name] = await substituteServer(name, entry)
+    }
   }
   return { config: { ...config, mcp: servers }, reads }
 }
@@ -441,7 +727,7 @@ export async function clineMcpServers(cwd: string): Promise<McpEntry[]> {
       return [invalid(name, `is not a valid entry in ${path}`)]
     }
     if (common.disabled === true) return []
-    const timeout = clineTimeout(common.timeout)
+    const timeout = everyStep(clineTimeout(common.timeout))
     if (transport.type === 'stdio') {
       return [
         {

@@ -1,8 +1,10 @@
 import { app } from 'electron'
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
+import { commandVersion } from '../shell-env'
 import { getJson, readJson, savedCatalog } from './catalog'
-import { opencodeMcpServers } from './mcp-config'
+import { opencodeMcpServers, opencodeV2McpServers } from './mcp-config'
 import type { Provider, Source } from './provider'
 import type { Model } from './wire'
 
@@ -18,20 +20,78 @@ import type { Model } from './wire'
 
 const PLANS = [
   { id: 'opencode', name: 'Zen', base: 'https://opencode.ai/zen', env: 'OPENCODE_API_KEY' },
-  { id: 'opencode-go', name: 'Go', base: 'https://opencode.ai/zen/go', env: undefined }
+  { id: 'opencode-go', name: 'Go', base: 'https://opencode.ai/zen/go', env: 'OPENCODE_API_KEY' }
 ] as const
 type PlanId = (typeof PLANS)[number]['id']
 
 const SIGN_IN = 'Run `opencode auth login` in a terminal, then send your message again.'
 
+/** opencode's data folder, where it saves keys, and state folder, where it keeps the models used last. */
+const DATA_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'opencode')
+const STATE_DIR = join(process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'opencode')
+
+/**
+ * The installed opencode's major version, which decides where its keys are
+ * and how its config is read.
+ * Read once per run, as the app reads each CLI's version.
+ */
+let installedMajor: Promise<number | undefined> | undefined
+
+async function opencodeMajor(): Promise<number | undefined> {
+  installedMajor ??= commandVersion('opencode').then((version) => {
+    const major = version?.match(/(\d+)\.\d+\.\d+/)?.[1]
+    return major ? Number(major) : undefined
+  })
+  return installedMajor
+}
+
+/** The key opencode uses for a plan: the one `opencode auth login` saved, else the environment's (models.dev's name). */
 async function planKey(plan: PlanId): Promise<string | undefined> {
-  const env = PLANS.find((p) => p.id === plan)?.env
-  if (env && process.env[env]) return process.env[env]
+  const saved =
+    ((await opencodeMajor()) ?? 1) >= 2 ? await savedKeyV2(plan) : await savedKeyV1(plan)
+  return saved || process.env[PLANS.find((p) => p.id === plan)!.env]
+}
+
+/** opencode 1 saves keys in auth.json. */
+async function savedKeyV1(plan: PlanId): Promise<string | undefined> {
   const auth = await readJson<Record<string, { type?: string; key?: string }>>(
-    join(homedir(), '.local', 'share', 'opencode', 'auth.json')
+    join(DATA_DIR, 'auth.json')
   )
   const entry = auth?.[plan]
   return entry?.type === 'api' && entry.key ? entry.key : undefined
+}
+
+/**
+ * opencode 2 saves keys in its database's credential table (it imports
+ * auth.json once, the first time it runs). Of a plan's saved sign-ins it uses
+ * the active one, else the newest, as its Credential.list().at(-1). A Console
+ * account sign-in is not a key, and the app does not use it.
+ */
+async function savedKeyV2(plan: PlanId): Promise<string | undefined> {
+  // As opencode's databasePath: OPENCODE_DB names another file, relative to the data folder.
+  const name = process.env.OPENCODE_DB || 'opencode.db'
+  if (name === ':memory:') return undefined
+  const file = resolve(DATA_DIR, name)
+  if (!existsSync(file)) return undefined
+  const { DatabaseSync } = await import('node:sqlite')
+  const db = new DatabaseSync(file, { readOnly: true, timeout: 2000 })
+  try {
+    const table = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'credential'")
+      .get()
+    if (!table) return undefined
+    const row = db
+      .prepare(
+        'SELECT value FROM credential WHERE integration_id = ? ORDER BY active DESC, time_created DESC, id DESC LIMIT 1'
+      )
+      .get(plan) as { value?: string } | undefined
+    const value = row?.value
+      ? (JSON.parse(row.value) as { type?: string; key?: string })
+      : undefined
+    return value?.type === 'key' && value.key ? value.key : undefined
+  } finally {
+    db.close()
+  }
 }
 
 interface DevModel {
@@ -123,10 +183,12 @@ export const openCode: Provider = {
   async preferred() {
     // opencode keeps the models used last, newest first.
     const state = await readJson<{ recent?: { providerID: string; modelID: string }[] }>(
-      join(homedir(), '.local', 'state', 'opencode', 'model.json')
+      join(STATE_DIR, 'model.json')
     )
     const recent = state?.recent?.find((r) => PLANS.some((p) => p.id === r.providerID))
     return recent ? { source: recent.providerID, model: recent.modelID } : undefined
   },
-  mcpServers: opencodeMcpServers
+  async mcpServers(cwd) {
+    return ((await opencodeMajor()) ?? 1) >= 2 ? opencodeV2McpServers(cwd) : opencodeMcpServers(cwd)
+  }
 }

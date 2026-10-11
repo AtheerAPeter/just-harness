@@ -34,3 +34,13 @@ function readShellPath(): Promise<void> {
     )
   })
 }
+
+/** What a CLI on the user's PATH prints for --version (its last line), or undefined when it is not installed. */
+export async function commandVersion(command: string): Promise<string | undefined> {
+  await loadShellPath()
+  return new Promise((resolve) => {
+    execFile(command, ['--version'], { timeout: 10_000 }, (error, stdout) =>
+      resolve(error ? undefined : stdout.trim().split('\n').pop())
+    )
+  })
+}

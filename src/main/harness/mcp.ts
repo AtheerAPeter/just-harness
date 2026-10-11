@@ -27,8 +27,7 @@ export interface StdioServer {
   /** Set over the app's own environment. */
   env: Record<string, string>
   cwd: string
-  /** Milliseconds for connecting and for each call; the defaults below when unset. */
-  timeout?: number
+  timeout?: Timeouts
   /** As for RemoteServer: set when the project's own files set the server up or changed it. */
   fromProject?: ProjectSource
 }
@@ -41,12 +40,22 @@ export interface RemoteServer {
   headers: Record<string, string>
   /** How to sign in when the server asks for it; false when the config turns sign-in off. */
   oauth: OAuthConfig | false
-  timeout?: number
+  timeout?: Timeouts
   /**
    * Set when the project's own files set the server up or changed it. Such a
    * server comes with the code, so it starts only once the user agrees (see isTrusted).
    */
   fromProject?: ProjectSource
+}
+
+/** Milliseconds each step may take; a step left unset gets the default below. */
+export interface Timeouts {
+  /** Starting the server or connecting to it. */
+  connect?: number
+  /** Listing its tools. */
+  list?: number
+  /** Each tool call, which by default the MCP SDK limits to a minute. */
+  call?: number
 }
 
 /** Where a project's config set a server up. */
@@ -288,12 +297,15 @@ function connection(server: McpServer): Promise<Connection> {
 
 async function connect(server: McpServer): Promise<Connection> {
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
-  const timeout = server.timeout ?? CONNECT_TIMEOUT_MS
+  const timeout = server.timeout?.connect ?? CONNECT_TIMEOUT_MS
   const attempt = async (transport: Transport, output?: () => string): Promise<Connection> => {
     const client = new Client({ name: 'just-harness', version: app.getVersion() })
     try {
       await client.connect(transport, { timeout })
-      return { client, tools: await listTools(client, server, timeout) }
+      return {
+        client,
+        tools: await listTools(client, server, server.timeout?.list ?? CONNECT_TIMEOUT_MS)
+      }
     } catch (error) {
       await client.close().catch(() => undefined)
       if (server.type === 'stdio' && (error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -403,7 +415,7 @@ function mcpTool(
     async run(args, { signal }) {
       const result = await client.callTool({ name: tool.name, arguments: args }, undefined, {
         signal,
-        ...(server.timeout ? { timeout: server.timeout } : {}),
+        ...(server.timeout?.call ? { timeout: server.timeout.call } : {}),
         // Long tools that report progress are not stopped by the timeout.
         onprogress: () => undefined,
         resetTimeoutOnProgress: true
