@@ -1,92 +1,86 @@
 /*
- * Islands: solid panels on a plain canvas. Tool calls are grouped into cards,
- * one row per call. Inter at medium weight, JetBrains Mono for paths, commands
- * and output. Yellow only marks small things: status dots, progress, menu
- * highlights. Every color and shadow is a token, so dark mode is the same
- * design with its own values.
+ * Paper: one sheet edge to edge, its regions divided by hairlines, sharp
+ * corners everywhere but on dots. Ink-dark text, warm paper whites. Inter at medium weight, JetBrains Mono for paths,
+ * commands and output. Yellow only marks small things: status dots, progress,
+ * menu highlights. Every color and shadow is a token, so dark mode is the
+ * same design with its own values.
  */
 
 :root {
   /* macOS yellow. Text on it is dark; --accent-text is the shade readable as text. */
   --accent: #ffc300;
-  --accent-text: #8a6400;
+  --accent-text: #7d5a00;
   --accent-soft: rgba(255, 195, 0, 0.18);
   --accent-ring: rgba(255, 195, 0, 0.25);
   /* The halo around a focused field. */
-  --focus-ring: rgba(21, 23, 27, 0.06);
-  --on-accent: #1d1d1f;
+  --focus-ring: rgba(45, 38, 25, 0.07);
+  --on-accent: #1d1b17;
 
-  --text: #15171b;
-  --text-soft: #4a505c;
-  --text-muted: #707786;
-  --border: rgba(21, 23, 27, 0.08);
-  --border-strong: rgba(21, 23, 27, 0.2);
-  --danger: #d63c3c;
-  --ok: #1d9a52;
-  --warn: #c27612;
+  --text: #1d1b17;
+  --text-soft: #4d4840;
+  --text-muted: #7a7368;
+  --border: rgba(45, 38, 25, 0.12);
+  --border-strong: rgba(45, 38, 25, 0.28);
+  --danger: #c93a32;
+  --ok: #2a8a4f;
+  --warn: #b56d12;
 
-  /* Flat fills on glass: hover, tracks, chips. */
-  --fill: rgba(21, 23, 27, 0.05);
-  --fill-strong: rgba(21, 23, 27, 0.09);
-  --hover: rgba(21, 23, 27, 0.04);
+  /* Flat fills on paper: hover, tracks, chips. */
+  --fill: rgba(45, 38, 25, 0.05);
+  --fill-strong: rgba(45, 38, 25, 0.09);
+  --hover: rgba(45, 38, 25, 0.04);
 
-  /* The canvas the panels sit on; also the window's color (index.ts). */
-  --canvas: #eceef2;
+  /* Behind everything; also the window's color (index.ts). */
+  --canvas: #fdfbf6;
 
-  /* Panels: sidebar and browser, and the chat. */
-  --panel: #f7f8fa;
-  --panel-main: #ffffff;
-  --panel-edge:
-    0 0 0 1px rgba(21, 23, 27, 0.06), 0 1px 2px rgba(20, 30, 50, 0.04),
-    0 10px 30px -18px rgba(20, 30, 50, 0.18);
+  /* Sheets: sidebar and browser, and the chat. */
+  --panel: #f6f3ec;
+  --panel-main: #fdfbf6;
 
   /* Raised: the selected chat, the on segment. */
-  --raised: #ffffff;
-  --raised-shadow: 0 0 0 1px rgba(21, 23, 27, 0.06), 0 1px 2px rgba(20, 30, 50, 0.06);
+  --raised: #fffdf8;
+  --raised-shadow: 0 0 0 1px rgba(45, 38, 25, 0.13);
 
   /* Cards: the new-skill form. */
-  --card: #ffffff;
+  --card: #fffdf8;
   --card-edge: 0 0 0 1px var(--border);
   /* Sunken: output, diffs, commands. */
-  --well: #f6f7f9;
+  --well: #f3efe6;
   /* Opaque, for large menus and sticky titles that must hide what scrolls under them. */
-  --surface: #ffffff;
+  --surface: #fffdf8;
 
-  --bubble: #1b1d22;
-  --bubble-text: #f4f5f7;
-  --bubble-edge: 0 10px 24px -12px rgba(10, 15, 30, 0.5);
   /* Solid: send, the primary button, done todos. */
-  --solid: #1b1d22;
-  --on-solid: #ffffff;
-  --solid-shadow: 0 6px 16px -6px rgba(10, 15, 30, 0.6);
+  --solid: #23211d;
+  --on-solid: #fdfbf6;
+  --solid-shadow: 0 1px 2px rgba(30, 25, 15, 0.3);
 
-  --add-bg: rgba(29, 154, 82, 0.1);
-  --add-text: #126b38;
-  --del-bg: rgba(214, 60, 60, 0.09);
-  --del-text: #a52b2b;
-  --code-bg: rgba(21, 23, 27, 0.06);
+  --add-bg: rgba(42, 138, 79, 0.1);
+  --add-text: #1d6a3b;
+  --del-bg: rgba(201, 58, 50, 0.09);
+  --del-text: #9e2c26;
+  --code-bg: rgba(45, 38, 25, 0.07);
 
   /* Menus. */
-  --menu: #ffffff;
-  --menu-shadow: 0 0 0 1px var(--border), 0 12px 32px -8px rgba(20, 30, 50, 0.2);
+  --menu: #fffdf8;
+  --menu-shadow: 0 0 0 1px rgba(45, 38, 25, 0.15), 0 8px 24px -10px rgba(45, 38, 25, 0.28);
 
-  --composer: #ffffff;
-  --composer-edge: 0 0 0 1px rgba(21, 23, 27, 0.09), 0 10px 30px -18px rgba(20, 30, 50, 0.25);
-  --strip: #f7f8fa;
+  --composer: #fffdf8;
+  --composer-edge: 0 0 0 1px rgba(45, 38, 25, 0.16), 0 1px 3px rgba(45, 38, 25, 0.06);
+  --strip: #f6f3ec;
   --strip-edge: 0 0 0 1px var(--border);
-  --ask-bg: #ffffff;
-  --ask-glow: 0 0 0 1px rgba(255, 195, 0, 0.6), 0 12px 34px -10px rgba(255, 170, 0, 0.4);
+  --ask-bg: #fffdf8;
+  --ask-glow: 0 0 0 1px rgba(255, 195, 0, 0.7), 0 8px 24px -10px rgba(180, 120, 0, 0.3);
 
   /* Width of the chat column; the composer lines up with it. */
-  --chat-width: 780px;
+  --chat-width: 880px;
   --sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   color-scheme: light;
 }
 
 /*
- * Dark is graphite, not neon: neutral greys, depth from stepped grey layers
- * and hairline edges; yellow stays a small flat mark.
+ * Dark is paper at night: warm charcoal sheets, not neon. Depth comes from
+ * stepped greys and hairline edges; yellow stays a small flat mark.
  */
 @media (prefers-color-scheme: dark) {
   :root {
@@ -94,56 +88,52 @@
     --accent-text: #f2cc0c;
     --accent-soft: rgba(255, 214, 10, 0.1);
     --accent-ring: rgba(255, 214, 10, 0.16);
-    --focus-ring: rgba(255, 255, 255, 0.06);
+    --focus-ring: rgba(255, 248, 235, 0.06);
 
-    --text: #e9eaec;
-    --text-soft: #b0b3b9;
-    --text-muted: #80848c;
-    --border: rgba(255, 255, 255, 0.07);
-    --border-strong: rgba(255, 255, 255, 0.16);
-    --danger: #f07070;
-    --ok: #4cc584;
-    --warn: #e0a040;
+    --text: #ebe7df;
+    --text-soft: #b5afa5;
+    --text-muted: #857f75;
+    --border: rgba(255, 248, 235, 0.08);
+    --border-strong: rgba(255, 248, 235, 0.18);
+    --danger: #ec7068;
+    --ok: #5cc285;
+    --warn: #dda048;
 
-    --fill: rgba(255, 255, 255, 0.055);
-    --fill-strong: rgba(255, 255, 255, 0.1);
-    --hover: rgba(255, 255, 255, 0.04);
+    --fill: rgba(255, 248, 235, 0.055);
+    --fill-strong: rgba(255, 248, 235, 0.1);
+    --hover: rgba(255, 248, 235, 0.04);
 
-    --canvas: #0c0c0e;
+    --canvas: #1b1a18;
 
-    --panel: #151517;
-    --panel-main: #19191c;
-    --panel-edge: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 10px 30px -18px rgba(0, 0, 0, 0.8);
+    --panel: #171614;
+    --panel-main: #1b1a18;
 
-    --raised: #232327;
-    --raised-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+    --raised: #262420;
+    --raised-shadow: 0 0 0 1px rgba(255, 248, 235, 0.08);
 
-    --card: #1d1d20;
+    --card: #1f1e1b;
     --card-edge: 0 0 0 1px var(--border);
-    --well: #141416;
-    --surface: #1d1d20;
+    --well: #151412;
+    --surface: #1f1e1b;
 
-    --bubble: #2a2a2e;
-    --bubble-text: #ececee;
-    --bubble-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.4);
-    --solid: #e9eaec;
-    --on-solid: #141416;
+    --solid: #ebe7df;
+    --on-solid: #171614;
     --solid-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 
-    --add-bg: rgba(76, 197, 132, 0.1);
-    --add-text: #86d9aa;
-    --del-bg: rgba(240, 112, 112, 0.1);
-    --del-text: #f2a5a5;
-    --code-bg: rgba(255, 255, 255, 0.07);
+    --add-bg: rgba(92, 194, 133, 0.1);
+    --add-text: #8fd8ac;
+    --del-bg: rgba(236, 112, 104, 0.1);
+    --del-text: #f0a8a2;
+    --code-bg: rgba(255, 248, 235, 0.07);
 
-    --menu: #232327;
-    --menu-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 16px 40px -10px rgba(0, 0, 0, 0.7);
+    --menu: #262420;
+    --menu-shadow: 0 0 0 1px rgba(255, 248, 235, 0.1), 0 12px 32px -10px rgba(0, 0, 0, 0.75);
 
-    --composer: #1f1f22;
-    --composer-edge: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 10px 30px -18px rgba(0, 0, 0, 0.8);
-    --strip: #1c1c1f;
+    --composer: #201f1c;
+    --composer-edge: 0 0 0 1px rgba(255, 248, 235, 0.1), 0 1px 3px rgba(0, 0, 0, 0.5);
+    --strip: #1d1c19;
     --strip-edge: 0 0 0 1px var(--border);
-    --ask-bg: #1f1f22;
+    --ask-bg: #201f1c;
     --ask-glow: 0 0 0 1px rgba(255, 214, 10, 0.32), 0 1px 2px rgba(0, 0, 0, 0.4);
     color-scheme: dark;
   }
@@ -217,7 +207,6 @@ kbd {
 
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
-  border-radius: 999px;
   background: var(--fill-strong);
   background-clip: content-box;
 }
@@ -266,22 +255,18 @@ kbd {
   }
 }
 
-/* Layout: three panels on the canvas */
+/* Layout: three regions edge to edge, divided by hairlines */
 
 .app {
   display: flex;
-  gap: 10px;
   height: 100%;
-  padding: 10px;
 }
 
 .sidebar,
 .main,
 .browser {
   min-height: 0;
-  border-radius: 20px;
   background: var(--panel);
-  box-shadow: var(--panel-edge);
 }
 
 .main {
@@ -295,7 +280,7 @@ kbd {
 }
 
 .topbar {
-  height: 52px;
+  height: 36px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -307,7 +292,7 @@ kbd {
 
 /* With the sidebar hidden, the window buttons sit over the toolbar. */
 .sidebar-hidden .topbar {
-  padding-left: 76px;
+  padding-left: 72px;
 }
 
 .topbar button {
@@ -335,7 +320,6 @@ kbd {
   gap: 6px;
   height: 24px;
   padding: 0 10px;
-  border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
 }
@@ -367,16 +351,17 @@ kbd {
 /* Sidebar */
 
 .sidebar {
-  width: 268px;
+  width: 244px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  padding: 0 10px 8px;
+  padding: 0 8px 6px;
+  border-right: 1px solid var(--border);
 }
 
 /* The window buttons sit at its left (trafficLightPosition in index.ts). */
 .sidebar-top {
-  height: 52px;
+  height: 36px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -394,10 +379,9 @@ kbd {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 32px;
-  margin-top: 8px;
+  height: 26px;
+  margin-top: 4px;
   padding: 0 10px;
-  border-radius: 10px;
   background: var(--fill);
   color: var(--text-muted);
 }
@@ -421,7 +405,7 @@ kbd {
 
 .sidebar-mode {
   flex-shrink: 0;
-  margin: 10px 0 2px;
+  margin: 4px 0 2px;
 }
 
 .sidebar-section {
@@ -447,7 +431,6 @@ kbd {
   padding: 0 5px;
   display: grid;
   place-items: center;
-  border-radius: 9px;
   background: var(--fill-strong);
   color: var(--text-soft);
   font-size: 10.5px;
@@ -488,7 +471,6 @@ kbd {
   width: 100%;
   margin-top: 10px;
   padding: 7px 8px;
-  border-radius: 10px;
   color: var(--text-soft);
 }
 
@@ -498,16 +480,15 @@ kbd {
 }
 
 .project {
-  margin-top: 6px;
+  margin-top: 2px;
 }
 
 .project-row {
   display: flex;
   align-items: center;
   gap: 7px;
-  height: 32px;
+  height: 24px;
   padding: 0 4px 0 6px;
-  border-radius: 10px;
   color: var(--text-soft);
   font-weight: 600;
 }
@@ -561,10 +542,9 @@ kbd {
   align-items: center;
   column-gap: 6px;
   row-gap: 1px;
-  min-height: 32px;
-  margin: 1px 0;
-  padding: 5px 6px 5px 8px;
-  border-radius: 11px;
+  min-height: 24px;
+  margin: 0;
+  padding: 2px 6px 2px 8px;
 }
 
 .chat-row:hover {
@@ -660,7 +640,6 @@ kbd {
   z-index: 20;
   min-width: 170px;
   padding: 6px;
-  border-radius: 14px;
   background: var(--menu);
   box-shadow: var(--menu-shadow);
 }
@@ -669,7 +648,6 @@ kbd {
   display: block;
   width: 100%;
   padding: 6px 10px;
-  border-radius: 9px;
   text-align: left;
 }
 
@@ -690,7 +668,6 @@ kbd {
   padding: 0 6px;
   margin-left: -6px;
   border: 0;
-  border-radius: 6px;
   outline: none;
   background: var(--surface);
   box-shadow: 0 0 0 2px var(--accent);
@@ -723,17 +700,15 @@ kbd {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   flex-shrink: 0;
-  border-radius: 10px;
   color: var(--text-soft);
 }
 
 .icon-btn.small {
   width: 22px;
   height: 22px;
-  border-radius: 7px;
 }
 
 .icon-btn:hover:not(:disabled) {
@@ -751,9 +726,8 @@ kbd {
 }
 
 .btn {
-  height: 30px;
+  height: 26px;
   padding: 0 14px;
-  border-radius: 999px;
   background: var(--fill);
   font-weight: 600;
 }
@@ -787,7 +761,6 @@ kbd {
 .segmented {
   display: flex;
   padding: 3px;
-  border-radius: 11px;
   background: var(--fill);
 }
 
@@ -797,8 +770,7 @@ kbd {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 26px;
-  border-radius: 8px;
+  height: 22px;
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -862,14 +834,14 @@ kbd {
 }
 
 .chat-items {
-  max-width: calc(var(--chat-width) + 56px);
+  max-width: calc(var(--chat-width) + 48px);
   margin: 0 auto;
-  padding: 26px 28px 30px;
+  padding: 12px 20px 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  font-size: 13.5px;
-  line-height: 1.6;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.55;
   user-select: text;
 }
 
@@ -887,11 +859,10 @@ kbd {
   letter-spacing: -0.01em;
 }
 
-/* The user's message: a bubble on the right. */
+/* The user's message: a full-width row marked by a rule on its left. */
 .user-msg {
   display: flex;
-  justify-content: flex-end;
-  margin: 12px 0 4px;
+  margin: 6px 0 0;
 }
 
 .block:first-child > .user-msg {
@@ -899,13 +870,13 @@ kbd {
 }
 
 .bubble {
-  max-width: 78%;
-  padding: 10px 15px;
-  border-radius: 18px 18px 6px 18px;
-  background: var(--bubble);
-  color: var(--bubble-text);
-  box-shadow: var(--bubble-edge);
-  line-height: 1.55;
+  flex: 1;
+  min-width: 0;
+  padding: 1px 0 1px 10px;
+  box-shadow: inset 2px 0 0 var(--border-strong);
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -919,7 +890,7 @@ kbd {
 }
 
 .bubble .attachment {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--fill);
   color: inherit;
 }
 
@@ -947,7 +918,6 @@ kbd {
 
 .chat-error {
   padding: 10px 14px;
-  border-radius: 12px;
   background: var(--del-bg);
   color: var(--danger);
   font-size: 13px;
@@ -992,7 +962,6 @@ kbd {
   gap: 8px;
   max-width: 100%;
   padding: 3px 4px;
-  border-radius: 8px;
   color: var(--text-muted);
   text-align: left;
 }
@@ -1038,7 +1007,6 @@ kbd {
   width: 100%;
   min-width: 0;
   padding: 2px 4px;
-  border-radius: 8px;
   color: var(--text-muted);
   text-align: left;
 }
@@ -1105,7 +1073,7 @@ kbd {
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 2px 4px 8px;
+  padding: 2px 4px 4px;
   border-bottom: 1px solid var(--border);
   color: var(--text-muted);
   text-align: left;
@@ -1127,14 +1095,13 @@ kbd {
 .turn-work-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 10px;
+  gap: 6px;
+  padding-top: 6px;
 }
 
 /* The files a turn edited, as Codex's card under its answer. */
 .edits-card {
-  margin-top: 4px;
-  border-radius: 14px;
+  margin-top: 2px;
   background: var(--raised);
   box-shadow: var(--raised-shadow);
   overflow: hidden;
@@ -1143,17 +1110,16 @@ kbd {
 .edits-head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 10px;
+  padding: 6px 8px 6px 12px;
 }
 
 .edits-icon {
-  width: 38px;
-  height: 38px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  border-radius: 10px;
   background: var(--fill);
   color: var(--text-soft);
 }
@@ -1162,8 +1128,8 @@ kbd {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .edits-title {
@@ -1184,7 +1150,7 @@ kbd {
   align-items: center;
   gap: 12px;
   width: 100%;
-  padding: 9px 14px;
+  padding: 6px 12px;
   text-align: left;
 }
 
@@ -1286,7 +1252,6 @@ kbd {
 .step-output {
   margin: 4px 0 8px;
   padding: 8px 0;
-  border-radius: 11px;
   background: var(--well);
   box-shadow: inset 0 0 0 1px var(--border);
   color: var(--text-soft);
@@ -1334,7 +1299,6 @@ kbd {
   gap: 10px;
   margin-top: 4px;
   padding: 14px 16px;
-  border-radius: 18px;
   background: var(--ask-bg);
   box-shadow: var(--ask-glow);
 }
@@ -1352,7 +1316,6 @@ kbd {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  border-radius: 9px;
   background: var(--accent-soft);
   color: var(--accent-text);
 }
@@ -1370,7 +1333,6 @@ kbd {
 
 .ask-args {
   padding: 9px 12px;
-  border-radius: 10px;
   background: var(--well);
   box-shadow: inset 0 0 0 1px var(--border);
   font-family: var(--mono);
@@ -1441,14 +1403,12 @@ kbd {
 
 .markdown code {
   padding: 1px 5px;
-  border-radius: 6px;
   background: var(--code-bg);
   font-size: 12px;
 }
 
 .markdown pre {
   padding: 10px 12px;
-  border-radius: 11px;
   background: var(--well);
   box-shadow: inset 0 0 0 1px var(--border);
   overflow-x: auto;
@@ -1500,7 +1460,6 @@ kbd {
   display: inline-grid;
   place-items: center;
   align-self: center;
-  border-radius: 5px;
   box-shadow: inset 0 0 0 1.5px var(--border-strong);
 }
 
@@ -1534,7 +1493,6 @@ kbd {
 .todo-strip {
   max-width: calc(var(--chat-width) - 28px);
   margin: 0 auto;
-  border-radius: 14px 14px 0 0;
   background: var(--strip);
   box-shadow: var(--strip-edge);
 }
@@ -1550,7 +1508,7 @@ kbd {
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 34px;
+  height: 28px;
   padding: 0 14px;
   color: var(--text-soft);
   font-size: 12px;
@@ -1571,7 +1529,6 @@ kbd {
 .todo-bars i {
   width: 14px;
   height: 4px;
-  border-radius: 3px;
   background: var(--fill-strong);
 }
 
@@ -1596,7 +1553,7 @@ kbd {
 
 .composer-wrap {
   flex-shrink: 0;
-  padding: 0 22px 18px;
+  padding: 0 20px 10px;
 }
 
 .composer {
@@ -1605,7 +1562,6 @@ kbd {
   max-width: var(--chat-width);
   margin: 0 auto;
   padding: 4px 2px 0;
-  border-radius: 22px;
   background: var(--composer);
   box-shadow: var(--composer-edge);
   transition: box-shadow 0.2s;
@@ -1667,7 +1623,6 @@ kbd {
   max-width: 240px;
   height: 26px;
   padding: 0 8px;
-  border-radius: 8px;
   background: var(--fill);
   color: var(--text-soft);
   font-size: 12px;
@@ -1676,7 +1631,6 @@ kbd {
 .attachment img {
   width: 18px;
   height: 18px;
-  border-radius: 4px;
   object-fit: cover;
 }
 
@@ -1699,13 +1653,13 @@ kbd {
 .composer textarea {
   display: block;
   width: 100%;
-  min-height: 46px;
-  padding: 10px 16px 4px;
+  min-height: 34px;
+  padding: 6px 10px 0;
   border: 0;
   outline: none;
   resize: none;
   background: transparent;
-  font-size: 13.5px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
@@ -1719,7 +1673,7 @@ kbd {
   flex-wrap: nowrap;
   align-items: center;
   gap: 2px;
-  padding: 4px 8px 8px;
+  padding: 0 4px 4px;
   min-width: 0;
 }
 
@@ -1741,13 +1695,12 @@ kbd {
 }
 
 .send-button {
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
   background: var(--solid);
   color: var(--on-solid);
 }
@@ -1820,7 +1773,6 @@ kbd {
   max-height: 300px;
   overflow-y: auto;
   padding: 6px;
-  border-radius: 14px;
   background: var(--menu);
   box-shadow: var(--menu-shadow);
 }
@@ -1831,7 +1783,6 @@ kbd {
   gap: 8px;
   width: 100%;
   padding: 6px 9px;
-  border-radius: 9px;
   text-align: left;
 }
 
@@ -1875,9 +1826,8 @@ kbd {
   align-items: center;
   gap: 6px;
   max-width: 100%;
-  height: 28px;
+  height: 24px;
   padding: 0 10px;
-  border-radius: 999px;
   color: var(--text-soft);
   font-size: 12.5px;
 }
@@ -1920,7 +1870,6 @@ kbd {
   width: 320px;
   display: flex;
   flex-direction: column;
-  border-radius: 14px;
   background: var(--menu);
   box-shadow: var(--menu-shadow);
   overflow: hidden;
@@ -1966,7 +1915,6 @@ kbd {
   gap: 10px;
   width: 100%;
   padding: 6px 9px;
-  border-radius: 9px;
   text-align: left;
 }
 
@@ -2007,7 +1955,6 @@ kbd {
 
 .agent-logo {
   flex-shrink: 0;
-  border-radius: 4px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -2020,7 +1967,6 @@ kbd {
   width: min(380px, calc(100vw - 32px));
   /* One height for both views, so going back and forth does not resize it. */
   height: min(460px, calc(100vh - 160px));
-  border-radius: 16px;
   /* Opaque, so sticky titles hide the rows under them. */
   background: var(--surface);
 }
@@ -2054,7 +2000,7 @@ kbd {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
-  min-height: 40px;
+  min-height: 32px;
   padding: 0 16px 0 10px;
   border-bottom: 1px solid var(--border);
   color: var(--text);
@@ -2102,9 +2048,8 @@ kbd {
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 34px;
+  min-height: 28px;
   padding: 0 10px;
-  border-radius: 9px;
   text-align: left;
   color: var(--text);
 }
@@ -2182,9 +2127,8 @@ kbd {
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 36px;
+  min-height: 28px;
   padding: 6px 10px;
-  border-radius: 9px;
   text-align: left;
 }
 
@@ -2225,27 +2169,29 @@ kbd {
   min-width: 320px;
   display: flex;
   flex-direction: column;
+  border-left: 1px solid var(--border);
 }
 
-/* Grabbed in the gap left of the panel. */
+/* Grabbed on the line left of the panel. */
 .browser-resize {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -10px;
-  width: 10px;
+  left: -4px;
+  width: 7px;
   cursor: col-resize;
   z-index: 2;
 }
 
 /* Back, forward, reload, the address and the menu, under the tabs. */
 .browser-toolbar {
-  height: 40px;
+  height: 32px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 0 8px 4px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--border);
 }
 
 .address {
@@ -2256,10 +2202,9 @@ kbd {
 
 .address input {
   width: 100%;
-  height: 30px;
+  height: 24px;
   padding: 0 12px;
   border: 0;
-  border-radius: 999px;
   outline: none;
   background: var(--fill);
   box-shadow: inset 0 0 0 1px var(--border);
@@ -2274,9 +2219,9 @@ kbd {
     0 0 0 4px var(--focus-ring);
 }
 
-/* Tabs on top, as in Chrome, in the panels' shared 52px row; its gaps drag the window. */
+/* Tabs on top, as in Chrome, in the panels' shared 36px row; its gaps drag the window. */
 .browser-tabs {
-  height: 52px;
+  height: 36px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -2295,12 +2240,11 @@ kbd {
   position: relative;
   flex: 0 1 180px;
   min-width: 72px;
-  height: 30px;
+  height: 26px;
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 0 4px 0 9px;
-  border-radius: 9px;
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -2338,7 +2282,6 @@ kbd {
 .browser-tab-icon img {
   width: 14px;
   height: 14px;
-  border-radius: 3px;
   object-fit: contain;
 }
 
@@ -2384,7 +2327,6 @@ kbd {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  border-radius: 5px;
   color: var(--text-muted);
   opacity: 0;
 }
@@ -2401,10 +2343,7 @@ kbd {
 /* The page's corners match PAGE_RADIUS in browser.ts. */
 .browser-viewport {
   flex: 1;
-  margin: 0 8px 8px;
-  border-radius: 12px;
   background: var(--surface);
-  box-shadow: 0 0 0 1px var(--border);
 }
 
 /* The page's picture while a popup covers it; the view itself is parked. */
@@ -2412,7 +2351,6 @@ kbd {
   display: block;
   width: 100%;
   height: 100%;
-  border-radius: inherit;
 }
 
 /* Skills */
@@ -2464,7 +2402,6 @@ kbd {
   flex-direction: column;
   width: 100%;
   padding: 7px 10px 8px;
-  border-radius: 11px;
   text-align: left;
 }
 
@@ -2521,7 +2458,6 @@ kbd {
 
 .msg-error {
   padding: 8px 12px;
-  border-radius: 10px;
   background: var(--del-bg);
   color: var(--danger);
   font-size: 12.5px;
@@ -2532,7 +2468,6 @@ kbd {
   width: 100%;
   padding: 12px 14px;
   border: 0;
-  border-radius: 14px;
   outline: none;
   resize: none;
   background: var(--well);
@@ -2565,7 +2500,6 @@ kbd {
 
 .skills-empty code {
   padding: 1px 5px;
-  border-radius: 6px;
   background: var(--code-bg);
 }
 
@@ -2575,7 +2509,6 @@ kbd {
   gap: 8px;
   margin: 0 0 12px;
   padding: 10px;
-  border-radius: 14px;
   background: var(--card);
   box-shadow: var(--card-edge);
 }
@@ -2583,7 +2516,6 @@ kbd {
 .new-skill input {
   padding: 6px 10px;
   border: 0;
-  border-radius: 8px;
   outline: none;
   background: var(--well);
   box-shadow: inset 0 0 0 1px var(--border);
@@ -2620,7 +2552,6 @@ kbd {
   flex-direction: column;
   gap: 10px;
   padding: 16px 18px;
-  border-radius: 14px;
   background: var(--card);
   box-shadow: var(--card-edge);
 }
@@ -2639,7 +2570,6 @@ kbd {
 
 .settings-card code {
   padding: 1px 5px;
-  border-radius: 6px;
   background: var(--code-bg);
 }
 
@@ -2651,10 +2581,9 @@ kbd {
 .settings-row input {
   flex: 1;
   min-width: 0;
-  height: 30px;
+  height: 26px;
   padding: 0 12px;
   border: 0;
-  border-radius: 999px;
   outline: none;
   background: var(--well);
   box-shadow: inset 0 0 0 1px var(--border);
@@ -2821,7 +2750,6 @@ button,
   bottom: 3px;
   left: 3px;
   width: calc(50% - 3px);
-  border-radius: 8px;
   background: var(--raised);
   box-shadow: var(--raised-shadow);
   transition: transform var(--move) var(--ease);
