@@ -359,64 +359,6 @@ kbd {
   height: 10px;
 }
 
-/* In a chat that started chats: a link to each, with what it is doing. */
-.led-chats {
-  flex-shrink: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 12px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-}
-
-.led-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-right: 4px;
-  color: var(--text-soft);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.led-chat {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 260px;
-  height: 22px;
-  padding: 0 8px;
-  background: var(--fill);
-  color: var(--text);
-}
-
-.led-chat:hover {
-  background: var(--fill-strong);
-}
-
-.led-chat .chat-dot.running {
-  width: 9px;
-  height: 9px;
-}
-
-.led-title {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.led-state {
-  flex-shrink: 0;
-  color: var(--text-muted);
-}
-
-.led-chat.waiting .led-state {
-  color: var(--accent-text);
-}
-
 /* Sidebar */
 
 .sidebar {
@@ -674,6 +616,23 @@ kbd {
 .lead-count.active {
   background: var(--accent-soft);
   color: var(--accent-text);
+}
+
+/* The count and a chevron: shows or hides the chats it started. */
+.lead-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-muted);
+}
+
+.lead-toggle:hover .lead-count {
+  background: var(--border-strong);
+}
+
+.lead-toggle.open .chevron {
+  transform: rotate(90deg);
 }
 
 /* The chats a chat started, under it, joined to it by a line. */

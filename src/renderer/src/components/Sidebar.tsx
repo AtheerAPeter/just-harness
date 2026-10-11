@@ -52,7 +52,9 @@ export function Sidebar({
 }: SidebarProps): React.JSX.Element {
   /** Projects the user opened; every project starts closed. */
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  /** The selected chat whose project was last opened for it. */
+  /** Lead chats whose chats the user opened; every lead starts closed. */
+  const [openLeads, setOpenLeads] = useState<Set<string>>(new Set())
+  /** The selected chat whose project (and lead) was last opened for it. */
   const [revealedChatId, setRevealedChatId] = useState<string>()
   /** How many chats each project shows, and the Recent list under its own key. */
   const [shown, setShown] = useState<Record<string, number>>({})
@@ -69,13 +71,17 @@ export function Sidebar({
   const now = useNow()
 
   const projects = new Map(state.projects.map((p) => [p.id, p]))
-  // Open the project holding a newly selected chat, so a new or picked chat stays in view.
-  // Done while rendering, once per selection; the user can close the project again after.
-  const selectedChatProjectId = state.chats.find((c) => c.id === selectedChatId)?.projectId
-  if (selectedChatProjectId && selectedChatId !== revealedChatId) {
+  // Open the project holding a newly selected chat, and the chat that leads it, so a new or
+  // picked chat stays in view. Done while rendering, once per selection; the user can close
+  // them again after.
+  const selectedChat = state.chats.find((c) => c.id === selectedChatId)
+  if (selectedChat && selectedChatId !== revealedChatId) {
     setRevealedChatId(selectedChatId)
-    if (!expanded.has(selectedChatProjectId)) {
-      setExpanded(new Set(expanded).add(selectedChatProjectId))
+    if (!expanded.has(selectedChat.projectId)) {
+      setExpanded(new Set(expanded).add(selectedChat.projectId))
+    }
+    if (selectedChat.startedBy && !openLeads.has(selectedChat.startedBy)) {
+      setOpenLeads(new Set(openLeads).add(selectedChat.startedBy))
     }
   }
   const q = query?.trim().toLowerCase() ?? ''
@@ -106,6 +112,15 @@ export function Sidebar({
     chat.id === selectedChatId ||
     Boolean(started.get(chat.id)?.some((c) => c.id === selectedChatId))
 
+  function toggleLead(chatId: string): void {
+    setOpenLeads((current) => {
+      const next = new Set(current)
+      if (next.has(chatId)) next.delete(chatId)
+      else next.add(chatId)
+      return next
+    })
+  }
+
   function toggle(projectId: string): void {
     setExpanded((current) => {
       const next = new Set(current)
@@ -120,6 +135,7 @@ export function Sidebar({
     const project = projects.get(chat.projectId)
     const led = q ? undefined : started.get(chat.id)
     const working = led?.filter((c) => c.running).length ?? 0
+    const isOpen = openLeads.has(chat.id)
     const status = chat.waiting ? ' waiting' : chat.running ? ' running' : ''
     const row = (
       <div
@@ -153,12 +169,20 @@ export function Sidebar({
             </span>
           )}
           {led && (
-            <span
-              className={`lead-count${working > 0 ? ' active' : ''}`}
-              title={`Started ${led.length} ${led.length === 1 ? 'chat' : 'chats'}, ${working} working`}
+            <button
+              className={`lead-toggle${isOpen ? ' open' : ''}`}
+              title={`Started ${led.length} ${led.length === 1 ? 'chat' : 'chats'}, ${working} working. ${isOpen ? 'Hide' : 'Show'} them.`}
+              aria-expanded={isOpen}
+              onClick={(e) => {
+                e.stopPropagation()
+                toggleLead(chat.id)
+              }}
             >
-              {working}/{led.length}
-            </span>
+              <span className={`lead-count${working > 0 ? ' active' : ''}`}>
+                {working}/{led.length}
+              </span>
+              <ChevronIcon width={10} height={10} className="chevron" />
+            </button>
           )}
           <ChatStatus chat={chat} now={now} />
           <RowMenu
@@ -188,7 +212,9 @@ export function Sidebar({
     return (
       <Fragment key={chat.id}>
         {row}
-        <div className="chat-children">{led.map((c) => chatRow(c, false))}</div>
+        <Collapse open={isOpen} className="chat-children">
+          {led.map((c) => chatRow(c, false))}
+        </Collapse>
       </Fragment>
     )
   }
