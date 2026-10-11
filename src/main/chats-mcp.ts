@@ -31,7 +31,8 @@ export const CHATS_GUIDANCE =
   'chats only when the user asks for them; each one runs on its own and costs its own requests, ' +
   'so otherwise do the work yourself. A chat you start works alongside you and reports back with ' +
   'send_message; its report arrives as a new message once your turn has ended, so never wait or ' +
-  'poll for it.'
+  'poll for it. delete_chat removes a chat you started. run_in_background runs a long command (a ' +
+  'download, a long build or test run) and wakes this chat with its result when it ends.'
 
 /** Each chat's private key, kept for this launch only (see chatKey). */
 const keys = new Map<string, string>()
@@ -65,6 +66,14 @@ export interface ChatsApi {
   message(caller: string, to: string, text: string): 'started' | 'steering' | 'queued'
   /** The project's running chats. */
   runningChats(caller: string): { id: string; title: string; waiting: boolean; self: boolean }[]
+  /** Delete a chat the caller started, stopping it first if it works; returns its title. */
+  deleteStartedChat(caller: string, id: string): Promise<string>
+  /**
+   * Run a command in the caller's project, after the same permission check as
+   * a shell command; when it ends, its result wakes the caller. Returns its
+   * process ID and the file its output goes to.
+   */
+  runInBackground(caller: string, command: string): Promise<{ pid: number; log: string }>
 }
 
 /** What a chat's agent is sent for a message from another chat. */
@@ -138,6 +147,41 @@ export async function buildChatsServer(chats: ChatsApi): Promise<McpServer> {
           queued: `Chat ${to} is busy, so your message is delivered when its current turn ends.`
         }[chats.message(chatForKey(chat), to, message)]
       )
+  )
+
+  server.registerTool(
+    'delete_chat',
+    {
+      description:
+        'Delete a chat you started, by its chat ID, with all its messages. If it is working, it is stopped first. Only chats you started with start_chat can be deleted. Use it when the user asks, or to clear away a chat you started that is no longer needed, such as one you replace with a new one.',
+      inputSchema: {
+        to: z.string().describe('The chat ID of the chat to delete'),
+        ...chatArg
+      },
+      annotations: { destructiveHint: true }
+    },
+    async ({ to, chat }) => {
+      const title = await chats.deleteStartedChat(chatForKey(chat), to)
+      return text(`Deleted chat ${to} ("${title}").`)
+    }
+  )
+
+  server.registerTool(
+    'run_in_background',
+    {
+      description:
+        "Run a long shell command in the project folder in the background, such as a download, a long build or a long test run, and be woken when it ends. Use it instead of your own shell's background mode or &: those cannot wake this chat. It returns at once; when the command ends, this chat gets a message with its exit code and the end of its output, as a new turn or at the next step of the current one. So end your turn after starting it, without waiting or polling. Not for servers that keep running (dev servers, watchers): start those with your own shell.",
+      inputSchema: {
+        command: z.string().describe('The bash command to run'),
+        ...chatArg
+      }
+    },
+    async ({ command, chat }) => {
+      const { pid, log } = await chats.runInBackground(chatForKey(chat), command)
+      return text(
+        `Started in the background (process ${pid}). Its output goes to ${log}. This chat is woken with the result when it ends, so end your turn now.`
+      )
+    }
   )
 
   server.registerTool(

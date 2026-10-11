@@ -430,7 +430,7 @@ function groupAlive(pid: number): boolean {
  * Remember a group to stop at quit. Groups that end are forgotten within 30
  * seconds, so a later, unrelated group that reuses the number is not signalled.
  */
-function keepForQuit(pid: number): void {
+export function keepForQuit(pid: number): void {
   leftRunning.add(pid)
   pruneTimer ??= setInterval(() => {
     for (const group of leftRunning) if (!groupAlive(group)) leftRunning.delete(group)
@@ -448,7 +448,7 @@ export function stopLeftRunning(): void {
 }
 
 /** Signal a command's process group; it may have exited already. */
-function killGroup(pid: number, signal: NodeJS.Signals): void {
+export function killGroup(pid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-pid, signal)
   } catch {
@@ -457,7 +457,7 @@ function killGroup(pid: number, signal: NodeJS.Signals): void {
 }
 
 /** The last MAX_LINES lines, within MAX_BYTES. */
-function tail(output: string): string {
+export function tail(output: string): string {
   let lines = output.split('\n')
   if (lines.length > MAX_LINES) lines = lines.slice(-MAX_LINES)
   let result = lines.join('\n')

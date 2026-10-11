@@ -427,7 +427,13 @@ const Item = memo(function Item({
       return (
         <div className="user-msg">
           <div className="bubble">
-            {item.from && <div className="bubble-from">From {item.from.title}</div>}
+            {item.from && (
+              <div className="bubble-from">
+                {item.from.kind === 'command'
+                  ? 'Background command ended'
+                  : `From ${item.from.title}`}
+              </div>
+            )}
             {item.text}
             {item.attachments && (
               <div className="msg-attachments">

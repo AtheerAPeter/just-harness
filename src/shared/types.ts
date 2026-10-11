@@ -150,9 +150,17 @@ export interface AgentStatus {
 }
 
 /** The chat a message came from, as it was titled when it sent it. */
-export interface ChatSender {
-  chatId: string
-  title: string
+/**
+ * Who sent a message the user did not write: another chat's agent (saved
+ * before senders had a kind, so the kind may be missing), or a command the
+ * chat ran in the background, reporting that it ended (see chats-mcp.ts).
+ */
+export type ChatSender =
+  { kind?: 'chat'; chatId: string; title: string } | { kind: 'command'; command: string }
+
+/** The chat a message came from, when another chat sent it. */
+export function senderChat(from: ChatSender | undefined): string | undefined {
+  return from && from.kind !== 'command' ? from.chatId : undefined
 }
 
 /** 'interrupted': the turn ended before the agent finished the call. */
@@ -169,7 +177,7 @@ export type ChatItem =
       sentAt?: number
       /** How long the agent worked on it, once its turn has ended. */
       workedMs?: number
-      /** Sent by another chat's agent (see chats-mcp.ts), not by the user. */
+      /** Sent by another chat's agent or a background command (see chats-mcp.ts), not by the user. */
       from?: ChatSender
     }
   | { kind: 'text'; id: string; text: string }

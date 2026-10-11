@@ -21,7 +21,7 @@ import type {
   ChatSender,
   ToolStatus
 } from '../shared/types'
-import { modelOptions, type ModelSource } from '../shared/types'
+import { modelOptions, senderChat, type ModelSource } from '../shared/types'
 import * as store from './store'
 import {
   browserId,
@@ -53,6 +53,7 @@ import {
   type Permissions
 } from './permissions'
 import { chatPreview } from './preview'
+import { startBackground, stopBackground, type Finished } from './background'
 import { HarnessAgent } from './harness/agent'
 import { COMPACT_AT, formatTokens } from './harness/compaction'
 import { stopLeftRunning } from './harness/tools'
@@ -1168,6 +1169,37 @@ interface Waiting {
   from?: ChatSender
 }
 
+/** run_in_background asks the user with these, as for a shell command. */
+const BACKGROUND_OPTIONS: acp.PermissionOption[] = [
+  { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+  { optionId: 'reject', name: 'Reject', kind: 'reject_once' }
+]
+
+/** What a chat is told when a command it ran in the background ends. */
+function finishedMessage(f: Finished): string {
+  const how =
+    f.code === 0
+      ? 'finished'
+      : f.code !== null
+        ? `failed with exit code ${f.code}`
+        : `was stopped by ${f.signal ?? 'a signal'}`
+  return [
+    `The command you ran in the background ${how} after ${formatDuration(f.ms)}:`,
+    f.command,
+    f.output.trim() ? `End of its output:\n${f.output.trimEnd()}` : 'It printed nothing.',
+    `Full output: ${f.log}`
+  ].join('\n\n')
+}
+
+/** "45s", "3m 12s", "1h 5m". */
+function formatDuration(ms: number): string {
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ${s % 60}s`
+  return `${Math.floor(m / 60)}h ${m % 60}m`
+}
+
 /** Messages from other chats a chat got since the user last wrote in it. */
 function fromChatsSinceUser(chatId: string): number {
   const items = store.getMessages(chatId)
@@ -1314,6 +1346,7 @@ export class AgentManager implements ChatsApi {
 
   async deleteChat(chatId: string): Promise<void> {
     this.inbox.delete(chatId)
+    stopBackground(chatId)
     const chat = store.getChat(chatId)
     if (chat.running) await this.cancel(chatId)
     await this.processFor(chatId).release(chatId)
@@ -1542,7 +1575,9 @@ export class AgentManager implements ChatsApi {
   ): Promise<{ prompt: string; blocks: acp.ContentBlock[] }> {
     const { agent } = store.getChat(chatId)
     let prompt = from
-      ? fromChatPrompt(from.title, browserId(from.chatId), text, first)
+      ? from.kind === 'command'
+        ? text
+        : fromChatPrompt(from.title, browserId(from.chatId), text, first)
       : this.expandChatsTag(chatId, this.expandBrowserTag(chatId, this.expandSkill(chatId, text)))
     // The harness passes each chat's ID to the tools itself.
     if (!isHarnessAgent(agent)) prompt = this.withChatId(chatId, prompt)
@@ -1604,7 +1639,7 @@ export class AgentManager implements ChatsApi {
    */
   private mayMessage(sender: Chat, target: Chat): boolean {
     const first = store.getMessages(sender.id).find((i): i is UserItem => i.kind === 'user')
-    if (first?.from?.chatId === target.id) return true
+    if (senderChat(first?.from) === target.id) return true
     return !(
       (target.bypassPermissions && !sender.bypassPermissions) ||
       (sender.projectOnly && !target.projectOnly)
@@ -1618,7 +1653,7 @@ export class AgentManager implements ChatsApi {
     const turn = store.getMessages(caller).findLast((i): i is UserItem => i.kind === 'user')
     if (turn?.from) {
       throw new Error(
-        'Not started: another chat started this turn, and only turns the user started can start chats. Do the work yourself.'
+        'Not started: another chat or a background command started this turn, and only turns the user started can start chats. Do the work yourself.'
       )
     }
     if (!prompt.trim()) throw new Error('"prompt" must describe the task.')
@@ -1675,6 +1710,77 @@ export class AgentManager implements ChatsApi {
       }))
   }
 
+  /** Delete a chat the caller started; one that is working is stopped first. */
+  async deleteStartedChat(caller: string, id: string): Promise<string> {
+    const lead = this.caller(caller)
+    const target = this.chatById(id, lead.projectId)
+    if (target.startedBy !== lead.id) {
+      throw new Error(
+        `Not deleted: chat ${id} was not started by this chat, and a chat can delete only the chats it started.`
+      )
+    }
+    await this.deleteChat(target.id)
+    return target.title
+  }
+
+  /**
+   * Run a command in the caller's project in the background; it wakes the
+   * caller when it ends (see wake). The app's own agents asked about this call
+   * already, as about every tool call; for the others the app asks here, as
+   * for a shell command, since their own rules let MCP tools run unasked.
+   */
+  async runInBackground(caller: string, command: string): Promise<{ pid: number; log: string }> {
+    const chat = this.caller(caller)
+    if (!command.trim()) throw new Error('"command" is empty.')
+    if (!isHarnessAgent(chat.agent)) {
+      const response = await requestPermission(
+        this.events,
+        this.permissions,
+        chat.id,
+        {
+          toolCallId: crypto.randomUUID(),
+          title: `Run in the background: ${command}`,
+          kind: 'execute',
+          rawInput: { command }
+        },
+        BACKGROUND_OPTIONS
+      )
+      const option = response.outcome.outcome === 'selected' ? response.outcome.optionId : undefined
+      if (option !== 'allow') throw new Error('Not started: the user did not allow the command.')
+    }
+    const cwd = store.getProject(chat.projectId).path
+    return startBackground(chat.id, command, cwd, (finished) => this.wake(chat.id, finished))
+  }
+
+  /**
+   * Tell a chat its background command ended: a new turn when it is idle, or
+   * at the next step of its turn (the app's own agents) or its end (the
+   * others). It counts against the messages a chat takes between the user's
+   * own, so commands that start commands cannot keep a chat going.
+   */
+  private wake(chatId: string, finished: Finished): void {
+    if (!store.getState().chats.some((c) => c.id === chatId)) return
+    const text = finishedMessage(finished)
+    const from: ChatSender = { kind: 'command', command: finished.command }
+    const queued = this.inbox.get(chatId) ?? []
+    if (fromChatsSinceUser(chatId) + queued.filter((m) => m.from).length >= MAX_FROM_CHATS) {
+      this.events.item(
+        chatId,
+        store.upsertItem(chatId, {
+          kind: 'notice',
+          id: crypto.randomUUID(),
+          text: `A background command ended, but this chat has taken ${MAX_FROM_CHATS} messages from other chats and commands since you last wrote, so it was not woken. ${text}`
+        })
+      )
+      return
+    }
+    if (!store.getChat(chatId).running) {
+      void this.send(chatId, text, [], from)
+      return
+    }
+    this.inbox.set(chatId, [...queued, { text, attachments: [], from }])
+  }
+
   /**
    * The waiting messages that may still be delivered: those from a chat that
    * was deleted, or may no longer message this one, are dropped with a notice.
@@ -1682,7 +1788,7 @@ export class AgentManager implements ChatsApi {
   private deliverable(chatId: string, queued: Waiting[]): Waiting[] {
     const target = store.getChat(chatId)
     return queued.filter(({ from }) => {
-      if (!from) return true
+      if (!from || from.kind === 'command') return true
       const sender = store.getState().chats.find((c) => c.id === from.chatId)
       if (sender && this.mayMessage(sender, target)) return true
       this.events.item(

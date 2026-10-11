@@ -11,7 +11,14 @@ import {
   writeFileSync
 } from 'node:fs'
 import { join } from 'node:path'
-import type { AppState, Chat, ChatItem, Project, Theme } from '../shared/types'
+import {
+  senderChat,
+  type AppState,
+  type Chat,
+  type ChatItem,
+  type Project,
+  type Theme
+} from '../shared/types'
 import { cleanStoredOutput } from './tool-output'
 import { chatPreview } from './preview'
 
@@ -99,7 +106,7 @@ for (const chat of state.chats) {
     chat.preview ??= chatPreview(items)
     // Only a chat's first message can come from the chat that started it (see startChat).
     const first = items.find((i) => i.kind === 'user')
-    chat.startedBy ??= (first?.kind === 'user' && first.from?.chatId) || null
+    chat.startedBy ??= (first?.kind === 'user' && senderChat(first.from)) || null
   }
   // Before tabs, a chat's browser kept one page.
   const legacy = chat as Chat & { browserUrl?: string }
