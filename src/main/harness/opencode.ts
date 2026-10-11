@@ -31,13 +31,13 @@ const DATA_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'sh
 const STATE_DIR = join(process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'opencode')
 
 /**
- * The installed opencode's major version, which decides where its keys are
- * and how its config is read.
+ * The installed opencode's major version, which decides where its keys are,
+ * how its config is read, and how the app gives it its MCP servers (agents.ts).
  * Read once per run, as the app reads each CLI's version.
  */
 let installedMajor: Promise<number | undefined> | undefined
 
-async function opencodeMajor(): Promise<number | undefined> {
+export async function opencodeMajor(): Promise<number | undefined> {
   installedMajor ??= commandVersion('opencode').then((version) => {
     const major = version?.match(/(\d+)\.\d+\.\d+/)?.[1]
     return major ? Number(major) : undefined

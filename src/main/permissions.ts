@@ -120,6 +120,9 @@ const CONTENT_KEYS = new Set([
   'diff'
 ])
 
+/** A quoted string in a script: '…', "…" or `…`, with escapes. */
+const STRING_LITERAL = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/g
+
 /** Paths that are never "outside": shell plumbing like 2>/dev/null. */
 const HARMLESS_PATHS = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/stdin'])
 
@@ -149,6 +152,15 @@ export function outsidePath(projectPath: string, toolCall: acp.ToolCallUpdate): 
   const candidates = (toolCall.locations ?? []).map((l) => l.path)
   const scan = (value: unknown, key?: string): string | undefined => {
     if (key && CONTENT_KEYS.has(key)) return undefined
+    // A script (opencode 2's Code Mode runs MCP tools from one): its paths are in its strings;
+    // elsewhere a "/" is a comment or a division.
+    if (key === 'code' && typeof value === 'string') {
+      for (const [, , literal] of value.matchAll(STRING_LITERAL)) {
+        const found = scan(literal)
+        if (found) return found
+      }
+      return undefined
+    }
     if (typeof value === 'string') {
       if (key === 'command') {
         const escape = value.match(SHELL_ESCAPES)

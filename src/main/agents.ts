@@ -25,8 +25,10 @@ import { modelOptions, type ModelSource } from '../shared/types'
 import * as store from './store'
 import {
   browserId,
+  browserMcpEndpoint,
   browserMcpServer,
   BROWSER_GUIDANCE,
+  chatsMcpEndpoint,
   chatsMcpServer,
   SERVER_NAME as BROWSER_SERVER
 } from './browser-mcp'
@@ -57,7 +59,7 @@ import { stopLeftRunning } from './harness/tools'
 import { closeMcp } from './harness/mcp'
 import { isHarnessAgent, type HarnessAgentId, type Provider } from './harness/provider'
 import { commandCode } from './harness/commandcode'
-import { openCode } from './harness/opencode'
+import { openCode, opencodeMajor } from './harness/opencode'
 import { cline } from './harness/cline'
 
 /** Agents run as a CLI over ACP; the app's own harness agents are not. */
@@ -140,21 +142,57 @@ async function loadSdk(): Promise<typeof acp> {
 }
 
 /**
- * Opencode ships a built-in `browser` tool that drives the user's own desktop
- * browser, and models sometimes pick it over the built-in panel. Deny it for the
- * opencode this app starts; OPENCODE_CONFIG_CONTENT is applied on top of the
- * user's config, so their own settings stay in effect. Opencode 2 reads this
- * opencode 1 form too, as a rule denying its `browser` permission.
+ * The environment an agent runs in, and whether the app's MCP servers are in
+ * its config, so that session/new leaves them out.
+ *
+ * Opencode gets config of the app's in OPENCODE_CONFIG_CONTENT, applied on top
+ * of the user's config, so their own settings stay in effect. It ships a
+ * built-in `browser` tool that drives the user's own desktop browser, and
+ * models sometimes pick it over the built-in panel, so that is denied.
+ * Opencode 2 reads this opencode 1 form too, as a rule denying its `browser`
+ * permission.
+ *
+ * Opencode 2 also gets the app's MCP servers here instead of in session/new.
+ * A server added over ACP runs in its Code Mode, where the model calls tools
+ * from one `execute` script: the chat shows a script instead of each browser
+ * step, and a permission question shows the script instead of the call. Only
+ * its config can turn Code Mode off for a server. Opencode 1 has no Code Mode,
+ * and its config would refuse the field, so it gets them in session/new.
  */
-function agentEnv(agent: AgentId): NodeJS.ProcessEnv {
-  if (agent !== 'opencode') return process.env
+async function agentEnv(agent: AgentId): Promise<{ env: NodeJS.ProcessEnv; mcpInConfig: boolean }> {
+  if (agent !== 'opencode') return { env: process.env, mcpInConfig: false }
   const inline = process.env.OPENCODE_CONFIG_CONTENT
   const config = inline ? (JSON.parse(inline) as Record<string, unknown>) : {}
-  const permission = {
+  config.permission = {
     ...(config.permission as Record<string, unknown> | undefined),
     browser: 'deny'
   }
-  return { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, permission }) }
+  const mcpInConfig = ((await opencodeMajor()) ?? 1) >= 2
+  if (mcpInConfig) {
+    const mcp = (config.mcp ?? {}) as { servers?: Record<string, unknown> }
+    const servers = Object.fromEntries(
+      (
+        [
+          [BROWSER_SERVER, browserMcpEndpoint()],
+          [CHATS_SERVER, chatsMcpEndpoint()]
+        ] as const
+      ).map(([name, endpoint]) => [
+        name,
+        {
+          type: 'remote',
+          url: endpoint.url,
+          headers: { Authorization: `Bearer ${endpoint.token}` },
+          oauth: false,
+          codemode: false
+        }
+      ])
+    )
+    config.mcp = { ...mcp, servers: { ...mcp.servers, ...servers } }
+  }
+  return {
+    env: { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify(config) },
+    mcpInConfig
+  }
 }
 
 const IMAGE_TYPES: Record<string, string> = {
@@ -324,6 +362,8 @@ class AgentProcess implements AgentBackend {
   private connection?: acp.ClientConnection
   private starting?: Promise<acp.ClientConnection>
   private initResult?: acp.InitializeResponse
+  /** Whether the app's MCP servers are in the running process's config (see agentEnv). */
+  private mcpInConfig = false
   /** ACP session id -> chat id, for routing session/update notifications. */
   private sessionChats = new Map<string, string>()
   /** Sessions whose history is being replayed by session/load; updates are dropped. */
@@ -382,9 +422,11 @@ class AgentProcess implements AgentBackend {
     const { client, methods, ndJsonStream, PROTOCOL_VERSION } = await loadSdk()
     await loadShellPath()
     const { command, args } = COMMANDS[this.agent]
+    const { env, mcpInConfig } = await agentEnv(this.agent)
+    this.mcpInConfig = mcpInConfig
     const child = spawn(command, args, {
       cwd: homedir(),
-      env: agentEnv(this.agent),
+      env,
       stdio: ['pipe', 'pipe', 'pipe']
     })
     await new Promise<void>((resolve, reject) => {
@@ -552,7 +594,9 @@ class AgentProcess implements AgentBackend {
     // One shared address for every chat: opencode keeps MCP servers by name for
     // all its sessions, so a per-chat address would be taken over by whichever
     // chat opened last. Chats are told their chat ID instead.
-    const mcpServers = this.takesHttpMcp() ? [browserMcpServer(), chatsMcpServer()] : []
+    // Opencode 2 has them in its config already (see agentEnv).
+    const mcpServers =
+      this.takesHttpMcp() && !this.mcpInConfig ? [browserMcpServer(), chatsMcpServer()] : []
 
     let sessionId: string
     let configOptions: acp.SessionConfigOption[] | null | undefined
