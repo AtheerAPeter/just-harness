@@ -222,7 +222,7 @@ export class BuiltinBrowser {
   constructor(
     private readonly window: BrowserWindow,
     private readonly onState: (state: BrowserState) => void,
-    /** Open the panel in this chat (it is the selected chat). */
+    /** Open the panel in this chat: now if it is the selected chat, else when it is selected. */
     private readonly requestShow: (chatId: string) => void,
     private readonly isRunning: (chatId: string) => boolean,
     /** Where each chat's tabs are kept, so they survive restarts. */
@@ -677,14 +677,17 @@ export class BuiltinBrowser {
 
   /**
    * Get a tab of a chat's browser ready for an agent: the given one, or the
-   * active one. For the selected chat the panel is opened so the user can
-   * watch; other chats work in the background.
+   * active one. The chat's panel is opened, so the user sees what the agent
+   * does: at once in the selected chat, waiting for it to show, and in any
+   * other chat when the user selects it.
    */
   async ensureReady(chatId: string, tabId?: string): Promise<ChatPage> {
     if (chatId === this.activeChat && !this.panelBounds) {
       const shown = new Promise<void>((resolve) => this.waitingForPanel.push(resolve))
       this.requestShow(chatId)
       await Promise.race([shown, new Promise((resolve) => setTimeout(resolve, 3000))])
+    } else if (chatId !== this.activeChat) {
+      this.requestShow(chatId)
     }
     const browser = this.browserFor(chatId)
     const tab = tabId ? this.findTab(browser, tabId) : browser.active!

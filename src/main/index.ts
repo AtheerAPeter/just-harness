@@ -115,7 +115,11 @@ function createWindow(): BuiltinBrowser {
   const browser = new BuiltinBrowser(
     mainWindow,
     (state) => send('browser:state', state),
-    (chatId) => setBrowserOpen(chatId, true),
+    (chatId) => {
+      if (!store.getState().chats.find((c) => c.id === chatId)?.browserOpen) {
+        setBrowserOpen(chatId, true)
+      }
+    },
     (chatId) => store.getState().chats.some((c) => c.id === chatId && c.running),
     {
       get: (chatId) => store.getState().chats.find((c) => c.id === chatId)?.browserTabs,
