@@ -29,6 +29,13 @@ export const DEFAULT_REDIRECT = 'http://127.0.0.1:19877/mcp/oauth/callback'
 /** A sign-in the user has not finished by then is given up. */
 const SIGN_IN_TIMEOUT_MS = 5 * 60_000
 
+/**
+ * The app registers as a native client (OpenID Connect Registration's application_type), as the MCP spec requires of
+ * desktop apps. Left out, an OIDC server takes it for a web client and turns down the loopback redirect. The SDK's
+ * type does not list the field yet, but it sends the metadata as given.
+ */
+type NativeClientMetadata = OAuthClientMetadata & { application_type: 'native' }
+
 interface Saved {
   /** The redirect address the client was registered with; another one needs a new registration. */
   redirectUrl?: string
@@ -70,10 +77,11 @@ export class McpOAuth implements OAuthClientProvider {
     return (this.server.oauth && this.server.oauth.redirectUri) || DEFAULT_REDIRECT
   }
 
-  get clientMetadata(): OAuthClientMetadata {
+  get clientMetadata(): NativeClientMetadata {
     const oauth = this.server.oauth || {}
     return {
       client_name: 'Just Harness',
+      application_type: 'native',
       redirect_uris: [this.redirectUrl],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
