@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AGENTS, type AgentStatus, type AgentId, type AppState } from '../../shared/types'
+import {
+  AGENTS,
+  startedChats,
+  type AgentStatus,
+  type AgentId,
+  type AppState
+} from '../../shared/types'
 import { Sidebar } from './components/Sidebar'
 import { ChatView } from './components/ChatView'
 import { SkillsView } from './components/SkillsView'
 import { SettingsView } from './components/SettingsView'
 import { BrowserPanel } from './components/BrowserPanel'
+import { LedChats } from './components/LedChats'
 import { ChatIcon, GlobeIcon, SidebarIcon } from './components/icons'
 import { readPref, writePref } from './lib/prefs'
 
@@ -36,6 +43,8 @@ export default function App(): React.JSX.Element {
   useEffect(() => writePref('browserWidth', browserWidth), [browserWidth])
 
   const chat = state.chats.find((c) => c.id === selectedChatId)
+  /** The chats the open chat started, if it started any. */
+  const led = chat && startedChats(state.chats).get(chat.id)
   // The browser panel belongs to the chat: each chat opens and closes its own.
   const browserOpen = Boolean(chat?.browserOpen)
   const toggleBrowser = useCallback((chatId: string | undefined, open?: boolean) => {
@@ -166,6 +175,15 @@ export default function App(): React.JSX.Element {
             <GlobeIcon />
           </button>
         </header>
+        {view === 'chat' && chat && led && (
+          <LedChats
+            chats={led}
+            onSelect={(id) => {
+              setSelectedChatId(id)
+              setView('chat')
+            }}
+          />
+        )}
         {view === 'skills' ? (
           <SkillsView key={project?.id} project={project} />
         ) : view === 'settings' ? (

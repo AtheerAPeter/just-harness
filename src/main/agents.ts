@@ -1583,7 +1583,8 @@ export class AgentManager implements ChatsApi {
       agent: parent.agent,
       settings: { ...parent.settings },
       bypassPermissions: parent.bypassPermissions,
-      projectOnly: parent.projectOnly
+      projectOnly: parent.projectOnly,
+      startedBy: parent.id
     })
     // Titled from the task before send's first await.
     void this.send(chat.id, prompt, [], { chatId: parent.id, title: parent.title })

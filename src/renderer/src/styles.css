@@ -359,6 +359,64 @@ kbd {
   height: 10px;
 }
 
+/* In a chat that started chats: a link to each, with what it is doing. */
+.led-chats {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.led-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 4px;
+  color: var(--text-soft);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.led-chat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  height: 22px;
+  padding: 0 8px;
+  background: var(--fill);
+  color: var(--text);
+}
+
+.led-chat:hover {
+  background: var(--fill-strong);
+}
+
+.led-chat .chat-dot.running {
+  width: 9px;
+  height: 9px;
+}
+
+.led-title {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.led-state {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.led-chat.waiting .led-state {
+  color: var(--accent-text);
+}
+
 /* Sidebar */
 
 .sidebar {
@@ -572,6 +630,57 @@ kbd {
   width: 6px;
   height: 6px;
   border-radius: 50%;
+}
+
+/* A chat that started chats: its icon, with its own status dot at the corner. */
+.lead-mark {
+  position: relative;
+  justify-self: center;
+  display: grid;
+  place-items: center;
+  color: var(--text);
+}
+
+.lead-mark .chat-dot {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+}
+
+.lead-mark .chat-dot.running {
+  width: 8px;
+  height: 8px;
+  background: var(--panel);
+}
+
+.chat-row.lead .chat-title {
+  font-weight: 600;
+}
+
+/* How many of the chats it started are working, of all of them. */
+.lead-count {
+  flex-shrink: 0;
+  height: 16px;
+  padding: 0 5px;
+  display: inline-grid;
+  place-items: center;
+  background: var(--fill-strong);
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.lead-count.active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* The chats a chat started, under it, joined to it by a line. */
+.chat-children {
+  margin-left: 15px;
+  padding-left: 2px;
+  border-left: 1px solid var(--border-strong);
 }
 
 .chat-dot.waiting {

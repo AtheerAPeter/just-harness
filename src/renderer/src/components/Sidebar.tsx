@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { ThemeToggle } from './ThemeToggle'
 import { Collapse } from './Collapse'
-import type { AppState, Chat, Project } from '../../../shared/types'
+import { startedChats, type AppState, type Chat, type Project } from '../../../shared/types'
 import { readPref, writePref } from '../lib/prefs'
 import { useOverlay } from '../lib/overlays'
 import {
@@ -10,6 +10,7 @@ import {
   ClockIcon,
   FolderIcon,
   FolderPlusIcon,
+  LeadIcon,
   MoreIcon,
   PlusIcon,
   SearchIcon,
@@ -83,10 +84,27 @@ export function Sidebar({
     chat.title.toLowerCase().includes(q) ||
     Boolean(projects.get(chat.projectId)?.name.toLowerCase().includes(q))
   const chats = state.chats.filter(matches).sort((a, b) => b.updatedAt - a.updatedAt)
-  // Chats that need the user come first, then those still working. A waiting chat is also running.
+  // A chat that started chats leads them: they are listed under it, wherever it is listed.
+  // While searching, every match is listed on its own.
+  const started = startedChats(state.chats)
+  const nested = (chat: Chat): boolean =>
+    !q && chat.startedBy != null && !!started.get(chat.startedBy)
+  // Chats that need the user come first, then those still working. A waiting chat is also
+  // running. Both lists show a chat even when it is also under the chat that leads it, since a
+  // lead usually ends its turn once it has started its chats; but a working chat whose lead is
+  // working too is shown under the lead only.
+  const byId = new Map(state.chats.map((c) => [c.id, c]))
+  const leadWorking = (chat: Chat): boolean => {
+    const lead = nested(chat) ? byId.get(chat.startedBy!) : undefined
+    return Boolean(lead?.running && !lead.waiting)
+  }
   const waiting = chats.filter((c) => c.waiting)
-  const running = chats.filter((c) => c.running && !c.waiting)
-  const rest = chats.filter((c) => !c.running && !c.waiting)
+  const running = chats.filter((c) => c.running && !c.waiting && !leadWorking(c))
+  const rest = chats.filter((c) => !c.running && !c.waiting && !nested(c))
+  /** Whether the open chat is this one or one it leads, to keep it in view past "Show more". */
+  const holdsSelected = (chat: Chat): boolean =>
+    chat.id === selectedChatId ||
+    Boolean(started.get(chat.id)?.some((c) => c.id === selectedChatId))
 
   function toggle(projectId: string): void {
     setExpanded((current) => {
@@ -100,14 +118,24 @@ export function Sidebar({
   /** One chat. Pinned and Recent rows say which project the chat belongs to. */
   function chatRow(chat: Chat, withProject: boolean): React.JSX.Element {
     const project = projects.get(chat.projectId)
-    return (
+    const led = q ? undefined : started.get(chat.id)
+    const working = led?.filter((c) => c.running).length ?? 0
+    const status = chat.waiting ? ' waiting' : chat.running ? ' running' : ''
+    const row = (
       <div
         key={chat.id}
-        className={`chat-row${view === 'chat' && chat.id === selectedChatId ? ' selected' : ''}`}
+        className={`chat-row${led ? ' lead' : ''}${view === 'chat' && chat.id === selectedChatId ? ' selected' : ''}`}
         title={chat.waiting ? 'Waiting for approval' : chat.preview || undefined}
         onClick={() => onSelectChat(chat.id)}
       >
-        <span className={`chat-dot${chat.waiting ? ' waiting' : chat.running ? ' running' : ''}`} />
+        {led ? (
+          <span className="lead-mark" title="Leads the chats it started">
+            <LeadIcon width={14} height={14} />
+            {status && <span className={`chat-dot${status}`} />}
+          </span>
+        ) : (
+          <span className={`chat-dot${status}`} />
+        )}
         <div className="chat-line">
           {renaming === chat.id ? (
             <RenameField
@@ -122,6 +150,14 @@ export function Sidebar({
           ) : (
             <span className="chat-title" onDoubleClick={() => setRenaming(chat.id)}>
               {chat.title}
+            </span>
+          )}
+          {led && (
+            <span
+              className={`lead-count${working > 0 ? ' active' : ''}`}
+              title={`Started ${led.length} ${led.length === 1 ? 'chat' : 'chats'}, ${working} working`}
+            >
+              {working}/{led.length}
             </span>
           )}
           <ChatStatus chat={chat} now={now} />
@@ -148,6 +184,13 @@ export function Sidebar({
         )}
       </div>
     )
+    if (!led) return row
+    return (
+      <Fragment key={chat.id}>
+        {row}
+        <div className="chat-children">{led.map((c) => chatRow(c, false))}</div>
+      </Fragment>
+    )
   }
 
   function projectGroup(project: Project): React.JSX.Element | null {
@@ -159,7 +202,7 @@ export function Sidebar({
     const limit = q ? own.length : (shown[project.id] ?? CHAT_PAGE)
     const visible = own.slice(0, limit)
     // Keep the open chat visible even when it is older than the cutoff.
-    const selected = own.find((c) => c.id === selectedChatId)
+    const selected = own.find(holdsSelected)
     if (selected && !visible.includes(selected)) visible.push(selected)
     return (
       <div key={project.id} className="project">
@@ -232,7 +275,7 @@ export function Sidebar({
   function recentList(): React.JSX.Element {
     const limit = q ? rest.length : (shown[RECENT_KEY] ?? RECENT_PAGE)
     const visible = rest.slice(0, limit)
-    const selected = rest.find((c) => c.id === selectedChatId)
+    const selected = rest.find(holdsSelected)
     if (selected && !visible.includes(selected)) visible.push(selected)
     const startOfToday = new Date(now).setHours(0, 0, 0, 0)
     const today = visible.filter((c) => c.updatedAt >= startOfToday)

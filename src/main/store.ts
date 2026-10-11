@@ -91,10 +91,15 @@ for (const chat of state.chats) {
   delete chat.waitingMessages
   // The browser panel starts closed; an agent or the header button opens it.
   chat.browserOpen = false
-  // Chats from before sidebar previews get theirs once; it is saved from then on.
-  if (chat.preview === undefined) {
+  // Chats from before sidebar previews, or before the chat that started a chat was recorded,
+  // get them once from their messages; they are saved from then on.
+  if (chat.preview === undefined || chat.startedBy === undefined) {
     const read = readJson<ChatItem[]>(join(chatsDir, `${chat.id}.json`), [])
-    chat.preview = 'value' in read ? chatPreview(read.value) : ''
+    const items = 'value' in read ? read.value : []
+    chat.preview ??= chatPreview(items)
+    // Only a chat's first message can come from the chat that started it (see startChat).
+    const first = items.find((i) => i.kind === 'user')
+    chat.startedBy ??= (first?.kind === 'user' && first.from?.chatId) || null
   }
   // Before tabs, a chat's browser kept one page.
   const legacy = chat as Chat & { browserUrl?: string }
@@ -155,8 +160,10 @@ export function createChat({
   agent,
   settings,
   bypassPermissions,
-  projectOnly
-}: Pick<Chat, 'projectId' | 'agent' | 'settings' | 'bypassPermissions' | 'projectOnly'>): Chat {
+  projectOnly,
+  startedBy = null
+}: Pick<Chat, 'projectId' | 'agent' | 'settings' | 'bypassPermissions' | 'projectOnly'> &
+  Pick<Partial<Chat>, 'startedBy'>): Chat {
   const chat: Chat = {
     id: crypto.randomUUID(),
     projectId,
@@ -165,6 +172,7 @@ export function createChat({
     settings,
     bypassPermissions,
     projectOnly,
+    startedBy,
     running: false,
     createdAt: Date.now(),
     updatedAt: Date.now()

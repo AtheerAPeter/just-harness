@@ -203,3 +203,13 @@ export const ClockIcon = (p: IconProps): React.JSX.Element => (
     <path d="M12 7.5V12l3 2" />
   </Icon>
 )
+/** A chat that started other chats: one node over the ones it leads. */
+export const LeadIcon = (p: IconProps): React.JSX.Element => (
+  <Icon {...p}>
+    <rect x="9" y="3" width="6" height="5" />
+    <path d="M12 8v3.5M5 11.5h14M5 11.5V15M12 11.5V15M19 11.5V15" />
+    <rect x="3" y="15" width="4" height="5" />
+    <rect x="10" y="15" width="4" height="5" />
+    <rect x="17" y="15" width="4" height="5" />
+  </Icon>
+)

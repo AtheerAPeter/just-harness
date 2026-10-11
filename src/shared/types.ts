@@ -51,8 +51,29 @@ export interface Chat {
   browserTabs?: SavedTabs
   /** Whether the browser panel is open in this chat; every chat starts closed at launch. */
   browserOpen?: boolean
+  /**
+   * The chat whose agent started this one with start_chat (chats-mcp.ts), or
+   * null when the user did. Absent only in chats saved before it was recorded,
+   * until the next launch looks it up.
+   */
+  startedBy?: string | null
   createdAt: number
   updatedAt: number
+}
+
+/**
+ * The chats each chat started (see Chat.startedBy), in the order it started
+ * them. A chat whose starter was deleted is listed on its own again.
+ */
+export function startedChats(chats: Chat[]): Map<string, Chat[]> {
+  const ids = new Set(chats.map((c) => c.id))
+  const started = new Map<string, Chat[]>()
+  for (const chat of [...chats].sort((a, b) => a.createdAt - b.createdAt)) {
+    if (chat.startedBy && ids.has(chat.startedBy)) {
+      started.set(chat.startedBy, [...(started.get(chat.startedBy) ?? []), chat])
+    }
+  }
+  return started
 }
 
 /** A file or image attached to a message: a path on disk, or pasted image data. */
