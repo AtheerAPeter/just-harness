@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
 import { closeSync, mkdirSync, openSync } from 'node:fs'
 import { open } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { app } from 'electron'
 import { keepForQuit, killGroup, MAX_BYTES, tail } from './harness/tools'
 import { loadShellPath } from './shell-env'
 
@@ -26,7 +26,12 @@ export interface Finished {
   log: string
 }
 
-const logDir = join(tmpdir(), 'just-harness-background')
+/**
+ * In the app's own data folder, readable by the user only: output can hold
+ * secrets, and a shared temporary folder (Linux's /tmp) could be taken over
+ * by another user.
+ */
+const logDir = join(app.getPath('userData'), 'background')
 
 /** The commands each chat runs, by process ID. */
 const running = new Map<string, Set<number>>()
@@ -39,9 +44,10 @@ export async function startBackground(
   onDone: (finished: Finished) => void
 ): Promise<{ pid: number; log: string }> {
   await loadShellPath()
-  mkdirSync(logDir, { recursive: true })
-  const log = join(logDir, `${crypto.randomUUID().slice(0, 8)}.log`)
-  const fd = openSync(log, 'a')
+  mkdirSync(logDir, { recursive: true, mode: 0o700 })
+  const log = join(logDir, `${crypto.randomUUID()}.log`)
+  // A new file only: 'wx' fails on an existing name instead of following it.
+  const fd = openSync(log, 'wx', 0o600)
   const started = Date.now()
   const child = spawn('/bin/bash', ['-c', command], {
     cwd,
