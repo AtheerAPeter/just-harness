@@ -71,8 +71,15 @@
   --ask-bg: #fffdf8;
   --ask-glow: 0 0 0 1px rgba(255, 195, 0, 0.7), 0 8px 24px -10px rgba(180, 120, 0, 0.3);
 
+  /* The user's messages: ink blocks. */
+  --bubble: #23211d;
+  --bubble-text: #f7f4ee;
+  --bubble-edge: 0 1px 2px rgba(30, 25, 15, 0.25);
+
   /* Width of the chat column; the composer lines up with it. */
   --chat-width: 880px;
+  /* The sidebar's width, which it also slides out by when hidden. */
+  --sidebar-width: 244px;
   --sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   color-scheme: light;
@@ -135,6 +142,10 @@
     --strip-edge: 0 0 0 1px var(--border);
     --ask-bg: #201f1c;
     --ask-glow: 0 0 0 1px rgba(255, 214, 10, 0.32), 0 1px 2px rgba(0, 0, 0, 0.4);
+
+    --bubble: #2c2a26;
+    --bubble-text: #eeeae3;
+    --bubble-edge: inset 0 0 0 1px rgba(255, 248, 235, 0.07);
     color-scheme: dark;
   }
 
@@ -351,7 +362,7 @@ kbd {
 /* Sidebar */
 
 .sidebar {
-  width: 244px;
+  width: var(--sidebar-width);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -859,9 +870,10 @@ kbd {
   letter-spacing: -0.01em;
 }
 
-/* The user's message: a full-width row marked by a rule on its left. */
+/* The user's message: a block on the right. */
 .user-msg {
   display: flex;
+  justify-content: flex-end;
   margin: 6px 0 0;
 }
 
@@ -870,12 +882,11 @@ kbd {
 }
 
 .bubble {
-  flex: 1;
-  min-width: 0;
-  padding: 1px 0 1px 10px;
-  box-shadow: inset 2px 0 0 var(--border-strong);
-  color: var(--text);
-  font-weight: 600;
+  max-width: 78%;
+  padding: 6px 10px;
+  background: var(--bubble);
+  color: var(--bubble-text);
+  box-shadow: var(--bubble-edge);
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -890,7 +901,7 @@ kbd {
 }
 
 .bubble .attachment {
-  background: var(--fill);
+  background: rgba(255, 255, 255, 0.12);
   color: inherit;
 }
 
@@ -2697,8 +2708,7 @@ button,
 }
 
 .sidebar.closed {
-  /* Its width plus the gap after it. */
-  margin-left: -278px;
+  margin-left: calc(-1 * var(--sidebar-width));
   visibility: hidden;
   transition:
     margin-left var(--move) var(--ease),
