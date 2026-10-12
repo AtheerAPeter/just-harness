@@ -95,18 +95,21 @@ export function Sidebar({
   const started = startedChats(state.chats)
   const nested = (chat: Chat): boolean =>
     !q && chat.startedBy != null && !!started.get(chat.startedBy)
+  // A lead is working while any chat it started is, even between its own turns, so it does not
+  // jump between the lists each time a report starts and ends one of its turns.
+  const working = (chat: Chat): boolean =>
+    chat.running || Boolean(started.get(chat.id)?.some((c) => c.running))
   // Chats that need the user come first, then those still working. A waiting chat is also
-  // running. Both lists show a chat even when it is also under the chat that leads it, since a
-  // lead usually ends its turn once it has started its chats; but a working chat whose lead is
-  // working too is shown under the lead only.
+  // running. Both lists show a chat even when it is also under the chat that leads it; but a
+  // working chat whose lead is working too is shown under the lead only.
   const byId = new Map(state.chats.map((c) => [c.id, c]))
   const leadWorking = (chat: Chat): boolean => {
     const lead = nested(chat) ? byId.get(chat.startedBy!) : undefined
-    return Boolean(lead?.running && !lead.waiting)
+    return Boolean(lead && working(lead) && !lead.waiting)
   }
   const waiting = chats.filter((c) => c.waiting)
-  const running = chats.filter((c) => c.running && !c.waiting && !leadWorking(c))
-  const rest = chats.filter((c) => !c.running && !c.waiting && !nested(c))
+  const running = chats.filter((c) => working(c) && !c.waiting && !leadWorking(c))
+  const rest = chats.filter((c) => !working(c) && !c.waiting && !nested(c))
   /** Whether the open chat is this one or one it leads, to keep it in view past "Show more". */
   const holdsSelected = (chat: Chat): boolean =>
     chat.id === selectedChatId ||
@@ -134,9 +137,9 @@ export function Sidebar({
   function chatRow(chat: Chat, withProject: boolean): React.JSX.Element {
     const project = projects.get(chat.projectId)
     const led = q ? undefined : started.get(chat.id)
-    const working = led?.filter((c) => c.running).length ?? 0
+    const workingLed = led?.filter((c) => c.running).length ?? 0
     const isOpen = openLeads.has(chat.id)
-    const status = chat.waiting ? ' waiting' : chat.running ? ' running' : ''
+    const status = chat.waiting ? ' waiting' : working(chat) ? ' running' : ''
     const row = (
       <div
         key={chat.id}
@@ -171,15 +174,15 @@ export function Sidebar({
           {led && (
             <button
               className={`lead-toggle${isOpen ? ' open' : ''}`}
-              title={`Started ${led.length} ${led.length === 1 ? 'chat' : 'chats'}, ${working} working. ${isOpen ? 'Hide' : 'Show'} them.`}
+              title={`Started ${led.length} ${led.length === 1 ? 'chat' : 'chats'}, ${workingLed} working. ${isOpen ? 'Hide' : 'Show'} them.`}
               aria-expanded={isOpen}
               onClick={(e) => {
                 e.stopPropagation()
                 toggleLead(chat.id)
               }}
             >
-              <span className={`lead-count${working > 0 ? ' active' : ''}`}>
-                {working}/{led.length}
+              <span className={`lead-count${workingLed > 0 ? ' active' : ''}`}>
+                {workingLed}/{led.length}
               </span>
               <ChevronIcon width={10} height={10} className="chevron" />
             </button>
