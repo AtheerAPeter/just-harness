@@ -7,8 +7,7 @@ import {
   type AgentStatus,
   type Chat,
   type Skill,
-  type Attachment,
-  isHarnessAgent
+  type Attachment
 } from '../../../shared/types'
 import { Picker } from './Picker'
 import { ModelPicker } from './model-picker/ModelPicker'
@@ -267,11 +266,7 @@ export function Composer({
       )}
       {chat.waitingMessages && (
         <div className="waiting-messages">
-          <div className="waiting-label">
-            {isHarnessAgent(chat.agent)
-              ? 'Joins the turn at its next step'
-              : 'Sends when this turn ends'}
-          </div>
+          <div className="waiting-label">Joins the turn at its next step</div>
           {chat.waitingMessages.map((message, index) => (
             <div className="waiting-message" key={index} title={message}>
               {message}

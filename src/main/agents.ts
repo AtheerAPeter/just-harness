@@ -304,13 +304,15 @@ const INVALID_PARAMS = -32602
 const AUTH_REQUIRED = -32000
 
 /** How a turn ended, for what is shown about it afterwards. */
-type TurnOutcome = 'done' | 'stopped' | 'failed'
+/** 'steered': cut short after a step so the messages waiting for it go at once (see steerAfterStep). */
+type TurnOutcome = 'done' | 'stopped' | 'failed' | 'steered'
 
 /** The last line of a provider-retry notice, by how the turn ended. */
 const RETRY_OUTCOMES: Record<TurnOutcome, string> = {
   done: 'A retry got through.',
   stopped: 'Stopped while retrying.',
-  failed: 'Retrying did not help.'
+  failed: 'Retrying did not help.',
+  steered: 'A retry got through.'
 }
 
 /** Chats always run in the agent's build mode; plan mode is not offered. */
@@ -398,6 +400,8 @@ class AgentProcess implements AgentBackend {
     readonly agent: AcpAgent,
     private readonly events: AgentEvents,
     private readonly permissions: Permissions,
+    /** A step of the chat's turn ended (a tool call finished) and no other is running. */
+    private readonly onStepDone: (chatId: string) => void,
     /** Set when this process serves only one project (see PROCESS_PER_PROJECT). */
     readonly projectId?: string
   ) {}
@@ -1017,6 +1021,18 @@ class AgentProcess implements AgentBackend {
           input: formatRaw(update.rawInput) ?? base.input,
           output: output ?? base.output
         })
+        // A finished call is a point the turn can be cut at without losing work,
+        // once no other call of it (agents run some side by side) is still going.
+        if (
+          (update.status === 'completed' || update.status === 'failed') &&
+          !store
+            .getMessages(chatId)
+            .some(
+              (i) => i.kind === 'tool' && (i.status === 'pending' || i.status === 'in_progress')
+            )
+        ) {
+          this.onStepDone(chatId)
+        }
         return
       }
       case 'plan': {
@@ -1267,6 +1283,7 @@ export class AgentManager implements ChatsApi {
         agent,
         this.events,
         this.permissions,
+        (chatId) => this.steerAfterStep(chatId),
         perProject ? projectId : undefined
       )
       this.processes.set(key, agentProcess)
@@ -1526,9 +1543,18 @@ export class AgentManager implements ChatsApi {
 
     let outcome: TurnOutcome = 'failed'
     try {
-      const { prompt, blocks } = await this.promptFor(chatId, text, attachments, from, isFirst)
-      const response = await this.processFor(chatId).prompt(chatId, prompt, blocks)
-      outcome = response.stopReason === 'cancelled' ? 'stopped' : 'done'
+      const first = await this.promptFor(chatId, text, attachments, from, isFirst)
+      // Messages that waited for this turn join it, so a run of follow-ups is
+      // taken in one go. The app's own agents take them at their first step.
+      const joined = compact || isHarnessAgent(chat.agent) ? [] : await this.steer(chatId)
+      const parts = [first, ...joined]
+      const response = await this.processFor(chatId).prompt(
+        chatId,
+        parts.map((p) => p.prompt).join('\n\n'),
+        parts.flatMap((p) => p.blocks)
+      )
+      const steered = this.steering.delete(chatId)
+      outcome = response.stopReason !== 'cancelled' ? 'done' : steered ? 'steered' : 'stopped'
       // The new agent has been told where the conversation is; a failed send tells it again.
       if (store.getChat(chatId).handoff) store.updateChat(chatId, { handoff: undefined })
       // opencode reports nothing while it compacts, so say when it is done.
@@ -1562,6 +1588,7 @@ export class AgentManager implements ChatsApi {
         })
       )
     } finally {
+      this.steering.delete(chatId)
       if (store.getState().chats.some((c) => c.id === chatId)) {
         this.processFor(chatId).endTurn(chatId, outcome)
         // How long the turn took, shown as "Worked for …" above its answer; and
@@ -1643,6 +1670,9 @@ export class AgentManager implements ChatsApi {
   /** Messages waiting for the chat's turn to go on or end, oldest first. */
   private readonly inbox = new Map<string, Waiting[]>()
 
+  /** Chats whose turn is being ended to take the messages waiting for it (see steerAfterStep). */
+  private readonly steering = new Set<string>()
+
   /** The chat of the project a chat ID names: the chats a chat can reach. */
   private chatById(id: string, projectId: string): Chat {
     const chat = store
@@ -1703,7 +1733,7 @@ export class AgentManager implements ChatsApi {
   }
 
   /** Start a turn in another chat of the caller's project, or queue the message for its next one. */
-  message(caller: string, to: string, text: string): 'started' | 'steering' | 'queued' {
+  message(caller: string, to: string, text: string): 'started' | 'steering' {
     const sender = this.caller(caller)
     const target = this.chatById(to, sender.projectId)
     if (target.id === sender.id) throw new Error(`"${to}" is your own chat ID.`)
@@ -1725,8 +1755,9 @@ export class AgentManager implements ChatsApi {
       return 'started'
     }
     this.inbox.set(target.id, [...queued, { text, attachments: [], from }])
-    // The app's own agents take it at their next step (see steer); ACP has no way to.
-    return isHarnessAgent(target.agent) ? 'steering' : 'queued'
+    // The app's own agents take it at their next step (see steer), the others
+    // once their turn is ended after it (see steerAfterStep).
+    return 'steering'
   }
 
   runningChats(caller: string): { id: string; title: string; waiting: boolean; self: boolean }[] {
@@ -1897,8 +1928,27 @@ export class AgentManager implements ChatsApi {
     if (next) void this.send(chatId, next.text, next.attachments, next.from)
   }
 
+  /** The user stops the chat: a stop, even when it was about to be steered. */
   cancel(chatId: string): Promise<void> {
+    this.steering.delete(chatId)
     return this.processFor(chatId).cancel(chatId)
+  }
+
+  /**
+   * Steer an ACP agent's turn. ACP has no way to add to a running turn, so
+   * when a step of it ends (a tool call finished, none other running) while
+   * messages wait, the turn is ended there (session/cancel), and deliverNext
+   * sends them at once as the next one. Ending after a finished call loses no
+   * work, and the agent keeps the conversation. A compaction command first in
+   * line waits for the turn's own end.
+   */
+  private steerAfterStep(chatId: string): void {
+    const queued = this.inbox.get(chatId)
+    if (!queued?.length || this.steering.has(chatId)) return
+    if (!queued[0].from && COMPACT.test(queued[0].text.trim())) return
+    if (!store.getChat(chatId).running) return
+    this.steering.add(chatId)
+    void this.processFor(chatId).cancel(chatId)
   }
 
   setOption(chatId: string, optionId: string, value: string): Promise<void> {
