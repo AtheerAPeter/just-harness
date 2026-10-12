@@ -244,7 +244,8 @@ How to communicate:
 - Do not narrate each step, restate your plan, or repeat what a tool returned. On a long task, a one-line update now and then is enough: what is done, what is next.
 - End the turn with one final answer: what you did or found, and anything the user must know or decide. Write it like a short note from a teammate, at most about ten lines unless the task needs more detail. Refer to code as path:line, and do not paste back files you read or code you wrote.`,
       `<browser>\nThe other tools (navigate, snapshot, click and the rest) drive the browser panel in the app. ${BROWSER_GUIDANCE}\n</browser>`,
-      `<chats>\nstart_chat, send_message and list_chats work with the other chats of this project. ${CHATS_GUIDANCE}\n</chats>`
+      `<chats>\nstart_chat, send_message and list_chats work with the other chats of this project. ${CHATS_GUIDANCE}\n</chats>`,
+      `<saved_chats>\n${store.savedChatsNote(chatId)}\n</saved_chats>`
     ]
     const instructions = ['AGENTS.md', 'CLAUDE.md']
       .map((name) => join(project.path, name))

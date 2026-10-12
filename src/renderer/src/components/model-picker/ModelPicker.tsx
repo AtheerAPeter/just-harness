@@ -29,7 +29,7 @@ interface ModelPickerProps {
   statuses: Partial<Record<AgentId, AgentStatus>>
   /** The chat's live session options; undefined while its session starts. */
   options?: AgentOption[]
-  /** Once a chat has started, only its own agent's models can be picked. */
+  /** While the chat works, only its own agent's models can be picked. */
   agentFixed: boolean
   /** The settings that pick the model, in the order to apply them (provider first). */
   onChange: (agent: AgentId, settings: [optionId: string, value: string][]) => void
@@ -66,7 +66,7 @@ export function ModelPicker({
   const label = (id: AgentId): string => AGENTS.find((a) => a.id === id)?.label ?? id
   const disabledReason = (id: AgentId): string | undefined => {
     if (statuses[id]?.available === false) return `${label(id)} is not installed`
-    if (agentFixed && id !== agent) return 'The agent is fixed once a chat has started'
+    if (agentFixed && id !== agent) return 'Stop the chat to switch agents'
     return undefined
   }
   const currentKey = sourceKey(agent, live.source?.currentValue)

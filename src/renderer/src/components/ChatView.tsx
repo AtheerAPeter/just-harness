@@ -183,7 +183,6 @@ export function ChatView({
           optionsError={optionsError}
           commands={commands}
           skills={skills}
-          started={items.some((i) => i.kind === 'user')}
           projectPath={projectPath}
           onAgentChange={onAgentChange}
           onOptionChange={onOptionChange}

@@ -32,6 +32,11 @@ export interface Chat {
   /** Set once the user renames the chat; automatic titles no longer replace it. */
   renamed?: boolean
   agent: AgentId
+  /**
+   * The agent the chat switched from after it had started. The new agent has
+   * none of the conversation, so its next message tells it to read the saved one.
+   */
+  handoff?: AgentId
   /** ACP session id, set once the first prompt has been sent. */
   sessionId?: string
   /** Selected values for the agent's session options, keyed by option id (model, mode, ...). */

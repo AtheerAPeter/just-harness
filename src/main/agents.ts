@@ -21,7 +21,7 @@ import type {
   ChatSender,
   ToolStatus
 } from '../shared/types'
-import { modelOptions, senderChat, type ModelSource } from '../shared/types'
+import { AGENTS, modelOptions, senderChat, type ModelSource } from '../shared/types'
 import * as store from './store'
 import {
   browserId,
@@ -1330,17 +1330,39 @@ export class AgentManager implements ChatsApi {
     }
   }
 
-  /** Switch a chat that has not started yet to another agent. */
+  /**
+   * Switch a chat to another agent, as when one provider has hit its limit.
+   * The new agent starts a session of its own, without the conversation; a
+   * chat that has started tells it on its next message where to read it (see
+   * promptFor).
+   */
   async changeAgent(
     chatId: string,
     agent: AgentId,
     settings: Record<string, string>
   ): Promise<void> {
-    if (store.getMessages(chatId).some((i) => i.kind === 'user')) {
-      throw new Error('The agent cannot change after the chat has started.')
-    }
+    const chat = store.getChat(chatId)
+    if (chat.running) throw new Error('Stop the chat before switching agents.')
+    const started = store.getMessages(chatId).some((i) => i.kind === 'user')
+    const from = chat.agent
     await this.processFor(chatId).release(chatId)
-    store.updateChat(chatId, { agent, settings, sessionId: undefined })
+    store.updateChat(chatId, {
+      agent,
+      settings,
+      sessionId: undefined,
+      ...(started ? { handoff: chat.handoff ?? from } : {})
+    })
+    if (started) {
+      const label = AGENTS.find((a) => a.id === agent)?.label ?? agent
+      this.events.item(
+        chatId,
+        store.upsertItem(chatId, {
+          kind: 'notice',
+          id: crypto.randomUUID(),
+          text: `Switched to ${label}. It starts without the earlier context, so with your next message it is told to read this chat's saved messages first.`
+        })
+      )
+    }
     this.events.stateChanged()
   }
 
@@ -1507,6 +1529,8 @@ export class AgentManager implements ChatsApi {
       const { prompt, blocks } = await this.promptFor(chatId, text, attachments, from, isFirst)
       const response = await this.processFor(chatId).prompt(chatId, prompt, blocks)
       outcome = response.stopReason === 'cancelled' ? 'stopped' : 'done'
+      // The new agent has been told where the conversation is; a failed send tells it again.
+      if (store.getChat(chatId).handoff) store.updateChat(chatId, { handoff: undefined })
       // opencode reports nothing while it compacts, so say when it is done.
       if (compact && response.stopReason === 'end_turn') {
         this.events.item(
@@ -1573,12 +1597,20 @@ export class AgentManager implements ChatsApi {
     from: ChatSender | undefined,
     first: boolean
   ): Promise<{ prompt: string; blocks: acp.ContentBlock[] }> {
-    const { agent } = store.getChat(chatId)
+    const { agent, handoff } = store.getChat(chatId)
     let prompt = from
       ? from.kind === 'command'
         ? text
         : fromChatPrompt(from.title, browserId(from.chatId), text, first)
       : this.expandChatsTag(chatId, this.expandBrowserTag(chatId, this.expandSkill(chatId, text)))
+    if (handoff) {
+      const label = AGENTS.find((a) => a.id === handoff)?.label ?? handoff
+      prompt = `${prompt}\n\n(The user switched this chat to you from ${label}, so you do not have the conversation so far. Before you answer, read it in ${store.chatFile(chatId)}: the user's messages, the answers and the tool calls, up to this message. Continue from where it left off.)`
+    }
+    // The harness has where chats are saved in its system prompt already.
+    if (!isHarnessAgent(agent) && (first || handoff)) {
+      prompt = `${prompt}\n\n(${store.savedChatsNote(chatId)})`
+    }
     // The harness passes each chat's ID to the tools itself.
     if (!isHarnessAgent(agent)) prompt = this.withChatId(chatId, prompt)
     let blocks = [...this.fileLinks(chatId, text), ...(await attachmentBlocks(attachments))]

@@ -32,8 +32,6 @@ interface ComposerProps {
   optionsError?: string
   commands: AgentCommand[]
   skills: Skill[]
-  /** True once the first message is sent; the agent is fixed from then on. */
-  started: boolean
   projectPath: string
   /** Switch agents, starting with the given settings (e.g. the model picked with it). */
   onAgentChange: (agent: AgentId, settings: Record<string, string>) => void
@@ -79,7 +77,6 @@ export function Composer({
   optionsError,
   commands,
   skills,
-  started,
   projectPath,
   onAgentChange,
   onOptionChange
@@ -353,7 +350,7 @@ export function Composer({
           projectId={chat.projectId}
           statuses={statuses}
           options={options}
-          agentFixed={started}
+          agentFixed={chat.running}
           onChange={pickModel}
         />
         {!options && !error && <span className="composer-hint">Starting agent…</span>}

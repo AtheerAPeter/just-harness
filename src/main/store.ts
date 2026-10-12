@@ -135,6 +135,20 @@ export function flush(): void {
   dirtyChats.clear()
 }
 
+/** The file a chat's messages are saved in. */
+export function chatFile(chatId: string): string {
+  return join(chatsDir, `${chatId}.json`)
+}
+
+/**
+ * Where the app saves the user's chats, for agents: when the user refers to an
+ * earlier chat, or a chat switches agent (see AgentManager.changeAgent), the
+ * agent reads what happened there.
+ */
+export function savedChatsNote(chatId: string): string {
+  return `Just Harness saves every chat of the user's. ${statePath} lists them (id, projectId, title, agent, createdAt), and each chat's messages are in ${chatsDir}/<chat id>.json, as the user saw them: their messages, the agent's answers, and its tool calls with their output. This chat's own are in ${chatFile(chatId)}. When the user refers to an earlier chat or asks you to continue a topic, find the chat by its title and read its messages to see what was done or what went wrong. The files can be long, so search them before reading them whole. Only read them, never change them.`
+}
+
 export function getState(): AppState {
   return state
 }
