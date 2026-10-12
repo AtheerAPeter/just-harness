@@ -69,7 +69,7 @@ export const SendIcon = (p: IconProps): React.JSX.Element => (
 )
 export const StopIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
-    <rect x="7" y="7" width="10" height="10" fill="currentColor" stroke="none" />
+    <rect x="7" y="7" width="10" height="10" rx="1" fill="currentColor" stroke="none" />
   </Icon>
 )
 export const BookIcon = (p: IconProps): React.JSX.Element => (
@@ -85,7 +85,7 @@ export const TrashIcon = (p: IconProps): React.JSX.Element => (
 )
 export const TerminalIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
-    <rect x="3.5" y="4.5" width="17" height="15" />
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
     <path d="m8 10 2.5 2.5L8 15M13 15h3" />
   </Icon>
 )
@@ -103,7 +103,7 @@ export const WrenchIcon = (p: IconProps): React.JSX.Element => (
 )
 export const DiffIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
-    <rect x="4" y="4" width="16" height="16" />
+    <rect x="4" y="4" width="16" height="16" rx="2" />
     <path d="M12 7.5v6M9 10.5h6M9 16.5h6" />
   </Icon>
 )
@@ -129,7 +129,7 @@ export const SlidersIcon = (p: IconProps): React.JSX.Element => (
 )
 export const SidebarIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
-    <rect x="3" y="4" width="18" height="16" />
+    <rect x="3" y="4" width="18" height="16" rx="2" />
     <path d="M9 4v16" />
   </Icon>
 )
@@ -152,7 +152,7 @@ export const FileIcon = (p: IconProps): React.JSX.Element => (
 )
 export const LockIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
-    <rect x="5" y="11" width="14" height="9" />
+    <rect x="5" y="11" width="14" height="9" rx="1.5" />
     <path d="M8 11V8a4 4 0 0 1 8 0v3" />
   </Icon>
 )
@@ -206,10 +206,10 @@ export const ClockIcon = (p: IconProps): React.JSX.Element => (
 /** A chat that started other chats: one node over the ones it leads. */
 export const LeadIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
-    <rect x="9" y="3" width="6" height="5" />
+    <rect x="9" y="3" width="6" height="5" rx="1" />
     <path d="M12 8v3.5M5 11.5h14M5 11.5V15M12 11.5V15M19 11.5V15" />
-    <rect x="3" y="15" width="4" height="5" />
-    <rect x="10" y="15" width="4" height="5" />
-    <rect x="17" y="15" width="4" height="5" />
+    <rect x="3" y="15" width="4" height="5" rx="1" />
+    <rect x="10" y="15" width="4" height="5" rx="1" />
+    <rect x="17" y="15" width="4" height="5" rx="1" />
   </Icon>
 )
