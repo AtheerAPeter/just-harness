@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { once } from 'node:events'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import type { AddressInfo } from 'node:net'
 import { app, clipboard, ClipboardItem, nativeImage, type WebContents } from 'electron'
@@ -31,9 +32,14 @@ export const SERVER_NAME = 'harness_browser'
  */
 export const BROWSER_GUIDANCE =
   "These tools control the browser panel inside the user's Just Harness app. The user can watch it, " +
-  'and it is signed in to their accounts. For any web browsing or browser automation, use these tools ' +
-  'instead of any other browser tool (built-in browser tools, Playwright, Puppeteer, computer use, or ' +
-  'opening the system browser), unless the user explicitly asks for a different browser. Start with ' +
+  'and it is signed in to their accounts. It is the only browser to use: for anything done in a ' +
+  'browser (opening a site, testing a web app, reading or filling a page, a screenshot, saving a page ' +
+  'or an HTML file as a PDF), use these tools. Never start Chrome, Chromium, Safari or any other ' +
+  'browser yourself, headless or not, and never drive one with Playwright, Puppeteer, Selenium, ' +
+  'another browser tool or MCP server, computer use, or `open` from the shell, unless the user names ' +
+  'that other browser. These are direct tools, named harness_browser_navigate and so on, not entries ' +
+  'of a code-mode or execute catalog. If you cannot find them, say so instead of using another ' +
+  'browser. Start with ' +
   'navigate or snapshot, then act on elements by the refs in the snapshot (e12, or f1e3 inside an ' +
   'iframe). Pages can open tabs; results say when, and the new tab becomes the active one. Tools act ' +
   'on the active tab unless given a tab id; tabs, new_tab, select_tab and close_tab manage them. ' +
@@ -362,7 +368,7 @@ async function buildServer(
     'navigate',
     {
       description:
-        "Open a URL in the user's Just Harness browser (signed in to their accounts) and return the page snapshot. Prefer this over any other browser tool unless the user asks for a different browser. After changing code a page shows, use it to check the change works before you call it done: start the dev server, open the page, try the feature, and check the console for errors. Test only with actions safe to repeat: never send, pay, delete, publish or spend credits to test unless the user asked.",
+        "Open a URL in the user's Just Harness browser (signed in to their accounts) and return the page snapshot. Use these tools for anything done in a browser: never start Chrome, Safari or a headless browser yourself, or drive one with Playwright or Puppeteer, unless the user names that browser. After changing code a page shows, use it to check the change works before you call it done: start the dev server, open the page, try the feature, and check the console for errors. Test only with actions safe to repeat: never send, pay, delete, publish or spend credits to test unless the user asked.",
       inputSchema: { url: z.string().describe('URL to open'), ...pageArgs }
     },
     ({ url, browser: id, tab }) => act(id, tab, (page) => load(page, url))
@@ -695,6 +701,38 @@ async function buildServer(
         )
         if ('dialog' in result) return text(dialogNote(result.dialog))
         return { content: [{ type: 'image', data: result.value, mimeType: 'image/png' }] }
+      })
+  )
+
+  server.registerTool(
+    'pdf',
+    {
+      description:
+        'Save the page as a PDF file, as printing it would, with its backgrounds. For a local HTML file, navigate to its file:// URL first. Use this instead of a headless browser to turn a page or an HTML file into a PDF.',
+      inputSchema: {
+        path: z.string().describe('Absolute path of the PDF file to write'),
+        pageSize: z
+          .enum(['A4', 'Letter', 'Legal', 'A3', 'A5'])
+          .optional()
+          .describe('Paper size; A4 if left out'),
+        landscape: z.boolean().optional().describe('Landscape instead of portrait'),
+        ...pageArgs
+      }
+    },
+    ({ path, pageSize, landscape, browser: id, tab }) =>
+      act(id, tab, async (page) => {
+        if (!isAbsolute(path)) throw new Error(`"path" must be absolute: ${path}`)
+        const result = await untilDialog(page, () =>
+          page.contents.printToPDF({
+            pageSize: pageSize ?? 'A4',
+            landscape: landscape ?? false,
+            printBackground: true
+          })
+        )
+        if ('dialog' in result) return text(dialogNote(result.dialog))
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, result.value)
+        return text(`Saved ${page.contents.getURL()} as a PDF to ${path}.`)
       })
   )
 

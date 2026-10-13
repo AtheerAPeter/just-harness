@@ -2,7 +2,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { chmod, rename, writeFile } from 'node:fs/promises'
-import { getJson, readJson, savedCatalog } from './catalog'
+import { getJson, imageInputLookup, readJson, savedCatalog } from './catalog'
 import { clineMcpServers } from './mcp-config'
 import type { Provider } from './provider'
 import type { Model } from './wire'
@@ -170,12 +170,16 @@ interface Listed {
   all: Model[]
 }
 
-/** Image input by family: the lists do not say. */
-const toModel = (id: string, name?: string): Model => ({
+/** Image input as models.dev reports it, else by family: the lists do not say. */
+const toModel = (
+  imageInput: (id: string) => boolean | undefined,
+  id: string,
+  name?: string
+): Model => ({
   id,
   name: name || id,
   api: 'chat',
-  vision: /(claude|gpt-|gemini)/.test(id)
+  vision: imageInput(id) ?? /(claude|gpt-|gemini)/.test(id)
 })
 
 const catalog = savedCatalog('cline', async (): Promise<Listed> => {
@@ -186,10 +190,13 @@ const catalog = savedCatalog('cline', async (): Promise<Listed> => {
     ),
     getJson<{ data?: { id: string }[] }>(`${API}/models`, "Cline's models")
   ])
+  const imageInput = await imageInputLookup()
   return {
-    clinePass: (picked.clinePass ?? []).map((m) => toModel(m.id, m.name)),
+    clinePass: (picked.clinePass ?? []).map((m) => toModel(imageInput, m.id, m.name)),
     // The free models answer only Cline's own apps ("only available via Cline product surfaces").
-    all: (all.data ?? []).filter((m) => !m.id.startsWith('cline-free/')).map((m) => toModel(m.id))
+    all: (all.data ?? [])
+      .filter((m) => !m.id.startsWith('cline-free/'))
+      .map((m) => toModel(imageInput, m.id))
   }
 })
 

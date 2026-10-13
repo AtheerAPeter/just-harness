@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { getJson, readJson, savedCatalog } from './catalog'
+import { getJson, imageInputLookup, readJson, savedCatalog } from './catalog'
 import { commandCodeMcpServers } from './mcp-config'
 import type { Provider } from './provider'
 import type { Model } from './wire'
@@ -35,6 +35,7 @@ const catalog = savedCatalog('commandcode', async () => {
     "Command Code's models"
   )
   if (!Array.isArray(body.data)) throw new Error('Command Code sent no model list.')
+  const imageInput = await imageInputLookup()
   return body.data.flatMap((item): Model[] => {
     const endpoints = item.supported_endpoints ?? []
     const api = endpoints.includes('/messages')
@@ -43,10 +44,11 @@ const catalog = savedCatalog('commandcode', async () => {
         ? 'chat'
         : undefined
     if (!api) return []
-    // Image input as the catalog reports it, else by family (it does not report it yet).
+    // Image input as the list reports it (it does not yet), else as models.dev
+    // does, else by family.
     const vision = item.modalities?.input
       ? item.modalities.input.includes('image')
-      : /^(claude-|gpt-|google\/)/.test(item.id)
+      : (imageInput(item.id) ?? /^(claude-|gpt-|google\/)/.test(item.id))
     return [{ id: item.id, name: item.name || item.id, api, vision }]
   })
 })

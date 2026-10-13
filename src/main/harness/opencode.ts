@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { commandVersion } from '../shell-env'
-import { getJson, readJson, savedCatalog } from './catalog'
+import { getJson, MODELS_DEV_URL, readJson, savedCatalog } from './catalog'
 import { opencodeMcpServers, opencodeV2McpServers } from './mcp-config'
 import type { Provider, Source } from './provider'
 import type { Model } from './wire'
@@ -119,7 +119,7 @@ type Listed = Record<PlanId, { models: Model[]; free: string[] }>
 
 const catalog = savedCatalog('opencode', async (): Promise<Listed> => {
   const dev = await getJson<Record<string, { models?: Record<string, DevModel> }>>(
-    'https://models.dev/api.json',
+    MODELS_DEV_URL,
     'the models.dev catalog'
   )
   const entries = await Promise.all(

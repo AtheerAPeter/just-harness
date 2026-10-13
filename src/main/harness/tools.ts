@@ -625,7 +625,11 @@ export const browserTools = appServerTools({
   server: BROWSER_SERVER,
   kind: 'fetch',
   paths: (name, args) =>
-    name === 'upload' || name === 'paste_image' ? Object.values(args).flatMap(stringsIn) : []
+    name === 'upload' || name === 'paste_image'
+      ? Object.values(args).flatMap(stringsIn)
+      : name === 'pdf'
+        ? stringsIn(args.path)
+        : []
 })
 
 /** The tools that start and message other chats, with the chat's own key filled in the same way. */
