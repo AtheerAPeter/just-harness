@@ -154,18 +154,22 @@ export interface AgentStatus {
   error?: string
 }
 
-/** The chat a message came from, as it was titled when it sent it. */
 /**
- * Who sent a message the user did not write: another chat's agent (saved
- * before senders had a kind, so the kind may be missing), or a command the
- * chat ran in the background, reporting that it ended (see chats-mcp.ts).
+ * Who sent a message the user did not write (see chats-mcp.ts): another
+ * chat's agent, with the title it had then (saved before senders had a kind,
+ * so the kind may be missing); a command the chat ran in the background,
+ * reporting that it ended; the timer the chat set; or the app, reporting that
+ * a chat this one started ended its turn without reporting back.
  */
 export type ChatSender =
-  { kind?: 'chat'; chatId: string; title: string } | { kind: 'command'; command: string }
+  | { kind?: 'chat'; chatId: string; title: string }
+  | { kind: 'command'; command: string }
+  | { kind: 'timer'; note: string }
+  | { kind: 'ended'; chatId: string; title: string }
 
 /** The chat a message came from, when another chat sent it. */
 export function senderChat(from: ChatSender | undefined): string | undefined {
-  return from && from.kind !== 'command' ? from.chatId : undefined
+  return from && (from.kind === undefined || from.kind === 'chat') ? from.chatId : undefined
 }
 
 /** 'interrupted': the turn ended before the agent finished the call. */

@@ -430,7 +430,11 @@ const Item = memo(function Item({
               <div className="bubble-from">
                 {item.from.kind === 'command'
                   ? 'Background command ended'
-                  : `From ${item.from.title}`}
+                  : item.from.kind === 'timer'
+                    ? 'Timer went off'
+                    : item.from.kind === 'ended'
+                      ? `${item.from.title} ended its turn`
+                      : `From ${item.from.title}`}
               </div>
             )}
             {item.text}

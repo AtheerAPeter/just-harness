@@ -263,7 +263,7 @@ const edit: Tool = {
 const toLF = (value: string): string => value.replaceAll('\r\n', '\n')
 
 /** A command that ignores SIGTERM this long is killed. */
-const KILL_GRACE_MS = 2000
+export const KILL_GRACE_MS = 2000
 
 const bash: Tool = {
   spec: {
@@ -416,7 +416,7 @@ const leftRunning = new Set<number>()
 let pruneTimer: NodeJS.Timeout | undefined
 
 /** Whether any process of a command's process group still runs. */
-function groupAlive(pid: number): boolean {
+export function groupAlive(pid: number): boolean {
   try {
     process.kill(-pid, 0)
     return true

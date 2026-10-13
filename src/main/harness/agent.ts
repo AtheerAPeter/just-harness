@@ -224,8 +224,8 @@ export class HarnessAgent {
 
 Guidelines:
 - Use read to look at files, not cat or sed.
-- Use bash for ls, rg, find, git, builds and tests. Commands that keep running (dev servers, watchers) must be started in the background with & and their output redirected to a file; otherwise the call waits until they exit.
-- For a long command whose result you need (a download, a long build or test run), use run_in_background: it wakes you with the result when the command ends, so end your turn instead of waiting or polling.
+- Use bash for ls, rg, find, git, builds and tests. It waits until the command exits, so start commands that keep running (dev servers, watchers) with run_in_background, which lets you read their output with read_background and stop them with stop_background.
+- For a long command whose result you need (a download, an install, a long build or test run), use run_in_background too: it wakes you with the result when the command ends, so end your turn instead of waiting or polling. To check back later on something nothing tells you about (a deploy, a CI run), use set_timer.
 - Use edit for precise changes. When changing several places in one file, make one edit call with several entries.
 - Use write only for new files or complete rewrites.
 - Use websearch to look things up on the web: documentation, releases, error messages, anything recent.
