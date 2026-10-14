@@ -1,5 +1,6 @@
 import type { WebContents } from 'electron'
 import { source as playwrightSource } from 'playwright-injected-script'
+import { USKeyboardLayout } from 'playwright-keyboard-layout'
 
 /**
  * Agent automation for one browser page over the DevTools protocol, built the
@@ -33,6 +34,63 @@ const MAX_LOG_TEXT = 2_000
 const MAX_LOG = 200
 /** Ways to scroll an element into view, tried in turn to get it out from under sticky bars. */
 const ALIGNMENTS = ['center', 'end', 'start', 'nearest']
+/** Mouse moves a drag makes on its way, for apps that follow the pointer. */
+const DRAG_STEPS = 10
+
+/** Mouse buttons, and their bit in the protocol's `buttons` (the buttons held down). */
+const BUTTONS = { left: 1, right: 2, middle: 4 } as const
+export type MouseButton = keyof typeof BUTTONS
+
+interface KeyDescription {
+  key: string
+  code: string
+  keyCode: number
+  text: string
+  /** Typed with Shift held, as capitals and most symbols are. */
+  shift?: boolean
+  /** The key's character with Shift held: A for a, ! for 1. */
+  shifted?: KeyDescription
+}
+
+/** Modifier keys, held around a key as on a real keyboard, and their protocol bits. */
+const MODIFIER_KEYS = {
+  alt: { key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18, location: 1, bit: 1 },
+  ctrl: { key: 'Control', code: 'ControlLeft', windowsVirtualKeyCode: 17, location: 1, bit: 2 },
+  cmd: { key: 'Meta', code: 'MetaLeft', windowsVirtualKeyCode: 91, location: 1, bit: 4 },
+  shift: { key: 'Shift', code: 'ShiftLeft', windowsVirtualKeyCode: 16, location: 1, bit: 8 }
+}
+export type Modifier = keyof typeof MODIFIER_KEYS
+
+/**
+ * The key that types each character on a US keyboard, as Playwright's
+ * keyboard.type finds it: Enter for line breaks, shifted keys for capitals and
+ * symbols.
+ */
+const KEYS = new Map<string, KeyDescription>()
+/** Keys by name (Enter, ArrowDown, F5) and by code (KeyA, Digit1), as Playwright names them. */
+const NAMED_KEYS = new Map<string, KeyDescription>()
+for (const [code, key] of Object.entries(USKeyboardLayout)) {
+  const description: KeyDescription = {
+    key: key.key,
+    code,
+    keyCode: key.keyCode,
+    text: key.text ?? (key.key.length === 1 ? key.key : '')
+  }
+  if (key.shiftKey) {
+    const keyCode = key.shiftKeyCode ?? key.keyCode
+    description.shifted = { key: key.shiftKey, code, keyCode, text: key.shiftKey, shift: true }
+  }
+  NAMED_KEYS.set(code, description)
+  // Keypad keys type the same characters as the main keys.
+  if (key.location) continue
+  if (key.key.length === 1) KEYS.set(key.key, description)
+  else NAMED_KEYS.set(key.key, description)
+  if (description.shifted) KEYS.set(key.shiftKey!, description.shifted)
+  if (code === 'Enter') {
+    KEYS.set('\n', description)
+    KEYS.set('\r', description)
+  }
+}
 
 const INJECT = `(() => {
   const module = {};
@@ -262,6 +320,19 @@ const INPUT_SEEN = `function () {
   return Boolean(globalThis.${INJECTED}Seen && globalThis.${INJECTED}Seen.input);
 }`
 
+/** Whether the page draws: an animation frame comes within 200 ms (60 a second when it does). */
+const DRAWS = `function () {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve(true));
+    setTimeout(() => resolve(false), 200);
+  });
+}`
+
+/** The viewport's size in CSS pixels, scrollbars included: the area screenshots show. */
+const VIEWPORT = `function () {
+  return { width: innerWidth, height: innerHeight };
+}`
+
 /** A frame of the page, and the DevTools session its document lives in. */
 interface FrameTarget {
   frameId: string
@@ -363,6 +434,13 @@ export class PageDriver {
   private readonly frameNumbers = new Map<string, number>()
   /** Iframes in the latest snapshot, by number. */
   private frames = new Map<number, FrameTarget>()
+  /**
+   * The page's own script context of each frame, by frame id, for evaluate.
+   * Context ids are only unique within their session.
+   */
+  private readonly pageContexts = new Map<string, { id: number; sessionId?: string }>()
+  /** The drag Chromium handed over while a drag was intercepted (see drag). */
+  private interceptedDrag?: unknown
   /** Console and network errors and warnings, oldest first, for the console tool. */
   private readonly log: PageLogEntry[] = []
   /** Requests in flight, by request id, to name the ones that fail. */
@@ -463,6 +541,7 @@ export class PageDriver {
     this.attaching = undefined
     this.frameSessions.clear()
     this.frames.clear()
+    this.pageContexts.clear()
     this.log.length = 0
     this.requests.clear()
     this.onNativeDialog(undefined)
@@ -480,12 +559,37 @@ export class PageDriver {
       // An iframe target's id is its frame id.
       this.frameSessions.set(target.targetId, childSession)
       this.send('Page.enable', {}, childSession).catch(() => undefined)
+      // For evaluate in the iframe: its frames' script contexts.
+      this.send('Runtime.enable', {}, childSession).catch(() => undefined)
       this.send('Log.enable', {}, childSession).catch(() => undefined)
       this.followIframes(childSession).catch(() => undefined)
     } else if (method === 'Target.detachedFromTarget') {
       for (const [frameId, id] of this.frameSessions) {
         if (id === params.sessionId) this.frameSessions.delete(frameId)
       }
+    } else if (method === 'Runtime.executionContextCreated') {
+      const context = params.context as {
+        id: number
+        auxData?: { frameId?: string; isDefault?: boolean }
+      }
+      if (context.auxData?.isDefault && context.auxData.frameId) {
+        this.pageContexts.set(context.auxData.frameId, { id: context.id, sessionId })
+      }
+    } else if (
+      method === 'Runtime.executionContextDestroyed' ||
+      method === 'Runtime.executionContextsCleared'
+    ) {
+      for (const [frameId, context] of this.pageContexts) {
+        if (
+          context.sessionId === sessionId &&
+          (method === 'Runtime.executionContextsCleared' ||
+            context.id === params.executionContextId)
+        ) {
+          this.pageContexts.delete(frameId)
+        }
+      }
+    } else if (method === 'Input.dragIntercepted') {
+      this.interceptedDrag = params.data
     } else if (!sessionId && method === 'Page.javascriptDialogOpening') {
       // prompt() and beforeunload are answered by Electron at once, never shown.
       if (params.type === 'alert' || params.type === 'confirm') {
@@ -708,7 +812,7 @@ export class PageDriver {
       .join('\n')
   }
 
-  /** An iframe's content, or nothing if it cannot be read in the time left. */
+  /** An iframe's content, or a note when it cannot be read in the time left. */
   private async iframeSnapshot(
     parent: FrameTarget,
     parentContext: number,
@@ -737,10 +841,13 @@ export class PageDriver {
       this.frames.set(number, frame)
       return this.frameSnapshot(frame, `f${number}`, deadline)
     }
+    // Said, so that an iframe that is slow to answer does not look empty.
+    const unread =
+      '[This iframe could not be read in time. Take a new snapshot, or a screenshot to see it.]'
     const remaining = deadline - Date.now()
-    if (remaining <= 0) return undefined
+    if (remaining <= 0) return unread
     return withTimeout(read(), remaining, () => new Error('iframe took too long')).catch(
-      () => undefined
+      () => unread
     )
   }
 
@@ -887,37 +994,210 @@ export class PageDriver {
     await this.mouse('mouseMoved', (await this.target(ref, 'hover')).page)
   }
 
-  /**
-   * Press a key on the focused element. `real` sends real key events, used for
-   * a page in the panel; when they do not arrive, or the page is parked (see
-   * `onScreen`), the key is pressed inside the page, and characters typed.
-   */
-  async press(key: string, modifiers: string[], real: () => void): Promise<void> {
+  /** The viewport's size in CSS pixels, the unit of screenshots and of input at a point. */
+  async viewport(): Promise<{ width: number; height: number }> {
     await this.attach()
     const frame = await this.mainFrame()
-    const contextId = await this.context(frame)
-    if (this.onScreen()) {
-      const watched = await this.call<boolean>(frame, { contextId }, WATCH_INPUT, ['keydown'])
-      real()
-      if (!watched) return
-      // Real key events are delivered asynchronously.
-      for (const deadline = Date.now() + 300; Date.now() < deadline;) {
-        await sleep(25)
-        const arrived = await this.call<boolean>(frame, { contextId }, INPUT_SEEN, []).catch(
-          () => true
+    return this.call(frame, { contextId: await this.context(frame) }, VIEWPORT, [])
+  }
+
+  /**
+   * Make sure the page draws. A page that has never been on screen, such as a
+   * background chat's, reports itself visible but draws no frames until asked
+   * for one. Until then Chromium holds mouse moves and wheel turns for the next
+   * frame (about 5 s each, measured) and key presses never arrive. A capture
+   * asks for a frame (invalidate does not); the page keeps drawing from then on.
+   */
+  private async ensureDrawing(): Promise<void> {
+    if (this.onScreen()) return
+    const frame = await this.mainFrame()
+    const drawing = await this.call<boolean>(
+      frame,
+      { contextId: await this.context(frame) },
+      DRAWS,
+      []
+    )
+    if (!drawing) await this.capture()
+  }
+
+  /** Fail unless the points are in the viewport, where input at a point goes. */
+  private async inViewport(...points: Point[]): Promise<void> {
+    await this.ensureDrawing()
+    const { width, height } = await this.viewport()
+    for (const { x, y } of points) {
+      if (x < 0 || y < 0 || x >= width || y >= height) {
+        throw new Error(
+          `(${x}, ${y}) is outside the page, which is ${width}×${height}: use a point of the latest screenshot.`
         )
-        if (arrived) return
       }
+    }
+  }
+
+  /**
+   * Click at a point of the viewport, in the screenshot's pixels: for what has
+   * no ref, such as a canvas (remote desktops, VMs, emulators, games, maps).
+   * Chromium sends the input to whatever is at the point, iframes included.
+   */
+  async clickAt(point: Point, button: MouseButton, clicks: number): Promise<void> {
+    await this.inViewport(point)
+    await this.mouse('mouseMoved', point)
+    for (let count = 1; count <= clicks; count++) {
+      const held = { button, clickCount: count }
+      await this.mouse('mousePressed', point, { ...held, buttons: BUTTONS[button] })
+      await this.mouse('mouseReleased', point, { ...held, buttons: 0 })
+    }
+  }
+
+  /** Move the mouse to a point of the viewport without pressing a button. */
+  async moveTo(point: Point): Promise<void> {
+    await this.inViewport(point)
+    await this.mouse('mouseMoved', point)
+  }
+
+  /**
+   * Press the left button at one point, move to another in steps, and let go.
+   * Dragging an element the page made draggable (and links and images, which
+   * are by default) starts a drag and drop, which would otherwise be handed to
+   * macOS and follow the user's own pointer; it is intercepted and finished
+   * here, as Playwright does.
+   */
+  async drag(from: Point, to: Point): Promise<void> {
+    await this.inViewport(from, to)
+    const held = { button: 'left', buttons: BUTTONS.left }
+    this.interceptedDrag = undefined
+    await this.send('Input.setInterceptDrags', { enabled: true })
+    try {
+      await this.mouse('mouseMoved', from)
+      await this.mouse('mousePressed', from, { ...held, clickCount: 1 })
+      let dragging = false
+      for (let step = 1; step <= DRAG_STEPS; step++) {
+        const point = {
+          x: from.x + ((to.x - from.x) * step) / DRAG_STEPS,
+          y: from.y + ((to.y - from.y) * step) / DRAG_STEPS
+        }
+        if (dragging) {
+          await this.dragEvent('dragOver', point)
+          continue
+        }
+        await this.mouse('mouseMoved', point, held)
+        // Chromium reports a drag before it answers the move that started it.
+        if (this.interceptedDrag) {
+          dragging = true
+          await this.dragEvent('dragEnter', point)
+        }
+      }
+      if (dragging) await this.dragEvent('drop', to)
+      else await this.mouse('mouseReleased', to, { ...held, buttons: 0, clickCount: 1 })
+    } finally {
+      this.interceptedDrag = undefined
+      await this.send('Input.setInterceptDrags', { enabled: false }).catch(() => undefined)
+    }
+  }
+
+  private dragEvent(type: string, { x, y }: Point): Promise<unknown> {
+    return this.send('Input.dispatchDragEvent', { type, x, y, data: this.interceptedDrag })
+  }
+
+  /** Turn the mouse wheel at a point of the viewport; positive pixels scroll down. */
+  async wheel(point: Point, pixels: number): Promise<void> {
+    await this.inViewport(point)
+    await this.mouse('mouseWheel', point, { deltaX: 0, deltaY: pixels })
+  }
+
+  /**
+   * Type text as key presses into whatever has keyboard focus, like
+   * Playwright's keyboard.type: each character is a key down and up on a US
+   * keyboard. Apps drawn on a canvas, such as remote desktops and emulators,
+   * read keys, not text, so capitals and symbols are typed with Shift held, as
+   * on a real keyboard, and a character no US key types (é, emoji) is a key
+   * press of that character, where Playwright would insert it as text.
+   */
+  async typeText(text: string): Promise<void> {
+    await this.attach()
+    await this.ensureDrawing()
+    for (const char of text) {
+      const key = KEYS.get(char) ?? { key: char, code: '', keyCode: 0, text: char }
+      await this.keyPress(key, key.shift ? ['shift'] : [])
+    }
+  }
+
+  /**
+   * Press a key as real key events, with modifiers held around it: their key
+   * downs, the key's down and up, and their key ups.
+   */
+  private async keyPress(key: KeyDescription, modifiers: Modifier[]): Promise<void> {
+    let bits = 0
+    for (const name of modifiers) {
+      const { bit, ...modifier } = MODIFIER_KEYS[name]
+      bits |= bit
+      await this.send('Input.dispatchKeyEvent', {
+        type: 'rawKeyDown',
+        ...modifier,
+        modifiers: bits
+      })
+    }
+    // A modifier other than Shift makes the key a shortcut, which types nothing.
+    const text = bits & ~MODIFIER_KEYS.shift.bit ? '' : key.text
+    const event = {
+      key: key.key,
+      code: key.code,
+      windowsVirtualKeyCode: key.keyCode,
+      modifiers: bits
+    }
+    await this.send('Input.dispatchKeyEvent', {
+      type: text ? 'keyDown' : 'rawKeyDown',
+      ...event,
+      text,
+      unmodifiedText: text
+    })
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', ...event })
+    for (const name of [...modifiers].reverse()) {
+      const { bit, ...modifier } = MODIFIER_KEYS[name]
+      bits &= ~bit
+      await this.send('Input.dispatchKeyEvent', { type: 'keyUp', ...modifier, modifiers: bits })
+    }
+  }
+
+  /**
+   * Press a key, by Playwright's name for it (Enter, ArrowDown, F5) or its
+   * character, with modifiers held, on the focused element. Real key events,
+   * which reach pages out of sight too once they draw. When they do not
+   * arrive, the key is pressed inside the page, and characters typed.
+   */
+  async press(name: string, modifiers: Modifier[]): Promise<void> {
+    let key = KEYS.get(name) ?? NAMED_KEYS.get(name)
+    if (!key) {
+      throw new Error(
+        `Unknown key "${name}". Use a key name such as Enter, Escape, Tab, Backspace, Delete, ArrowDown, PageDown, Home, F5 or Space, or one character.`
+      )
+    }
+    const held = new Set(modifiers)
+    if (key.shift) held.add('shift')
+    else if (held.has('shift') && key.shifted) key = key.shifted
+    await this.attach()
+    await this.ensureDrawing()
+    const frame = await this.mainFrame()
+    const contextId = await this.context(frame)
+    const watched = await this.call<boolean>(frame, { contextId }, WATCH_INPUT, ['keydown'])
+    await this.keyPress(key, [...held])
+    if (!watched) return
+    // Key events are delivered asynchronously.
+    for (const deadline = Date.now() + 300; Date.now() < deadline;) {
+      const arrived = await this.call<boolean>(frame, { contextId }, INPUT_SEEN, []).catch(
+        () => true
+      )
+      if (arrived) return
+      await sleep(25)
     }
     const allowed = await this.call<boolean>(
       frame,
       { contextId },
       KEY_IN_PAGE,
-      [key, modifiers],
+      [name, modifiers],
       true
     )
-    if (allowed && key.length === 1 && modifiers.every((m) => m === 'shift')) {
-      await this.send('Input.insertText', { text: key })
+    if (allowed && name.length === 1 && modifiers.every((m) => m === 'shift')) {
+      await this.send('Input.insertText', { text: name })
     }
   }
 
@@ -994,29 +1274,32 @@ export class PageDriver {
    * nothing while parked off-screen.
    *
    * The capture has the display's pixels (twice the page's size on Retina); it
-   * is scaled to `width`, the page's own width, which keeps text legible with a
-   * quarter of the pixels. Model APIs resend every image with each request and
-   * refuse images over 2000 pixels once a chat has many.
+   * is scaled to the page's width in CSS pixels, which keeps text legible with
+   * a quarter of the pixels, and makes its pixels the points that input at a
+   * point takes, at any zoom. Model APIs resend every image with each request
+   * and refuse images over 2000 pixels once a chat has many.
    */
-  async screenshot(width: number): Promise<string> {
-    const capture = (): Promise<Electron.NativeImage> =>
-      withTimeout(
-        this.contents.capturePage(),
-        COMMAND_TIMEOUT,
-        () => new Error(`The page did not render within ${COMMAND_TIMEOUT / 1000}s.`)
-      )
+  async screenshot(): Promise<string> {
+    const { width } = await this.viewport()
+    const image = await this.capture()
+    if (image.isEmpty()) throw new Error('The page has not drawn anything yet.')
+    const scaled =
+      width > 0 && image.getSize().width > width ? image.resize({ width, quality: 'best' }) : image
+    return scaled.toPNG().toString('base64')
+  }
+
+  /** The page's viewport as an image, at the display's pixels; the page draws for it. */
+  private async capture(): Promise<Electron.NativeImage> {
     // Chromium fails a capture with UnknownVizError until the page's surface
     // exists; the same capture works moments later (as ZCode found).
     const deadline = Date.now() + 2000
     for (;;) {
       try {
-        const image = await capture()
-        if (image.isEmpty()) throw new Error('The page has not drawn anything yet.')
-        const scaled =
-          width > 0 && image.getSize().width > width
-            ? image.resize({ width, quality: 'best' })
-            : image
-        return scaled.toPNG().toString('base64')
+        return await withTimeout(
+          this.contents.capturePage(),
+          COMMAND_TIMEOUT,
+          () => new Error(`The page did not render within ${COMMAND_TIMEOUT / 1000}s.`)
+        )
       } catch (error) {
         if (!/UnknownVizError/.test((error as Error).message) || Date.now() > deadline) throw error
         await sleep(100)
@@ -1024,15 +1307,27 @@ export class PageDriver {
     }
   }
 
-  /** Run an expression in the page's own context and return its JSON value. */
-  async evaluate(expression: string, timeout = COMMAND_TIMEOUT): Promise<unknown> {
+  /**
+   * Run an expression in the page's own context, or in an iframe's (named by
+   * the f number its refs carry, like f1), and return its JSON value.
+   */
+  async evaluate(expression: string, iframe?: string): Promise<unknown> {
+    const timeout = COMMAND_TIMEOUT
     await this.attach()
+    const { sessionId, contextId } = iframe ? this.iframeContext(iframe) : {}
     let response: RemoteResult
     try {
       response = await this.send<RemoteResult>(
         'Runtime.evaluate',
-        { expression, returnByValue: true, awaitPromise: true, userGesture: true, timeout },
-        undefined,
+        {
+          expression,
+          contextId,
+          returnByValue: true,
+          awaitPromise: true,
+          userGesture: true,
+          timeout
+        },
+        sessionId,
         timeout + 1000
       )
     } catch (error) {
@@ -1040,11 +1335,26 @@ export class PageDriver {
       // loop. Only then is it stopped: terminateExecution stops the current
       // script or, when none runs, the next one, which would be the page's own.
       if (error instanceof PageTimeoutError) {
-        this.send('Runtime.terminateExecution').catch(() => undefined)
+        this.send('Runtime.terminateExecution', {}, sessionId).catch(() => undefined)
       }
       throw error
     }
     return valueOf(response)
+  }
+
+  /** Where an iframe's own scripts run: its page context, in its session. */
+  private iframeContext(iframe: string): { sessionId?: string; contextId?: number } {
+    const number = /^f(\d+)$/.exec(iframe)?.[1]
+    if (!number) {
+      throw new Error(`"${iframe}" is not an iframe. Iframes are named like f1, as in ref f1e3.`)
+    }
+    const frame = this.frames.get(Number(number))
+    if (!frame) {
+      throw new Error(`No iframe ${iframe} in the latest snapshot. Take a new snapshot.`)
+    }
+    const context = this.pageContexts.get(frame.frameId)
+    if (!context) throw new Error(`Iframe ${iframe} has no page loaded. Take a new snapshot.`)
+    return { sessionId: context.sessionId, contextId: context.id }
   }
 
   /**

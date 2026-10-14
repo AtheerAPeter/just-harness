@@ -13,6 +13,10 @@ export default defineConfig({
         // does not export this file, so it is resolved by path (the version is pinned).
         'playwright-injected-script': resolve(
           'node_modules/playwright-core/lib/generated/injectedScriptSource.js'
+        ),
+        // Key names, codes and key codes of a US keyboard, for typing as key presses.
+        'playwright-keyboard-layout': resolve(
+          'node_modules/playwright-core/lib/server/usKeyboardLayout.js'
         )
       }
     }

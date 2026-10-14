@@ -123,6 +123,8 @@ export class ChatPage extends EventEmitter {
    * process, so saved tabs load when they are first used, not all at once.
    */
   unloaded = false
+  /** The tab's first load, once started; an agent's navigation must not race it. */
+  private firstLoad?: Promise<void>
   /** Agent tool calls in progress on this page. */
   private automating = 0
 
@@ -148,11 +150,17 @@ export class ChatPage extends EventEmitter {
     return this.view.webContents
   }
 
-  /** Load the page of a reopened tab, if it has not been loaded yet. Settles when it has loaded or failed. */
+  /**
+   * Load the page of a reopened tab, if it has not been loaded yet. Settles
+   * when its first load has loaded or failed, also when that load had started
+   * already.
+   */
   load(): Promise<void> {
-    if (!this.unloaded) return Promise.resolve()
-    this.unloaded = false
-    return this.contents.loadURL(this.url || 'about:blank').catch(() => undefined)
+    if (this.unloaded) {
+      this.unloaded = false
+      this.firstLoad = this.contents.loadURL(this.url || 'about:blank').catch(() => undefined)
+    }
+    return this.firstLoad ?? Promise.resolve()
   }
 
   /** Whether an agent tool call is running on the page. */
@@ -691,8 +699,9 @@ export class BuiltinBrowser {
     }
     const browser = this.browserFor(chatId)
     const tab = tabId ? this.findTab(browser, tabId) : browser.active!
-    // A reopened tab loads its page on first use.
-    if (tab.unloaded) await loadedWithin(tab.load())
+    // A reopened tab loads its page on first use. A new one may still be
+    // loading its first page, which would abort a navigation started now.
+    await loadedWithin(tab.load())
     // A page whose renderer crashed comes back by loading it again.
     if (tab.contents.isCrashed()) await reloadAndWait(tab.contents)
     return tab
