@@ -46,6 +46,16 @@ const api = {
   addProject: (): Promise<Project | null> => ipcRenderer.invoke('project:add'),
   removeProject: (projectId: string): Promise<void> =>
     ipcRenderer.invoke('project:remove', projectId),
+  setProjectStyle: (
+    projectId: string,
+    style: Partial<Pick<Project, 'color' | 'icon'>>
+  ): Promise<void> => ipcRenderer.invoke('project:setStyle', projectId, style),
+  /** The project's own icon (its favicon) as a data URL; null when none was found. */
+  projectIcon: (projectId: string): Promise<string | null> =>
+    ipcRenderer.invoke('project:icon', projectId),
+  /** Choose an image as the project's icon, saved in the project; undefined when cancelled. */
+  chooseProjectIcon: (projectId: string): Promise<string | null | undefined> =>
+    ipcRenderer.invoke('project:chooseIcon', projectId),
 
   createChat: (
     projectId: string,
@@ -54,6 +64,8 @@ const api = {
     permissions: Pick<Chat, 'bypassPermissions' | 'projectOnly'> = {}
   ): Promise<Chat> => ipcRenderer.invoke('chat:create', projectId, agent, settings, permissions),
   deleteChat: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:delete', chatId),
+  /** Leaving a chat: deletes it if nothing was sent in it. */
+  leaveChat: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:leave', chatId),
   renameChat: (chatId: string, title: string): Promise<void> =>
     ipcRenderer.invoke('chat:rename', chatId, title),
   getMessages: (chatId: string): Promise<ChatItem[]> => ipcRenderer.invoke('chat:messages', chatId),
@@ -66,6 +78,12 @@ const api = {
   /** The path of a dropped or pasted file (empty for data with no file, like a screenshot). */
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
   cancel: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:cancel', chatId),
+  /** Take back a message waiting for the turn: undefined when it already joined it. */
+  takeWaiting: (
+    chatId: string,
+    id: string
+  ): Promise<{ text: string; attachments: Attachment[] } | undefined> =>
+    ipcRenderer.invoke('chat:takeWaiting', chatId, id),
   /** Set the permission mode: both settings in one call, so they never apply half-changed. */
   setPermissions: (
     chatId: string,

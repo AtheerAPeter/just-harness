@@ -1,85 +1,101 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { ThemeToggle } from './ThemeToggle'
 import { Collapse } from './Collapse'
-import { startedChats, type AppState, type Chat, type Project } from '../../../shared/types'
+import { ProjectTile } from './ProjectIcon'
+import { RowMenu } from './RowMenu'
+import { colorValue } from '../lib/project-colors'
+import { startedChats, type AppState, type Chat } from '../../../shared/types'
 import { readPref, writePref } from '../lib/prefs'
-import { useOverlay } from '../lib/overlays'
 import {
   BookIcon,
   ChevronIcon,
-  ClockIcon,
-  FolderIcon,
+  ComposeIcon,
   FolderPlusIcon,
-  LeadIcon,
-  MoreIcon,
-  PlusIcon,
   SearchIcon,
   SlidersIcon
 } from './icons'
 
-/** Chats listed per project before "Show more", and how many each click adds. */
-const CHAT_PAGE = 5
-const CHAT_MORE = 10
-/** Chats listed in the Recent view before "Show more", and how many each click adds. */
-const RECENT_PAGE = 20
-
-/** How the chats below "Needs you" and "Working" are listed. */
-type ListMode = 'project' | 'recent'
+/** Settled chats listed before "Show more", and how many each click adds. */
+const SETTLED_PAGE = 20
+/** The Settled list's height until the user drags it, and below which a drag closes it. */
+const SETTLED_HEIGHT = 320
+const SETTLED_MIN = 60
+/** Room kept for the top bar, the live chats and the footer while dragging the list up. */
+const SETTLED_ROOM = 180
+/** The sidebar's width until the user drags its edge, and how narrow or wide it may get. */
+const SIDEBAR_WIDTH = 244
+const SIDEBAR_MIN = 200
+const SIDEBAR_MAX = 440
 
 interface SidebarProps {
   /** Hidden, it slides out but stays mounted, keeping its scroll and search. */
   open: boolean
   state: AppState
   selectedChatId?: string
-  selectedProjectId?: string
   view: 'chat' | 'skills' | 'settings'
   onSelectChat: (chatId: string) => void
-  onNewChat: (projectId: string) => void
+  /** Start a chat: the user picks its project first. */
+  onNewChat: () => void
   onShowSkills: () => void
   onShowSettings: () => void
 }
 
+/**
+ * Chats that need the user or are working sit at the top; every other chat is
+ * settled, in its own section at the bottom. Each chat shows its project's icon
+ * and color, which is how chats of different projects are told apart.
+ */
 export function Sidebar({
   open,
   state,
   selectedChatId,
-  selectedProjectId,
   view,
   onSelectChat,
   onNewChat,
   onShowSkills,
   onShowSettings
 }: SidebarProps): React.JSX.Element {
-  /** Projects the user opened; every project starts closed. */
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   /** Lead chats whose chats the user opened; every lead starts closed. */
   const [openLeads, setOpenLeads] = useState<Set<string>>(new Set())
-  /** The selected chat whose project (and lead) was last opened for it. */
+  /** The selected chat that was last brought into view. */
   const [revealedChatId, setRevealedChatId] = useState<string>()
-  /** How many chats each project shows, and the Recent list under its own key. */
-  const [shown, setShown] = useState<Record<string, number>>({})
+  const [settledOpen, setSettledOpen] = useState(() => readPref('settledOpen', true))
+  const [settledShown, setSettledShown] = useState(SETTLED_PAGE)
+  const [settledHeight, setSettledHeight] = useState(() =>
+    readPref('settledHeight', SETTLED_HEIGHT)
+  )
+  /** The list's height while its header is being dragged. */
+  const [dragHeight, setDragHeight] = useState<number>()
+  /** Set when a drag ends, so the click that follows it does not also open or close the list. */
+  const dragged = useRef(false)
+  const navRef = useRef<HTMLElement>(null)
+  const [width, setWidth] = useState(() => readPref('sidebarWidth', SIDEBAR_WIDTH))
+  const [resizing, setResizing] = useState(false)
+  useLayoutEffect(() => {
+    // The window's layout and the sidebar's slide both use this width.
+    document.documentElement.style.setProperty('--sidebar-width', `${width}px`)
+  }, [width])
+  useEffect(() => writePref('sidebarWidth', width), [width])
+  useRowMotion(navRef, dragHeight !== undefined || resizing)
   /** The chat whose title is being edited in place. */
   const [renaming, setRenaming] = useState<string>()
-  const [mode, setMode] = useState<ListMode>(() => readPref('sidebarMode', 'project'))
   /** The search text; undefined while the search field is closed. */
   const [query, setQuery] = useState<string>()
   const [version, setVersion] = useState<string>()
   useEffect(() => {
     window.api.appVersion().then(setVersion)
   }, [])
-  useEffect(() => writePref('sidebarMode', mode), [mode])
+  useEffect(() => writePref('settledOpen', settledOpen), [settledOpen])
+  useEffect(() => writePref('settledHeight', settledHeight), [settledHeight])
   const now = useNow()
 
   const projects = new Map(state.projects.map((p) => [p.id, p]))
-  // Open the project holding a newly selected chat, and the chat that leads it, so a new or
-  // picked chat stays in view. Done while rendering, once per selection; the user can close
-  // them again after.
+  // Open the Settled section and the chat that leads a newly selected chat, so a new or picked
+  // chat stays in view. Done while rendering, once per selection; the user can close them after.
   const selectedChat = state.chats.find((c) => c.id === selectedChatId)
   if (selectedChat && selectedChatId !== revealedChatId) {
     setRevealedChatId(selectedChatId)
-    if (!expanded.has(selectedChat.projectId)) {
-      setExpanded(new Set(expanded).add(selectedChat.projectId))
-    }
+    if (!settledOpen && !selectedChat.running) setSettledOpen(true)
     if (selectedChat.startedBy && !openLeads.has(selectedChat.startedBy)) {
       setOpenLeads(new Set(openLeads).add(selectedChat.startedBy))
     }
@@ -109,7 +125,9 @@ export function Sidebar({
   }
   const waiting = chats.filter((c) => c.waiting)
   const running = chats.filter((c) => working(c) && !c.waiting && !leadWorking(c))
-  const rest = chats.filter((c) => !working(c) && !c.waiting && !nested(c))
+  const settled = chats.filter((c) => !working(c) && !c.waiting && !nested(c))
+  // While searching, settled matches are always listed.
+  const settledShut = !settledOpen && !q
   /** Whether the open chat is this one or one it leads, to keep it in view past "Show more". */
   const holdsSelected = (chat: Chat): boolean =>
     chat.id === selectedChatId ||
@@ -124,37 +142,25 @@ export function Sidebar({
     })
   }
 
-  function toggle(projectId: string): void {
-    setExpanded((current) => {
-      const next = new Set(current)
-      if (next.has(projectId)) next.delete(projectId)
-      else next.add(projectId)
-      return next
-    })
-  }
-
-  /** One chat. Pinned and Recent rows say which project the chat belongs to. */
-  function chatRow(chat: Chat, withProject: boolean): React.JSX.Element {
+  /** One chat, led by its project's icon and color; live ones are also tinted in the color. */
+  function chatRow(chat: Chat, live: boolean): React.JSX.Element {
     const project = projects.get(chat.projectId)
+    const color = live && project?.color ? colorValue(project.color) : undefined
     const led = q ? undefined : started.get(chat.id)
     const workingLed = led?.filter((c) => c.running).length ?? 0
     const isOpen = openLeads.has(chat.id)
-    const status = chat.waiting ? ' waiting' : working(chat) ? ' running' : ''
     const row = (
       <div
         key={chat.id}
-        className={`chat-row${led ? ' lead' : ''}${view === 'chat' && chat.id === selectedChatId ? ' selected' : ''}`}
-        title={chat.waiting ? 'Waiting for approval' : chat.preview || undefined}
+        data-chat={chat.id}
+        className={`chat-row${led ? ' lead' : ''}${color ? ' colored' : ''}${view === 'chat' && chat.id === selectedChatId ? ' selected' : ''}`}
+        style={color ? ({ '--project-color': color } as React.CSSProperties) : undefined}
+        title={[project?.name, chat.waiting ? 'Waiting for approval' : chat.preview]
+          .filter(Boolean)
+          .join(' · ')}
         onClick={() => onSelectChat(chat.id)}
       >
-        {led ? (
-          <span className="lead-mark" title="Leads the chats it started">
-            <LeadIcon width={14} height={14} />
-            {status && <span className={`chat-dot${status}`} />}
-          </span>
-        ) : (
-          <span className={`chat-dot${status}`} />
-        )}
+        {project ? <ProjectTile project={project} size={12} /> : <span />}
         <div className="chat-line">
           {renaming === chat.id ? (
             <RenameField
@@ -187,7 +193,7 @@ export function Sidebar({
               <ChevronIcon width={10} height={10} className="chevron" />
             </button>
           )}
-          <ChatStatus chat={chat} now={now} />
+          <ChatStatus chat={chat} working={working(chat)} now={now} />
           <RowMenu
             label="Chat options"
             items={[
@@ -200,15 +206,6 @@ export function Sidebar({
             ]}
           />
         </div>
-        {withProject && project && (
-          <div className="chat-sub">
-            <FolderIcon width={11} height={11} />
-            <span>
-              {project.name}
-              {chat.waiting && ' · Waiting for approval'}
-            </span>
-          </div>
-        )}
       </div>
     )
     if (!led) return row
@@ -216,113 +213,84 @@ export function Sidebar({
       <Fragment key={chat.id}>
         {row}
         <Collapse open={isOpen} className="chat-children">
-          {led.map((c) => chatRow(c, false))}
+          {led.map((c) => chatRow(c, live))}
         </Collapse>
       </Fragment>
     )
   }
 
-  function projectGroup(project: Project): React.JSX.Element | null {
-    const own = rest.filter((c) => c.projectId === project.id)
-    // While searching, only projects with a match are listed, open and in full.
-    if (q && own.length === 0) return null
-    const total = state.chats.filter((c) => c.projectId === project.id).length
-    const isCollapsed = !q && !expanded.has(project.id)
-    const limit = q ? own.length : (shown[project.id] ?? CHAT_PAGE)
-    const visible = own.slice(0, limit)
-    // Keep the open chat visible even when it is older than the cutoff.
-    const selected = own.find(holdsSelected)
-    if (selected && !visible.includes(selected)) visible.push(selected)
-    return (
-      <div key={project.id} className="project">
-        <div
-          className={`project-row${project.id === selectedProjectId ? ' current' : ''}${isCollapsed ? ' collapsed' : ''}`}
-          title={project.path}
-          onClick={() => toggle(project.id)}
-        >
-          <ChevronIcon width={10} height={10} className="chevron" />
-          <FolderIcon width={14} height={14} className="project-icon" />
-          <span className="project-name">{project.name}</span>
-          <span className="project-count">{total}</span>
-          <span className="spacer" />
-          <RowMenu
-            label="Project options"
-            items={[
-              {
-                name: 'Remove project',
-                danger: true,
-                onSelect: () => {
-                  if (
-                    confirm(
-                      `Remove "${project.name}" and its chats from Just Harness? Files on disk are not touched.`
-                    )
-                  ) {
-                    window.api.removeProject(project.id)
-                  }
-                }
-              }
-            ]}
-          />
-          <button
-            className="icon-btn small row-add"
-            title="New chat"
-            onClick={(e) => {
-              e.stopPropagation()
-              onNewChat(project.id)
-            }}
-          >
-            <PlusIcon width={14} height={14} />
-          </button>
-        </div>
-        <Collapse open={!isCollapsed} className="project-chats">
-          {visible.map((chat) => chatRow(chat, false))}
-          {!q && (own.length > limit || limit > CHAT_PAGE) && (
-            <div className="chat-more">
-              {own.length > limit && (
-                <button
-                  onClick={() =>
-                    setShown((current) => ({ ...current, [project.id]: limit + CHAT_MORE }))
-                  }
-                >
-                  Show more ({own.length - limit})
-                </button>
-              )}
-              {limit > CHAT_PAGE && (
-                <button
-                  onClick={() => setShown((current) => ({ ...current, [project.id]: CHAT_PAGE }))}
-                >
-                  Show less
-                </button>
-              )}
-            </div>
-          )}
-        </Collapse>
-      </div>
-    )
+  /**
+   * Dragging the Settled header up or down resizes the list; dragged nearly
+   * shut, it closes. A click without a drag opens or closes it.
+   */
+  function dragSettled(event: React.PointerEvent<HTMLButtonElement>): void {
+    if (event.button !== 0) return
+    const head = event.currentTarget
+    const startY = event.clientY
+    const startHeight = settledOpen ? settledHeight : 0
+    const max = Math.max(SETTLED_MIN, (navRef.current?.clientHeight ?? 0) - SETTLED_ROOM)
+    let height: number | undefined
+    const onMove = (e: PointerEvent): void => {
+      const dy = startY - e.clientY
+      if (height === undefined && Math.abs(dy) < 4) return
+      height = Math.min(max, Math.max(0, startHeight + dy))
+      setDragHeight(height)
+    }
+    const onUp = (): void => {
+      head.removeEventListener('pointermove', onMove)
+      head.removeEventListener('pointerup', onUp)
+      head.removeEventListener('pointercancel', onUp)
+      if (height === undefined) return
+      dragged.current = true
+      setDragHeight(undefined)
+      if (height < SETTLED_MIN) {
+        setSettledOpen(false)
+      } else {
+        setSettledHeight(height)
+        setSettledOpen(true)
+      }
+    }
+    head.setPointerCapture(event.pointerId)
+    head.addEventListener('pointermove', onMove)
+    head.addEventListener('pointerup', onUp)
+    head.addEventListener('pointercancel', onUp)
   }
 
-  function recentList(): React.JSX.Element {
-    const limit = q ? rest.length : (shown[RECENT_KEY] ?? RECENT_PAGE)
-    const visible = rest.slice(0, limit)
-    const selected = rest.find(holdsSelected)
+  /** Dragging the sidebar's right edge resizes it. */
+  function dragWidth(event: React.PointerEvent<HTMLDivElement>): void {
+    if (event.button !== 0) return
+    const edge = event.currentTarget
+    const startX = event.clientX
+    const startWidth = width
+    const onMove = (e: PointerEvent): void => {
+      const next = startWidth + e.clientX - startX
+      setWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(next))))
+    }
+    const onUp = (): void => {
+      edge.removeEventListener('pointermove', onMove)
+      edge.removeEventListener('pointerup', onUp)
+      edge.removeEventListener('pointercancel', onUp)
+      setResizing(false)
+    }
+    setResizing(true)
+    edge.setPointerCapture(event.pointerId)
+    edge.addEventListener('pointermove', onMove)
+    edge.addEventListener('pointerup', onUp)
+    edge.addEventListener('pointercancel', onUp)
+  }
+
+  function settledList(): React.JSX.Element {
+    const limit = q ? settled.length : settledShown
+    const visible = settled.slice(0, limit)
+    const selected = settled.find(holdsSelected)
     if (selected && !visible.includes(selected)) visible.push(selected)
-    const startOfToday = new Date(now).setHours(0, 0, 0, 0)
-    const today = visible.filter((c) => c.updatedAt >= startOfToday)
-    const earlier = visible.filter((c) => c.updatedAt < startOfToday)
     return (
       <>
-        {today.length > 0 && <div className="side-label">Today</div>}
-        {today.map((chat) => chatRow(chat, true))}
-        {earlier.length > 0 && <div className="side-label">Earlier</div>}
-        {earlier.map((chat) => chatRow(chat, true))}
-        {rest.length > limit && (
+        {visible.map((chat) => chatRow(chat, false))}
+        {settled.length > limit && (
           <div className="chat-more">
-            <button
-              onClick={() =>
-                setShown((current) => ({ ...current, [RECENT_KEY]: limit + RECENT_PAGE }))
-              }
-            >
-              Show more ({rest.length - limit})
+            <button onClick={() => setSettledShown(limit + SETTLED_PAGE)}>
+              Show more ({settled.length - limit})
             </button>
           </div>
         )}
@@ -331,7 +299,17 @@ export function Sidebar({
   }
 
   return (
-    <nav className={`sidebar${open ? '' : ' closed'}`} inert={!open}>
+    <nav
+      className={`sidebar${open ? '' : ' closed'}${resizing ? ' resizing' : ''}`}
+      inert={!open}
+      ref={navRef}
+    >
+      <div
+        className="sidebar-edge"
+        title="Drag to resize, double-click to reset"
+        onPointerDown={dragWidth}
+        onDoubleClick={() => setWidth(SIDEBAR_WIDTH)}
+      />
       {/* The window buttons sit at its left; it drags the window. */}
       <div className="sidebar-top">
         <button
@@ -355,6 +333,9 @@ export function Sidebar({
         >
           <FolderPlusIcon />
         </button>
+        <button className="icon-btn" title="New chat (⌘N)" onClick={onNewChat}>
+          <ComposeIcon />
+        </button>
       </div>
       {query !== undefined && (
         <label className="sidebar-search">
@@ -374,26 +355,6 @@ export function Sidebar({
           />
         </label>
       )}
-      <div className="segmented sidebar-mode" role="tablist">
-        <button
-          role="tab"
-          aria-selected={mode === 'project'}
-          className={mode === 'project' ? 'on' : ''}
-          onClick={() => setMode('project')}
-        >
-          <FolderIcon width={13} height={13} />
-          By project
-        </button>
-        <button
-          role="tab"
-          aria-selected={mode === 'recent'}
-          className={mode === 'recent' ? 'on' : ''}
-          onClick={() => setMode('recent')}
-        >
-          <ClockIcon width={13} height={13} />
-          Recent
-        </button>
-      </div>
       <div className="sidebar-section">
         {state.projects.length === 0 && (
           <button className="add-project" onClick={() => window.api.addProject()}>
@@ -416,18 +377,36 @@ export function Sidebar({
             {running.map((chat) => chatRow(chat, true))}
           </>
         )}
-        {mode === 'project' ? (
-          <>
-            {state.projects.length > 0 && (waiting.length > 0 || running.length > 0) && (
-              <div className="side-label">Projects</div>
-            )}
-            {state.projects.map(projectGroup)}
-          </>
-        ) : (
-          recentList()
-        )}
         {q && chats.length === 0 && <div className="side-empty">No matching chats</div>}
       </div>
+      {settled.length > 0 && (
+        <div className="settled">
+          <button
+            className={`settled-head${settledShut ? '' : ' open'}`}
+            aria-expanded={!settledShut}
+            title="Drag to resize, click to open or close"
+            onPointerDown={dragSettled}
+            onClick={() => {
+              if (dragged.current) dragged.current = false
+              else setSettledOpen((o) => !o)
+            }}
+          >
+            <span className="settled-grab" />
+            <span className="settled-line">
+              Settled · {settled.length}
+              <span className="spacer" />
+              <ChevronIcon width={10} height={10} className="chevron" />
+            </span>
+          </button>
+          <div
+            className={`settled-list${dragHeight !== undefined ? ' dragging' : ''}`}
+            style={{ height: dragHeight ?? (settledShut ? 0 : settledHeight) }}
+            inert={settledShut && dragHeight === undefined}
+          >
+            {settledList()}
+          </div>
+        </div>
+      )}
       <div className="sidebar-footer">
         <button
           className={`icon-btn${view === 'settings' ? ' on' : ''}`}
@@ -443,8 +422,67 @@ export function Sidebar({
   )
 }
 
-/** The Recent list's key in the per-list "Show more" counts; project ids never look like this. */
-const RECENT_KEY = ':recent'
+/**
+ * Chats that change place slide there from where they were, and chats that
+ * appear fade in. Places are kept after every render and on every scroll or
+ * resize, so only a change in the lists reads as a move; nothing moves while
+ * the user drags (paused).
+ */
+function useRowMotion(root: RefObject<HTMLElement | null>, paused: boolean): void {
+  const places = useRef<Map<string, number>>(undefined)
+
+  /** Each row's place without the slide it may be in the middle of, and that slide's offset. */
+  function measure(): Map<string, { el: HTMLElement; top: number; offset: number }> {
+    const rows = new Map<string, { el: HTMLElement; top: number; offset: number }>()
+    for (const el of root.current?.querySelectorAll<HTMLElement>('[data-chat]') ?? []) {
+      const rect = el.getBoundingClientRect()
+      // Rows in a closed section have no place.
+      if (rect.height === 0 || rows.has(el.dataset.chat!)) continue
+      const offset = new DOMMatrixReadOnly(getComputedStyle(el).transform).m42
+      rows.set(el.dataset.chat!, { el, top: rect.top - offset, offset })
+    }
+    return rows
+  }
+
+  useLayoutEffect(() => {
+    const before = places.current
+    const rows = measure()
+    places.current = new Map([...rows].map(([id, row]) => [id, row.top]))
+    if (!before || paused || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    for (const [id, { el, top, offset }] of rows) {
+      const from = before.get(id)
+      if (from === undefined) {
+        el.animate([{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1 }], ROW_IN)
+      } else if (Math.abs(from + offset - top) > 1) {
+        el.getAnimations().forEach((a) => a.cancel())
+        el.animate(
+          [{ transform: `translateY(${from + offset - top}px)` }, { transform: 'none' }],
+          ROW_MOVE
+        )
+      }
+    }
+  })
+
+  useEffect(() => {
+    const keep = (): void => {
+      places.current = new Map([...measure()].map(([id, row]) => [id, row.top]))
+    }
+    const el = root.current
+    el?.addEventListener('scroll', keep, true)
+    window.addEventListener('resize', keep)
+    return () => {
+      el?.removeEventListener('scroll', keep, true)
+      window.removeEventListener('resize', keep)
+    }
+  })
+}
+
+/** The motion curve and durations of styles.css (--ease, --move). */
+const ROW_IN: KeyframeAnimationOptions = { duration: 260, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' }
+const ROW_MOVE: KeyframeAnimationOptions = {
+  duration: 320,
+  easing: 'cubic-bezier(0.32, 0.72, 0, 1)'
+}
 
 /** Inline title editor. Enter or leaving the field saves; Escape cancels (undefined). */
 function RenameField({
@@ -482,9 +520,18 @@ function RenameField({
   )
 }
 
-/** When the chat last changed; running and waiting chats show their dot instead. */
-function ChatStatus({ chat, now }: { chat: Chat; now: number }): React.JSX.Element | null {
-  if (chat.waiting || chat.running) return null
+/** Waiting for the user, working, or else when the chat last changed. */
+function ChatStatus({
+  chat,
+  working,
+  now
+}: {
+  chat: Chat
+  working: boolean
+  now: number
+}): React.JSX.Element {
+  if (chat.waiting) return <span className="chat-status chat-dot waiting" />
+  if (working) return <span className="chat-status chat-dot running" />
   return <span className="chat-status chat-time">{relativeTime(chat.updatedAt, now)}</span>
 }
 
@@ -517,90 +564,3 @@ function relativeTime(time: number, now: number): string {
     ...(date.getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {})
   })
 }
-
-interface RowMenuItem {
-  name: string
-  danger?: boolean
-  onSelect: () => void
-}
-
-/**
- * A row's ⋮ button and its menu. The menu is fixed to the window, so the
- * scrolling sidebar cannot clip it; near the bottom it opens upward.
- */
-function RowMenu({ label, items }: { label: string; items: RowMenuItem[] }): React.JSX.Element {
-  const [at, setAt] = useState<React.CSSProperties>()
-  const rootRef = useRef<HTMLDivElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  useOverlay(menuRef, Boolean(at))
-
-  useEffect(() => {
-    if (!at) return
-    const onPointer = (event: PointerEvent): void => {
-      if (!rootRef.current?.contains(event.target as Node)) setAt(undefined)
-    }
-    // Capture phase, and handled: closing the menu must not also stop the agent.
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      setAt(undefined)
-    }
-    document.addEventListener('pointerdown', onPointer)
-    window.addEventListener('keydown', onKey, true)
-    return () => {
-      document.removeEventListener('pointerdown', onPointer)
-      window.removeEventListener('keydown', onKey, true)
-    }
-  }, [at])
-
-  function toggle(button: HTMLElement): void {
-    if (at) return setAt(undefined)
-    const rect = button.getBoundingClientRect()
-    const right = window.innerWidth - rect.right
-    const roomBelow = window.innerHeight - rect.bottom
-    setAt(
-      roomBelow > MENU_ROOM
-        ? { top: rect.bottom + 4, right }
-        : { bottom: window.innerHeight - rect.top + 4, right }
-    )
-  }
-
-  return (
-    <div
-      className={`row-menu${at ? ' open' : ''}`}
-      ref={rootRef}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <button
-        className="icon-btn small"
-        title={label}
-        aria-haspopup="menu"
-        aria-expanded={Boolean(at)}
-        onClick={(e) => toggle(e.currentTarget)}
-      >
-        <MoreIcon width={14} height={14} />
-      </button>
-      {at && (
-        <div className="menu" role="menu" style={at} ref={menuRef}>
-          {items.map((item) => (
-            <button
-              key={item.name}
-              role="menuitem"
-              className={item.danger ? 'danger' : undefined}
-              autoFocus={item === items[0]}
-              onClick={() => {
-                setAt(undefined)
-                item.onSelect()
-              }}
-            >
-              {item.name}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** Space a row menu needs below its button to open downward. */
-const MENU_ROOM = 120

@@ -9,6 +9,7 @@ import type {
   AgentOption,
   Chat,
   ChatItem,
+  Project,
   Rect,
   SkillScope,
   Theme
@@ -24,6 +25,7 @@ import { installMenu } from './menu'
 import { loadShellPath } from './shell-env'
 import * as skills from './skills'
 import { listProjectFiles } from './files'
+import { chooseProjectIcon, projectIcon } from './project-icon'
 
 let mainWindow: BrowserWindow
 let browser: BuiltinBrowser | undefined
@@ -196,6 +198,25 @@ function registerIpc(browser: BuiltinBrowser): void {
   })
 
   ipcMain.handle(
+    'project:setStyle',
+    (_e, projectId: string, style: Partial<Pick<Project, 'color' | 'icon'>>) => {
+      store.updateProject(projectId, style)
+      send('state:changed', store.getState())
+    }
+  )
+  ipcMain.handle('project:icon', (_e, projectId: string) =>
+    projectIcon(store.getProject(projectId).path)
+  )
+  ipcMain.handle('project:chooseIcon', async (_e, projectId: string) => {
+    const icon = await chooseProjectIcon(mainWindow, store.getProject(projectId).path)
+    if (icon === undefined) return undefined
+    // The chosen image shows in place of any other icon.
+    store.updateProject(projectId, { icon: undefined })
+    send('state:changed', store.getState())
+    return icon
+  })
+
+  ipcMain.handle(
     'chat:create',
     (
       _e,
@@ -211,6 +232,14 @@ function registerIpc(browser: BuiltinBrowser): void {
   )
 
   ipcMain.handle('chat:delete', async (_e, chatId: string) => {
+    await agents.deleteChat(chatId)
+    browser.closeChat(chatId)
+  })
+
+  // A chat the user leaves before sending anything is of no use, so it goes.
+  ipcMain.handle('chat:leave', async (_e, chatId: string) => {
+    const chat = store.getState().chats.find((c) => c.id === chatId)
+    if (!chat || chat.running || store.getMessages(chatId).length > 0) return
     await agents.deleteChat(chatId)
     browser.closeChat(chatId)
   })
@@ -247,6 +276,9 @@ function registerIpc(browser: BuiltinBrowser): void {
       agents.setPermissions(chatId, permissions)
   )
   ipcMain.handle('chat:cancel', (_e, chatId: string) => agents.cancel(chatId))
+  ipcMain.handle('chat:takeWaiting', (_e, chatId: string, id: string) =>
+    agents.takeWaiting(chatId, id)
+  )
   ipcMain.handle('chat:setOption', (_e, chatId: string, optionId: string, value: string) =>
     agents.setOption(chatId, optionId, value)
   )

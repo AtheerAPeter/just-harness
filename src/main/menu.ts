@@ -56,9 +56,13 @@ export function installMenu(
     {
       label: 'View',
       submenu: [
-        // Apple's standard shortcut for showing and hiding a sidebar.
-        { label: 'Toggle Sidebar', accelerator: 'Ctrl+Cmd+S', click: () => run('toggle-sidebar') },
-        { label: 'Toggle Browser', accelerator: 'CmdOrCtrl+B', click: () => run('toggle-browser') },
+        // ⌘B, as in editors; the browser takes ⇧⌘B.
+        { label: 'Toggle Sidebar', accelerator: 'CmdOrCtrl+B', click: () => run('toggle-sidebar') },
+        {
+          label: 'Toggle Browser',
+          accelerator: 'CmdOrCtrl+Shift+B',
+          click: () => run('toggle-browser')
+        },
         {
           label: 'Appearance',
           submenu: [

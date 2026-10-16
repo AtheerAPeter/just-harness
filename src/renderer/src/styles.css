@@ -369,12 +369,41 @@ kbd {
 /* Sidebar */
 
 .sidebar {
+  position: relative;
   width: var(--sidebar-width);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   padding: 0 8px 6px;
   border-right: 1px solid var(--border);
+}
+
+/* The sidebar's right edge: dragged, it resizes the sidebar. */
+.sidebar-edge {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+}
+
+.sidebar-edge::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: var(--border-strong);
+  opacity: 0;
+  transition: opacity var(--fast) ease;
+}
+
+.sidebar-edge:hover::after,
+.sidebar.resizing .sidebar-edge::after {
+  opacity: 1;
 }
 
 /* The window buttons sit at its left (trafficLightPosition in index.ts). */
@@ -422,13 +451,9 @@ kbd {
   color: var(--text-muted);
 }
 
-.sidebar-mode {
-  flex-shrink: 0;
-  margin: 4px 0 2px;
-}
-
 .sidebar-section {
   flex: 1;
+  min-height: 80px;
   overflow-y: auto;
   margin: 0 -6px;
   padding: 0 6px 10px;
@@ -460,6 +485,81 @@ kbd {
 .side-label.waiting b {
   background: var(--accent);
   color: var(--on-accent);
+}
+
+/* Chats that stopped, at the bottom; its header resizes the list by dragging. */
+.settled {
+  flex-shrink: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin: 0 -6px;
+  padding: 0 6px;
+}
+
+/* A drawer handle over a quiet label; dragging it resizes the settled chats' list. */
+.settled-head {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  padding: 6px 8px 4px;
+  cursor: row-resize;
+}
+
+.settled-grab {
+  align-self: center;
+  width: 32px;
+  height: 4px;
+  margin-bottom: 8px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  transition:
+    background-color var(--fast) ease,
+    width var(--fast) var(--ease);
+}
+
+.settled-head:hover .settled-grab {
+  width: 40px;
+  background: var(--text-muted);
+}
+
+.settled-line {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+.settled-head:hover .settled-line {
+  color: var(--text-soft);
+}
+
+.settled-head .chevron {
+  transform: rotate(90deg);
+}
+
+.settled-head.open .chevron {
+  transform: rotate(-90deg);
+}
+
+/* Shrinks below its height when the sidebar has no room for it. */
+.settled-list {
+  flex-shrink: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 -6px;
+  padding: 0 6px 6px;
+  transition: height var(--move) var(--ease);
+}
+
+.settled-list.dragging {
+  transition: none;
 }
 
 .side-empty {
@@ -500,30 +600,17 @@ kbd {
   color: var(--text);
 }
 
-.project {
-  margin-top: 2px;
+/* The project's icon on a small tile, tinted in the project's color when it has one. */
+.project-tile {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  padding: 3px;
+  border-radius: var(--radius-sm);
 }
 
-.project-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 24px;
-  padding: 0 4px 0 6px;
-  color: var(--text-soft);
-  font-weight: 600;
-  border-radius: var(--radius);
-}
-
-.project-row:hover {
-  background: var(--hover);
-}
-
-.project-name {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.project-tile.colored {
+  background: color-mix(in srgb, var(--project-color) 22%, transparent);
 }
 
 .project-icon {
@@ -531,38 +618,95 @@ kbd {
   color: var(--text-muted);
 }
 
-.project-count {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
+img.project-icon {
+  object-fit: contain;
 }
 
-.project-row .chevron {
-  transform: rotate(90deg);
+/* The project's icon and color picker, under its row. */
+.project-style {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 4px;
+  padding: 6px;
+  background: var(--menu);
+  box-shadow: var(--menu-shadow);
 }
 
-.project-row.collapsed .chevron {
-  transform: none;
+.style-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
 }
 
-.project-row .row-add {
-  display: none;
+.style-grid button {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  color: var(--text-soft);
 }
 
-.project-row:hover .row-add {
-  display: inline-flex;
+.style-grid button:hover {
+  background: var(--hover);
 }
 
-.project-chats {
-  padding-left: 8px;
+.style-grid button.on {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+/* The custom color: a color well shaped like the swatches beside it. */
+.custom-color {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+}
+
+.custom-color:hover {
+  background: var(--hover);
+}
+
+.custom-color.on {
+  background: var(--accent-soft);
+}
+
+.custom-color input {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red);
+  appearance: none;
+}
+
+.custom-color input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.custom-color input::-webkit-color-swatch {
+  border: 0;
+  border-radius: 50%;
+}
+
+.custom-color:not(.on) input::-webkit-color-swatch {
+  opacity: 0;
 }
 
 .chat-row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
-  column-gap: 6px;
+  column-gap: 8px;
   row-gap: 1px;
   min-height: 24px;
   margin: 0;
@@ -579,32 +723,29 @@ kbd {
   box-shadow: var(--raised-shadow);
 }
 
+/* A live chat, faintly tinted in its project's color. */
+.chat-row.colored {
+  background: color-mix(in srgb, var(--project-color) 7%, transparent);
+}
+
+.chat-row.colored:hover {
+  background: color-mix(in srgb, var(--project-color) 11%, transparent);
+}
+
+.chat-row.colored.selected {
+  background: color-mix(in srgb, var(--project-color) 10%, var(--raised));
+}
+
+/* Live chats sit apart, so neighbouring tints do not run together. */
+.chat-row.colored + .chat-row.colored {
+  margin-top: 2px;
+}
+
 .chat-dot {
   justify-self: center;
   width: 6px;
   height: 6px;
   border-radius: 50%;
-}
-
-/* A chat that started chats: its icon, with its own status dot at the corner. */
-.lead-mark {
-  position: relative;
-  justify-self: center;
-  display: grid;
-  place-items: center;
-  color: var(--text);
-}
-
-.lead-mark .chat-dot {
-  position: absolute;
-  right: -4px;
-  bottom: -3px;
-}
-
-.lead-mark .chat-dot.running {
-  width: 8px;
-  height: 8px;
-  background: var(--panel);
 }
 
 .chat-row.lead .chat-title {
@@ -684,47 +825,19 @@ kbd {
   text-overflow: ellipsis;
 }
 
+.chat-status {
+  flex-shrink: 0;
+}
+
 .chat-time {
   color: var(--text-muted);
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
 
-/* Which project a pinned or recent chat belongs to. */
-.chat-sub {
-  grid-column: 2;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  color: var(--text-muted);
-  font-size: 11.5px;
-}
-
-.chat-sub svg {
-  flex-shrink: 0;
-}
-
-.chat-sub span {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* A row's ⋮ menu shows on hover, or while open, in place of the time. */
+/* A row's ⋮ menu, next to the time. */
 .row-menu {
-  display: none;
-}
-
-.chat-row:hover .row-menu,
-.project-row:hover .row-menu,
-.row-menu.open {
   display: inline-flex;
-}
-
-.chat-row:hover .chat-status,
-.chat-row:has(.row-menu.open) .chat-status {
-  display: none;
 }
 
 .menu {
@@ -820,6 +933,28 @@ kbd {
 
 .icon-btn:disabled {
   opacity: 0.35;
+}
+
+/* A small action with its name next to its icon, like Edit or Delete. */
+.label-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  flex-shrink: 0;
+  color: var(--text-soft);
+  font-size: 11.5px;
+  border-radius: var(--radius);
+}
+
+.label-btn:hover:not(:disabled) {
+  background: var(--fill);
+  color: var(--text);
+}
+
+.label-btn.danger:hover:not(:disabled) {
+  color: var(--danger);
 }
 
 .btn {
@@ -1294,18 +1429,10 @@ kbd {
   font-size: 11.5px;
 }
 
-/* The chevron shows on hover, and turns while the line is open. */
+/* The chevron turns while the line is open. */
 .act-line .chevron,
 .call-line .chevron {
   align-self: center;
-  opacity: 0;
-}
-
-.act-line:hover .chevron,
-.call-line:hover .chevron,
-.activity.open > .act-line .chevron,
-.call.open > .call-line .chevron {
-  opacity: 1;
 }
 
 .activity.open > .act-line .chevron,
@@ -1722,10 +1849,18 @@ kbd {
 }
 
 .waiting-message {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-soft);
+}
+
+.waiting-text {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-soft);
 }
 
 .msg-attachments {
@@ -2459,13 +2594,7 @@ kbd {
   display: grid;
   place-items: center;
   color: var(--text-muted);
-  opacity: 0;
   border-radius: var(--radius-sm);
-}
-
-.browser-tab:hover .browser-tab-close,
-.browser-tab.active .browser-tab-close {
-  opacity: 1;
 }
 
 .browser-tab-close:hover {
@@ -2776,7 +2905,7 @@ kbd {
 /* Hover and state colors ease instead of snapping. */
 button,
 .chat-row,
-.project-row,
+.palette-row,
 .skill-row,
 .browser-tab,
 .address input,
@@ -2785,7 +2914,20 @@ button,
     background-color var(--fast) ease,
     color var(--fast) ease,
     box-shadow var(--fast) ease,
-    opacity var(--fast) ease;
+    opacity var(--fast) ease,
+    transform var(--fast) var(--ease);
+}
+
+/* Buttons press in a little under the pointer. */
+.icon-btn:active:not(:disabled),
+.btn:active:not(:disabled),
+.style-grid button:active,
+.lead-toggle:active {
+  transform: scale(0.94);
+}
+
+.settled-head:active {
+  transform: scale(0.99);
 }
 
 .chevron {
@@ -2830,11 +2972,18 @@ button,
   opacity: 1;
 }
 
-/* The sidebar slides out past the window edge and back, without fading. */
+/*
+ * The sidebar slides out past the window edge and back; its contents fade a
+ * little behind it, so it reads as one sheet leaving.
+ */
 .sidebar {
   transition:
     margin-left var(--move) var(--ease),
     visibility 0s linear 0s;
+}
+
+.sidebar > * {
+  transition: opacity var(--move) var(--ease);
 }
 
 .sidebar.closed {
@@ -2843,6 +2992,16 @@ button,
   transition:
     margin-left var(--move) var(--ease),
     visibility 0s linear var(--move);
+}
+
+.sidebar.closed > * {
+  opacity: 0.4;
+}
+
+/* Resizing follows the pointer at once. */
+.sidebar.resizing,
+.sidebar.resizing ~ .main .topbar {
+  transition: none;
 }
 
 .topbar {
@@ -2874,6 +3033,47 @@ button,
 .menu {
   transform-origin: top right;
   animation: pop-down var(--fast) var(--ease) both;
+}
+
+.project-style {
+  transform-origin: top left;
+  animation: pop-down var(--fast) var(--ease) both;
+}
+
+/* The project picker drops in over a fading backdrop. */
+.palette-backdrop {
+  animation: fade-in var(--fast) ease both;
+}
+
+.palette {
+  transform-origin: top center;
+  animation: pop-down var(--move) var(--ease) both;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The empty screen settles in. */
+.welcome {
+  animation: appear var(--move) var(--ease) both;
+}
+
+/* A chat that needs the user breathes, so it is noticed in a long list. */
+.chat-row .chat-dot.waiting {
+  animation: waiting-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes waiting-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px var(--accent-ring);
+  }
+  50% {
+    box-shadow: 0 0 0 5px transparent;
+  }
 }
 
 /* Two-way switches: one highlight slides between the options. */
@@ -2910,6 +3110,10 @@ button,
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .chat-row .chat-dot.waiting {
+    animation: none;
+  }
+
   *:not(.spinner, .chat-dot),
   *::before,
   *::after {
@@ -2917,4 +3121,138 @@ button,
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* New chat: the project picker, over the window. */
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(20, 16, 10, 0.28);
+}
+
+.palette {
+  position: absolute;
+  top: 14vh;
+  left: 0;
+  right: 0;
+  width: min(560px, calc(100vw - 48px));
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--menu);
+  box-shadow: var(--menu-shadow);
+  border-radius: var(--radius-lg);
+}
+
+.palette-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.palette-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.palette-search input::placeholder {
+  color: var(--text-muted);
+}
+
+.palette-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.palette-label {
+  padding: 8px 10px 6px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+}
+
+.palette-row.active {
+  background: var(--fill-strong);
+}
+
+.palette-row .project-tile {
+  padding: 5px;
+}
+
+.palette-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.palette-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.palette-path {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.palette-row kbd,
+.palette-foot kbd {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--fill-strong);
+  color: var(--text-soft);
+  font-size: 11.5px;
+}
+
+/* A project's own actions. */
+.palette-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.palette .project-style {
+  margin: 2px 10px 6px 44px;
+}
+
+.palette-foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.palette-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }

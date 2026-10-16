@@ -194,7 +194,7 @@ export function BrowserPanel({ width, onResize, onClose }: BrowserPanelProps): R
         >
           <MoreIcon />
         </button>
-        <button className="icon-btn" title="Close browser (⌘B)" onClick={onClose}>
+        <button className="icon-btn" title="Close browser (⇧⌘B)" onClick={onClose}>
           <CloseIcon />
         </button>
       </div>

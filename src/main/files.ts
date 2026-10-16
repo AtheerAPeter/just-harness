@@ -17,12 +17,12 @@ const SKIP_DIRS = new Set([
   '.venv'
 ])
 
-async function gitFiles(projectPath: string): Promise<string[] | undefined> {
+async function gitFiles(projectPath: string, pathspecs: string[]): Promise<string[] | undefined> {
   await loadShellPath()
   return new Promise((done) => {
     execFile(
       'git',
-      ['ls-files', '--cached', '--others', '--exclude-standard'],
+      ['ls-files', '--cached', '--others', '--exclude-standard', '--', ...pathspecs],
       { cwd: projectPath, maxBuffer: 32 * 1024 * 1024, timeout: 10_000 },
       (error, stdout) =>
         done(error ? undefined : stdout.split('\n').filter(Boolean).slice(0, MAX_FILES))
@@ -49,9 +49,15 @@ function walk(root: string): string[] {
   return files
 }
 
-/** Project files for the @ menu, relative to the project root. Respects .gitignore in git repos. */
-export async function listProjectFiles(projectPath: string): Promise<string[]> {
-  return (await gitFiles(projectPath)) ?? walk(projectPath)
+/**
+ * Project files for the @ menu, relative to the project root. Respects .gitignore in git repos.
+ * Git pathspecs narrow the list in git repos, so files past the limit can still be found.
+ */
+export async function listProjectFiles(
+  projectPath: string,
+  pathspecs: string[] = []
+): Promise<string[]> {
+  return (await gitFiles(projectPath, pathspecs)) ?? walk(projectPath)
 }
 
 /** Resolve an @mention to an absolute file path inside the project, if it names one. */

@@ -198,7 +198,12 @@ function NewSkillForm({
         placeholder="skill-name"
         value={name}
         onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))}
-        onKeyDown={(e) => e.key === 'Escape' && onCancel()}
+        onKeyDown={(e) => {
+          if (e.key !== 'Escape') return
+          // Handled: cancelling the new skill must not also close Skills.
+          e.preventDefault()
+          onCancel()
+        }}
       />
       <div className="segmented">
         <button

@@ -18,9 +18,11 @@ import {
   FileIcon,
   GaugeIcon,
   PaperclipIcon,
+  PencilIcon,
   SendIcon,
   ShieldIcon,
-  StopIcon
+  StopIcon,
+  TrashIcon
 } from './icons'
 
 interface ComposerProps {
@@ -211,6 +213,20 @@ export function Composer({
     setCaret(0)
   }
 
+  /** Take a waiting message back into the composer, before what is typed there, to edit it. */
+  async function editWaiting(id: string): Promise<void> {
+    const message = await window.api.takeWaiting(chat.id, id)
+    if (!message) return
+    const next = text.trim() ? `${message.text}\n\n${text}` : message.text
+    setText(next)
+    setCaret(next.length)
+    addAttachments(message.attachments)
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus()
+      textareaRef.current?.setSelectionRange(next.length, next.length)
+    })
+  }
+
   const shown = SHOWN_CATEGORIES.flatMap((category) =>
     (options ?? []).filter((o) => o.category === category)
   )
@@ -267,9 +283,23 @@ export function Composer({
       {chat.waitingMessages && (
         <div className="waiting-messages">
           <div className="waiting-label">Joins the turn at its next step</div>
-          {chat.waitingMessages.map((message, index) => (
-            <div className="waiting-message" key={index} title={message}>
-              {message}
+          {chat.waitingMessages.map((message) => (
+            <div className="waiting-message" key={message.id}>
+              <span className="waiting-text" title={message.text}>
+                {message.text}
+              </span>
+              <button type="button" className="label-btn" onClick={() => editWaiting(message.id)}>
+                <PencilIcon width={12} height={12} />
+                Edit
+              </button>
+              <button
+                type="button"
+                className="label-btn danger"
+                onClick={() => window.api.takeWaiting(chat.id, message.id)}
+              >
+                <TrashIcon width={12} height={12} />
+                Delete
+              </button>
             </div>
           ))}
         </div>

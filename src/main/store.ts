@@ -116,6 +116,18 @@ for (const chat of state.chats) {
   }
 }
 
+// A chat left without a message is of no use; those left from earlier launches go.
+const emptyChats = state.chats.filter((chat) => {
+  if (chat.preview) return false
+  const read = readJson<ChatItem[]>(join(chatsDir, `${chat.id}.json`), [])
+  return 'value' in read && read.value.length === 0
+})
+if (emptyChats.length > 0) {
+  state.chats = state.chats.filter((c) => !emptyChats.includes(c))
+  for (const chat of emptyChats) rmSync(join(chatsDir, `${chat.id}.json`), { force: true })
+  writeJson(statePath, state)
+}
+
 const messages = new Map<string, ChatItem[]>()
 const dirtyChats = new Set<string>()
 let flushTimer: NodeJS.Timeout | undefined
@@ -166,6 +178,14 @@ export function addProject(project: Project): void {
 export function removeProject(projectId: string): void {
   for (const chat of state.chats.filter((c) => c.projectId === projectId)) removeChat(chat.id)
   state.projects = state.projects.filter((p) => p.id !== projectId)
+  scheduleFlush()
+}
+
+export function updateProject(
+  projectId: string,
+  patch: Partial<Pick<Project, 'color' | 'icon'>>
+): void {
+  Object.assign(getProject(projectId), patch)
   scheduleFlush()
 }
 

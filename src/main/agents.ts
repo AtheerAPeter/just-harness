@@ -265,6 +265,10 @@ const UNLISTED_COMMANDS: Record<AcpAgent, AgentCommand[]> = {
 /** A prompt asking to compact the conversation. */
 const COMPACT = /^\/compact(\s|$)/
 
+/** Added to the user's message that steers a running turn, so the agent keeps at its work. */
+const STEER_NOTE =
+  '(The user sent this while you were still working. Unless it tells you to stop, to change course or to do it first, do not drop what you were doing: take it into account where it bears on that work, finish the work, then do what this message asks.)'
+
 const HARNESS_NO_COMPACTION = `The app's own agents compact the conversation on their own when it reaches ${formatTokens(COMPACT_AT)} tokens. They have no command to do it now.`
 
 /** What /compact shows for agents that cannot compact on request. */
@@ -1184,6 +1188,7 @@ function newUserItem(text: string, attachments: Attachment[]): UserItem {
 
 /** A message waiting for a busy chat: the user's own, or with `from` another chat's. */
 interface Waiting {
+  id: string
   text: string
   attachments: Attachment[]
   from?: ChatSender
@@ -1515,13 +1520,15 @@ export class AgentManager implements ChatsApi {
 
   /**
    * Send a message from the user, or, with `from`, from another chat's agent.
-   * The user's message to a working chat waits for it (see wait).
+   * The user's message to a working chat waits for it (see wait). `steers`
+   * when it ends a turn early to steer it (see steerAfterStep).
    */
   async send(
     chatId: string,
     text: string,
     attachments: Attachment[] = [],
-    from?: ChatSender
+    from?: ChatSender,
+    steers = false
   ): Promise<void> {
     this.recentChats = [...this.recentChats.filter((id) => id !== chatId), chatId]
     const chat = store.getChat(chatId)
@@ -1562,10 +1569,10 @@ export class AgentManager implements ChatsApi {
     let outcome: TurnOutcome = 'failed'
     let failure: string | undefined
     try {
-      const first = await this.promptFor(chatId, text, attachments, from, isFirst)
+      const first = await this.promptFor(chatId, text, attachments, from, isFirst, steers)
       // Messages that waited for this turn join it, so a run of follow-ups is
       // taken in one go. The app's own agents take them at their first step.
-      const joined = compact || isHarnessAgent(chat.agent) ? [] : await this.steer(chatId)
+      const joined = compact || isHarnessAgent(chat.agent) ? [] : await this.steer(chatId, steers)
       const parts = [first, ...joined]
       const response = await this.processFor(chatId).prompt(
         chatId,
@@ -1639,7 +1646,8 @@ export class AgentManager implements ChatsApi {
     text: string,
     attachments: Attachment[],
     from: ChatSender | undefined,
-    first: boolean
+    first: boolean,
+    steers: boolean
   ): Promise<{ prompt: string; blocks: acp.ContentBlock[] }> {
     const { agent, handoff } = store.getChat(chatId)
     let prompt = from
@@ -1647,6 +1655,7 @@ export class AgentManager implements ChatsApi {
         ? fromChatPrompt(from.title, browserId(from.chatId), text, first)
         : text
       : this.expandChatsTag(chatId, this.expandBrowserTag(chatId, this.expandSkill(chatId, text)))
+    if (steers && !from) prompt = `${prompt}\n\n${STEER_NOTE}`
     if (handoff) {
       const label = AGENTS.find((a) => a.id === handoff)?.label ?? handoff
       prompt = `${prompt}\n\n(The user switched this chat to you from ${label}, so you do not have the conversation so far. Before you answer, read it in ${store.chatFile(chatId)}: the user's messages, the answers and the tool calls, up to this message. Continue from where it left off.)`
@@ -1671,13 +1680,31 @@ export class AgentManager implements ChatsApi {
    * composer until then, and joins the chat where the agent reads it.
    */
   private wait(chatId: string, text: string, attachments: Attachment[]): void {
-    this.inbox.set(chatId, [...(this.inbox.get(chatId) ?? []), { text, attachments }])
+    const message = { id: crypto.randomUUID(), text, attachments }
+    this.inbox.set(chatId, [...(this.inbox.get(chatId) ?? []), message])
     this.showWaiting(chatId)
+  }
+
+  /**
+   * Take back one of the user's waiting messages, to delete it or edit it in
+   * the composer. Undefined when it already joined the turn.
+   */
+  takeWaiting(chatId: string, id: string): { text: string; attachments: Attachment[] } | undefined {
+    const queued = this.inbox.get(chatId) ?? []
+    const message = queued.find((m) => m.id === id && !m.from)
+    if (!message) return undefined
+    const rest = queued.filter((m) => m !== message)
+    if (rest.length > 0) this.inbox.set(chatId, rest)
+    else this.inbox.delete(chatId)
+    this.showWaiting(chatId)
+    return { text: message.text, attachments: message.attachments }
   }
 
   /** The user's waiting messages, for the composer. */
   private showWaiting(chatId: string): void {
-    const waiting = (this.inbox.get(chatId) ?? []).filter((m) => !m.from).map((m) => m.text)
+    const waiting = (this.inbox.get(chatId) ?? [])
+      .filter((m) => !m.from)
+      .map(({ id, text }) => ({ id, text }))
     store.updateChat(chatId, { waitingMessages: waiting.length > 0 ? waiting : undefined })
     this.events.stateChanged()
   }
@@ -1782,7 +1809,7 @@ export class AgentManager implements ChatsApi {
       void this.send(target.id, text, [], from)
       return 'started'
     }
-    this.inbox.set(target.id, [...queued, { text, attachments: [], from }])
+    this.inbox.set(target.id, [...queued, { id: crypto.randomUUID(), text, attachments: [], from }])
     // The app's own agents take it at their next step (see steer), the others
     // once their turn is ended after it (see steerAfterStep).
     return 'steering'
@@ -2002,7 +2029,7 @@ export class AgentManager implements ChatsApi {
       void this.send(chatId, text, [], from)
       return
     }
-    this.inbox.set(chatId, [...queued, { text, attachments: [], from }])
+    this.inbox.set(chatId, [...queued, { id: crypto.randomUUID(), text, attachments: [], from }])
   }
 
   /**
@@ -2034,8 +2061,12 @@ export class AgentManager implements ChatsApi {
    * Take the messages waiting for a running chat of the app's own agents, to
    * join its turn at the next step, as the agent reads them. A compaction
    * command waits for the turn to end, and so does what came after it.
+   * `steers` is false when they join a new turn: they are follow-ups then.
    */
-  private async steer(chatId: string): Promise<{ prompt: string; blocks: acp.ContentBlock[] }[]> {
+  private async steer(
+    chatId: string,
+    steers = true
+  ): Promise<{ prompt: string; blocks: acp.ContentBlock[] }[]> {
     const queued = this.inbox.get(chatId)
     if (!queued) return []
     const compact = queued.findIndex((m) => !m.from && COMPACT.test(m.text.trim()))
@@ -2058,7 +2089,7 @@ export class AgentManager implements ChatsApi {
     store.updateChat(chatId, { preview: chatPreview(store.getMessages(chatId)) })
     this.showWaiting(chatId)
     return Promise.all(
-      messages.map((m) => this.promptFor(chatId, m.text, m.attachments, m.from, false))
+      messages.map((m) => this.promptFor(chatId, m.text, m.attachments, m.from, false, steers))
     )
   }
 
@@ -2087,7 +2118,7 @@ export class AgentManager implements ChatsApi {
     const [next, ...rest] = this.deliverable(chatId, queued)
     if (rest.length > 0) this.inbox.set(chatId, rest)
     this.showWaiting(chatId)
-    if (next) void this.send(chatId, next.text, next.attachments, next.from)
+    if (next) void this.send(chatId, next.text, next.attachments, next.from, outcome === 'steered')
   }
 
   /**

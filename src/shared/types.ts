@@ -18,11 +18,41 @@ export function isHarnessAgent(agent: string): agent is HarnessAgentId {
   return (HARNESS_AGENTS as readonly string[]).includes(agent)
 }
 
+export const PROJECT_COLORS = [
+  'red',
+  'orange',
+  'yellow',
+  'green',
+  'teal',
+  'blue',
+  'purple',
+  'pink'
+] as const
+export type ProjectColor = (typeof PROJECT_COLORS)[number]
+
+export const PROJECT_ICONS = [
+  'folder',
+  'globe',
+  'terminal',
+  'book',
+  'chat',
+  'wrench',
+  'shield',
+  'gauge',
+  'pencil',
+  'lock'
+] as const
+export type ProjectIconName = (typeof PROJECT_ICONS)[number]
+
 export interface Project {
   id: string
   name: string
   path: string
   createdAt: number
+  /** Marks the project's icon and its chats in the sidebar: a preset, or a custom #rrggbb. */
+  color?: ProjectColor | `#${string}`
+  /** Chosen by the user; unset shows the project's own icon (its favicon) if it has one. */
+  icon?: ProjectIconName
 }
 
 export interface Chat {
@@ -45,7 +75,7 @@ export interface Chat {
   /** True while a permission request in this chat waits for the user. */
   waiting?: boolean
   /** The user's messages sent while the chat works, waiting to join its turn or follow it. */
-  waitingMessages?: string[]
+  waitingMessages?: { id: string; text: string }[]
   /** The first line of the chat's last message, shown under its title in the sidebar. */
   preview?: string
   /** Approve every permission request automatically (allow once). */

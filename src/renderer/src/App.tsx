@@ -5,6 +5,7 @@ import { ChatView } from './components/ChatView'
 import { SkillsView } from './components/SkillsView'
 import { SettingsView } from './components/SettingsView'
 import { BrowserPanel } from './components/BrowserPanel'
+import { ProjectPicker } from './components/ProjectPicker'
 import { ChatIcon, GlobeIcon, SidebarIcon } from './components/icons'
 import { readPref, writePref } from './lib/prefs'
 
@@ -20,6 +21,8 @@ export default function App(): React.JSX.Element {
   const [view, setView] = useState<'chat' | 'skills' | 'settings'>('chat')
   const [sidebarOpen, setSidebarOpen] = useState(() => readPref('sidebarOpen', true))
   const [browserWidth, setBrowserWidth] = useState(() => readPref('browserWidth', 520))
+  /** Whether the user is picking the project of a new chat. */
+  const [picking, setPicking] = useState(false)
   const [statuses, setStatuses] = useState<Partial<Record<AgentId, AgentStatus>>>({})
 
   useEffect(() => {
@@ -32,6 +35,23 @@ export default function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => writePref('selectedChat', selectedChatId), [selectedChatId])
+  // Escape leaves Skills or Settings for the chat, unless something there used the key.
+  useEffect(() => {
+    if (view === 'chat') return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && !e.defaultPrevented && !e.isComposing) setView('chat')
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [view])
+  // A chat left empty is deleted once the user moves on to another.
+  const leftChatId = useRef(selectedChatId)
+  useEffect(() => {
+    if (leftChatId.current && leftChatId.current !== selectedChatId) {
+      window.api.leaveChat(leftChatId.current)
+    }
+    leftChatId.current = selectedChatId
+  }, [selectedChatId])
   useEffect(() => writePref('sidebarOpen', sidebarOpen), [sidebarOpen])
   useEffect(() => writePref('browserWidth', browserWidth), [browserWidth])
 
@@ -62,14 +82,12 @@ export default function App(): React.JSX.Element {
     setView('chat')
   }, [])
 
-  // Menu bar commands. The handler reads the current project through a ref so the
+  // Menu bar commands. The handler reads the selected chat through a ref so the
   // subscription is made once.
-  const projectRef = useRef(project)
   const selectedChatRef = useRef(chat?.id)
   useEffect(() => {
-    projectRef.current = project
     selectedChatRef.current = chat?.id
-  }, [project, chat?.id])
+  }, [chat?.id])
   useEffect(
     () =>
       window.api.onMenu((command) => {
@@ -77,10 +95,7 @@ export default function App(): React.JSX.Element {
         else if (command === 'toggle-browser') toggleBrowser(selectedChatRef.current)
         else if (command === 'open-project') window.api.addProject()
         else if (command === 'open-settings') setView('settings')
-        else if (command === 'new-chat') {
-          if (projectRef.current) newChat(projectRef.current.id)
-          else window.api.addProject()
-        }
+        else if (command === 'new-chat') setPicking(true)
       }),
     [newChat, toggleBrowser]
   )
@@ -111,21 +126,20 @@ export default function App(): React.JSX.Element {
         open={sidebarOpen}
         state={state}
         selectedChatId={chat?.id}
-        selectedProjectId={project?.id}
         view={view}
         onSelectChat={(id) => {
           setSelectedChatId(id)
           setView('chat')
         }}
-        onNewChat={newChat}
-        onShowSkills={() => setView('skills')}
-        onShowSettings={() => setView('settings')}
+        onNewChat={() => setPicking(true)}
+        onShowSkills={() => setView((v) => (v === 'skills' ? 'chat' : 'skills'))}
+        onShowSettings={() => setView((v) => (v === 'settings' ? 'chat' : 'settings'))}
       />
       <main className="main">
         <header className="topbar">
           <button
             className="icon-btn"
-            title={sidebarOpen ? 'Hide sidebar (⌃⌘S)' : 'Show sidebar (⌃⌘S)'}
+            title={sidebarOpen ? 'Hide sidebar (⌘B)' : 'Show sidebar (⌘B)'}
             onClick={() => setSidebarOpen((o) => !o)}
           >
             <SidebarIcon />
@@ -159,7 +173,7 @@ export default function App(): React.JSX.Element {
           <span className="spacer" />
           <button
             className={`icon-btn${browserOpen ? ' on' : ''}`}
-            title="Toggle browser (⌘B)"
+            title="Toggle browser (⇧⌘B)"
             disabled={!chat}
             onClick={() => toggleBrowser(chat?.id)}
           >
@@ -193,14 +207,24 @@ export default function App(): React.JSX.Element {
             ) : (
               <>
                 <h2>Start a chat</h2>
-                <button className="btn primary" onClick={() => newChat(project.id)}>
-                  New chat in {project.name}
+                <button className="btn primary" onClick={() => setPicking(true)}>
+                  New chat
                 </button>
               </>
             )}
           </div>
         )}
       </main>
+      {picking && (
+        <ProjectPicker
+          projects={state.projects}
+          onPick={(projectId) => {
+            setPicking(false)
+            newChat(projectId)
+          }}
+          onClose={() => setPicking(false)}
+        />
+      )}
       {browserOpen && (
         <BrowserPanel
           width={browserWidth}
