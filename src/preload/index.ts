@@ -75,6 +75,8 @@ const api = {
     ipcRenderer.invoke('chat:send', chatId, text, attachments),
   /** Choose files to attach with the system file picker. */
   pickFiles: (): Promise<Attachment[]> => ipcRenderer.invoke('files:pick'),
+  /** A small preview of an image file, as a data URL; null when it cannot be read. */
+  thumbnail: (path: string): Promise<string | null> => ipcRenderer.invoke('files:thumbnail', path),
   /** The path of a dropped or pasted file (empty for data with no file, like a screenshot). */
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
   cancel: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:cancel', chatId),

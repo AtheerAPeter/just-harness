@@ -11,6 +11,7 @@ import type {
 import { renderMarkdown } from '../lib/markdown'
 import { Composer } from './Composer'
 import { Collapse } from './Collapse'
+import { Thumbnails } from './Thumbnails'
 import {
   BookIcon,
   CheckIcon,
@@ -354,9 +355,9 @@ function BlockView({
   return (
     <BlockFrame id={blockId(block)} loaded={loaded}>
       {block.kind === 'tools' ? (
-        <ToolGroup tools={block.tools} />
+        <ToolGroup tools={block.tools} chatId={chatId} />
       ) : block.kind === 'agent' ? (
-        <AgentRow item={block.item} steps={block.steps} />
+        <AgentRow item={block.item} steps={block.steps} chatId={chatId} />
       ) : (
         <Item item={block.item} chatId={chatId} live={live} />
       )}
@@ -438,14 +439,22 @@ const Item = memo(function Item({
               </div>
             )}
             {item.text}
-            {item.attachments && (
+            {item.attachments?.some((a) => a.file) && (
+              <Thumbnails
+                chatId={chatId}
+                files={item.attachments.flatMap((a) => (a.file ? [a.file] : []))}
+              />
+            )}
+            {item.attachments?.some((a) => !a.file) && (
               <div className="msg-attachments">
-                {item.attachments.map((a, index) => (
-                  <span className="attachment" key={index}>
-                    <FileIcon width={12} height={12} />
-                    <span className="attachment-name">{a.name}</span>
-                  </span>
-                ))}
+                {item.attachments
+                  .filter((a) => !a.file)
+                  .map((a, index) => (
+                    <span className="attachment" key={index}>
+                      <FileIcon width={12} height={12} />
+                      <span className="attachment-name">{a.name}</span>
+                    </span>
+                  ))}
               </div>
             )}
           </div>
@@ -453,10 +462,15 @@ const Item = memo(function Item({
       )
     case 'text':
       return (
-        <div
-          className="say markdown"
-          dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
-        />
+        <>
+          {item.text && (
+            <div
+              className="say markdown"
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
+            />
+          )}
+          {item.images && <Thumbnails chatId={chatId} files={item.images} />}
+        </>
       )
     case 'thought':
       // Short one-line thoughts are progress notes between tool calls and stay
@@ -779,9 +793,11 @@ function groupSummary(tools: ToolItem[]): string {
  * happening and shimmers. One row per call opens underneath on click; a single
  * call is shown as its own row straight away.
  */
-function ToolGroup({ tools }: { tools: ToolItem[] }): React.JSX.Element {
+function ToolGroup({ tools, chatId }: { tools: ToolItem[]; chatId: string }): React.JSX.Element {
   const [open, setOpen] = useState(false)
-  if (tools.length === 1) return <CallRow tool={tools[0]} />
+  if (tools.length === 1) return <CallRow tool={tools[0]} chatId={chatId} />
+  // Images stay in sight while the group is folded; open, each is under its call.
+  const images = tools.flatMap((t) => t.images ?? [])
   const active = tools.findLast(isRunning)
   const failed = tools.filter((t) => t.status === 'failed').length
   const Icon = CATEGORY_ICONS[groupCategories(tools)[0]]
@@ -803,9 +819,14 @@ function ToolGroup({ tools }: { tools: ToolItem[] }): React.JSX.Element {
         {failed > 0 && <span className="result-bad">{failed} failed</span>}
         <ChevronIcon width={10} height={10} className="chevron" />
       </button>
+      {!open && images.length > 0 && (
+        <div className="call-images">
+          <Thumbnails chatId={chatId} files={images} />
+        </div>
+      )}
       <Collapse open={open} className="tool-rows">
         {tools.map((tool) => (
-          <CallRow key={tool.id} tool={tool} nested />
+          <CallRow key={tool.id} tool={tool} chatId={chatId} nested />
         ))}
       </Collapse>
     </div>
@@ -816,7 +837,15 @@ function ToolGroup({ tools }: { tools: ToolItem[] }): React.JSX.Element {
  * A subagent as one line: what it works on, shimmering while it runs, and how
  * many steps it took. Its calls and its report open underneath on click.
  */
-function AgentRow({ item, steps }: { item: ToolItem; steps: ToolItem[] }): React.JSX.Element {
+function AgentRow({
+  item,
+  steps,
+  chatId
+}: {
+  item: ToolItem
+  steps: ToolItem[]
+  chatId: string
+}): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const running = isRunning(item)
   // The title is "Explore: what it does" or "Implement: what it does".
@@ -855,7 +884,7 @@ function AgentRow({ item, steps }: { item: ToolItem; steps: ToolItem[] }): React
       </button>
       <Collapse open={open} className="tool-rows">
         {steps.map((tool) => (
-          <CallRow key={tool.id} tool={tool} nested />
+          <CallRow key={tool.id} tool={tool} chatId={chatId} nested />
         ))}
         {report ? (
           <div className="markdown agent-report" dangerouslySetInnerHTML={{ __html: report }} />
@@ -875,9 +904,11 @@ function AgentRow({ item, steps }: { item: ToolItem; steps: ToolItem[] }): React
  */
 const CallRow = memo(function CallRow({
   tool,
+  chatId,
   nested
 }: {
   tool: ToolItem
+  chatId: string
   /** Inside an open group, under its summary line. */
   nested?: boolean
 }): React.JSX.Element {
@@ -910,6 +941,11 @@ const CallRow = memo(function CallRow({
         <CallResult tool={tool} lines={lines} />
         {expandable && <ChevronIcon width={10} height={10} className="chevron" />}
       </button>
+      {tool.images && (
+        <div className="call-images">
+          <Thumbnails chatId={chatId} files={tool.images} />
+        </div>
+      )}
       {expandable && (
         <Collapse open={open} className="step-output">
           {shown.map((line, index) => (

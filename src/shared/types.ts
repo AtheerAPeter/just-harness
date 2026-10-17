@@ -120,6 +120,14 @@ export interface Attachment {
   data?: string
 }
 
+/** The scheme the window loads chat images with (see main/images.ts). */
+export const IMAGE_SCHEME = 'chat-image'
+
+/** Where the window loads one of a chat's saved images from. */
+export function imageUrl(chatId: string, file: string): string {
+  return `${IMAGE_SCHEME}://${chatId}/${file}`
+}
+
 export type Theme = 'system' | 'light' | 'dark'
 
 export interface AppState {
@@ -210,8 +218,11 @@ export type ChatItem =
       kind: 'user'
       id: string
       text: string
-      /** Names of files and images sent with the message. */
-      attachments?: { name: string; image: boolean }[]
+      /**
+       * Names of files and images sent with the message, and for images the
+       * copy the chat saved to show them (see main/images.ts).
+       */
+      attachments?: { name: string; image: boolean; file?: string }[]
       /** When it was sent, in ms since the epoch. */
       sentAt?: number
       /** How long the agent worked on it, once its turn has ended. */
@@ -219,7 +230,13 @@ export type ChatItem =
       /** Sent by another chat's agent or a background command (see chats-mcp.ts), not by the user. */
       from?: ChatSender
     }
-  | { kind: 'text'; id: string; text: string }
+  | {
+      kind: 'text'
+      id: string
+      text: string
+      /** Images the agent sent after the text, as saved by the chat (see main/images.ts). */
+      images?: string[]
+    }
   | { kind: 'thought'; id: string; text: string }
   | {
       kind: 'tool'
@@ -230,6 +247,8 @@ export type ChatItem =
       status: ToolStatus
       input?: string
       output?: string
+      /** Images in the output, such as a screenshot, as saved by the chat (see main/images.ts). */
+      images?: string[]
       /** The subagent call this call was made in, for calls shown under their subagent. */
       parentId?: string
     }

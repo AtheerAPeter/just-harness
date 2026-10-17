@@ -45,7 +45,8 @@ import {
 } from './chats-mcp'
 import { listSkills } from './skills'
 import { resolveProjectFile } from './files'
-import { formatRaw, limitOutput } from './tool-output'
+import { formatRaw, imagesIn, limitOutput } from './tool-output'
+import { saveImage, saveImageFile, saveImages } from './images'
 import { commandVersion, loadShellPath } from './shell-env'
 import { withTimeout } from './page-driver'
 import {
@@ -1003,11 +1004,24 @@ class AgentProcess implements AgentBackend {
     switch (update.sessionUpdate) {
       case 'agent_message_chunk':
       case 'agent_thought_chunk': {
-        if (update.content.type !== 'text') return
         const kind = update.sessionUpdate === 'agent_message_chunk' ? 'text' : 'thought'
         const last = store.lastItem(chatId)
+        // An image the agent sends (Cline's generated images) goes under the
+        // text before it; text after it starts a new block, so the order holds.
+        if (update.content.type === 'image' && kind === 'text') {
+          const images = saveImages(chatId, [update.content])
+          if (images.length === 0) return
+          if (last?.kind === 'text')
+            this.emit(chatId, {
+              ...last,
+              images: [...new Set([...(last.images ?? []), ...images])]
+            })
+          else this.emit(chatId, { kind: 'text', id: crypto.randomUUID(), text: '', images })
+          return
+        }
+        if (update.content.type !== 'text') return
         // Consecutive chunks of the same kind form one block.
-        if (last?.kind === kind)
+        if (last?.kind === kind && !(last.kind === 'text' && last.images))
           this.emit(chatId, { ...last, text: last.text + update.content.text })
         else this.emit(chatId, { kind, id: crypto.randomUUID(), text: update.content.text })
         return
@@ -1021,13 +1035,19 @@ class AgentProcess implements AgentBackend {
             : { kind: 'tool', id: update.toolCallId, title: 'Tool call', status: 'pending' }
         const text = formatToolContent(update.content) ?? formatRaw(update.rawOutput)
         const output = text === undefined ? undefined : limitOutput(text)
+        // opencode sends images as content, Cline inside the MCP result it passes as rawOutput.
+        const images = saveImages(chatId, [
+          ...contentImages(update.content),
+          ...imagesIn(update.rawOutput)
+        ])
         this.emit(chatId, {
           ...base,
           title: update.title ?? base.title,
           toolKind: update.kind ?? base.toolKind,
           status: (update.status as ToolStatus | undefined) ?? base.status,
           input: formatRaw(update.rawInput) ?? base.input,
-          output: output ?? base.output
+          output: output ?? base.output,
+          ...(images.length ? { images } : {})
         })
         // A finished call is a point the turn can be cut at without losing work,
         // once no other call of it (agents run some side by side) is still going.
@@ -1098,13 +1118,24 @@ function providerRetry(
 
 function formatToolContent(content: acp.ToolCallContent[] | null | undefined): string | undefined {
   if (!content?.length) return undefined
-  const parts = content.map((c) => {
+  const parts = content.flatMap((c) => {
+    // Images are shown as pictures (contentImages).
+    if (c.type === 'content' && c.content.type === 'image') return []
     if (c.type === 'content')
       return c.content.type === 'text' ? c.content.text : `[${c.content.type}]`
     if (c.type === 'diff') return `--- ${c.path}\n${diffLines(c.oldText ?? '', c.newText)}`
     return '[terminal output]'
   })
   return parts.join('\n')
+}
+
+/** The images in a tool call's content. */
+function contentImages(
+  content: acp.ToolCallContent[] | null | undefined
+): { mimeType: string; data: string }[] {
+  return (content ?? []).flatMap((c) =>
+    c.type === 'content' && c.content.type === 'image' ? [c.content] : []
+  )
 }
 
 /** A minimal line diff: drop the common prefix/suffix and show what changed. */
@@ -1174,16 +1205,35 @@ function errorMessage(error: unknown, agent: AgentId): string {
 
 type UserItem = Extract<ChatItem, { kind: 'user' }>
 
-/** A message's item, with the names of the files sent with it. */
-function newUserItem(text: string, attachments: Attachment[]): UserItem {
+/** A message's item, with the names of the files sent with it and copies of its images to show. */
+async function newUserItem(
+  chatId: string,
+  text: string,
+  attachments: Attachment[]
+): Promise<UserItem> {
   return {
     kind: 'user',
     id: crypto.randomUUID(),
     text,
     ...(attachments.length
-      ? { attachments: attachments.map((a) => ({ name: a.name, image: isImage(a) })) }
+      ? {
+          attachments: await Promise.all(
+            attachments.map(async (a) => {
+              const file = await savedImage(chatId, a)
+              return { name: a.name, image: isImage(a), ...(file ? { file } : {}) }
+            })
+          )
+        }
       : {})
   }
+}
+
+/** Save an attached image for the chat to show; undefined for other files, or when it cannot be read. */
+async function savedImage(chatId: string, attachment: Attachment): Promise<string | undefined> {
+  const mimeType = imageType(attachment)
+  if (!mimeType) return undefined
+  if (attachment.data) return saveImage(chatId, mimeType, Buffer.from(attachment.data, 'base64'))
+  return attachment.path ? saveImageFile(chatId, mimeType, attachment.path) : undefined
 }
 
 /** A message waiting for a busy chat: the user's own, or with `from` another chat's. */
@@ -1558,7 +1608,7 @@ export class AgentManager implements ChatsApi {
     })
     const sentAt = Date.now()
     const userItem: UserItem = {
-      ...newUserItem(text, attachments),
+      ...(await newUserItem(chatId, text, attachments)),
       sentAt,
       ...(from ? { from } : {})
     }
@@ -2080,7 +2130,7 @@ export class AgentManager implements ChatsApi {
       this.events.item(
         chatId,
         store.upsertItem(chatId, {
-          ...newUserItem(text, attachments),
+          ...(await newUserItem(chatId, text, attachments)),
           sentAt: Date.now(),
           ...(from ? { from } : {})
         })

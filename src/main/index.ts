@@ -26,6 +26,7 @@ import { loadShellPath } from './shell-env'
 import * as skills from './skills'
 import { listProjectFiles } from './files'
 import { chooseProjectIcon, projectIcon } from './project-icon'
+import { handleImageRequests, registerImageScheme, thumbnail } from './images'
 
 let mainWindow: BrowserWindow
 let browser: BuiltinBrowser | undefined
@@ -270,6 +271,7 @@ function registerIpc(browser: BuiltinBrowser): void {
     })
     return result.canceled ? [] : result.filePaths.map((path) => ({ name: basename(path), path }))
   })
+  ipcMain.handle('files:thumbnail', (_e, path: string) => thumbnail(path))
   ipcMain.handle(
     'chat:setPermissions',
     (_e, chatId: string, permissions: Pick<Chat, 'bypassPermissions' | 'projectOnly'>) =>
@@ -339,6 +341,7 @@ app.on('activate', () => {
 })
 
 app.setName('Just Harness')
+registerImageScheme()
 
 app.whenReady().then(async () => {
   // A packaged build takes its icon from the bundle; in development the Electron
@@ -349,6 +352,7 @@ app.whenReady().then(async () => {
 
   // Only commands need PATH, and they wait for it; the window does not.
   void loadShellPath()
+  handleImageRequests()
   // Set before the window exists so it opens in the right appearance.
   nativeTheme.themeSource = store.getState().theme ?? 'system'
   installMenu((command) => send('menu', command), nativeTheme.themeSource, setTheme)

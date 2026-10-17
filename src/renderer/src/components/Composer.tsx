@@ -263,11 +263,7 @@ export function Composer({
         <div className="attachments">
           {attachments.map((a, index) => (
             <span className="attachment" key={`${a.path ?? a.name}-${index}`} title={a.path}>
-              {a.data ? (
-                <img src={`data:${a.mimeType};base64,${a.data}`} alt="" />
-              ) : (
-                <FileIcon width={13} height={13} />
-              )}
+              <AttachmentPicture attachment={a} />
               <span className="attachment-name">{a.name}</span>
               <button
                 type="button"
@@ -430,4 +426,25 @@ export function Composer({
       </div>
     </div>
   )
+}
+
+/** Image files the composer shows a thumbnail of; the types agents accept as images. */
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i
+
+/** An attachment's picture: a pasted image itself, an image file's thumbnail, else a file icon. */
+function AttachmentPicture({ attachment }: { attachment: Attachment }): React.JSX.Element {
+  const { data, mimeType, path } = attachment
+  const [thumbnail, setThumbnail] = useState<string | null>(null)
+  useEffect(() => {
+    if (data || !path || !IMAGE_FILE.test(path)) return
+    let cancelled = false
+    window.api.thumbnail(path).then((url) => {
+      if (!cancelled) setThumbnail(url)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [data, path])
+  const src = data ? `data:${mimeType};base64,${data}` : thumbnail
+  return src ? <img src={src} alt="" /> : <FileIcon width={13} height={13} />
 }

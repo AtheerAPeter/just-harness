@@ -29,6 +29,21 @@ function withoutMedia(value: unknown): unknown {
   return Object.fromEntries(Object.entries(fields).map(([key, v]) => [key, withoutMedia(v)]))
 }
 
+/** The MCP image content ({data, mimeType}) anywhere in agent data, which formatRaw leaves out. */
+export function imagesIn(value: unknown): { mimeType: string; data: string }[] {
+  if (Array.isArray(value)) return value.flatMap(imagesIn)
+  if (!value || typeof value !== 'object') return []
+  const fields = value as Record<string, unknown>
+  if (
+    typeof fields.data === 'string' &&
+    typeof fields.mimeType === 'string' &&
+    fields.mimeType.startsWith('image/')
+  ) {
+    return [{ mimeType: fields.mimeType, data: fields.data }]
+  }
+  return Object.values(fields).flatMap(imagesIn)
+}
+
 /** Cuts output past OUTPUT_MAX and says how much there was. */
 export function limitOutput(text: string): string {
   if (text.length <= OUTPUT_MAX) return text

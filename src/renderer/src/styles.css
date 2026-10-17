@@ -1903,6 +1903,74 @@ img.project-icon {
   color: var(--text);
 }
 
+/* Images in the chat: sent with a message, returned by a tool, or sent by the agent. */
+.thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.thumb {
+  display: block;
+  overflow: hidden;
+  background: var(--well);
+  box-shadow: 0 0 0 1px var(--border);
+  border-radius: var(--radius);
+  cursor: zoom-in;
+}
+
+.thumb img {
+  display: block;
+  width: auto;
+  max-width: 240px;
+  height: 96px;
+  object-fit: cover;
+}
+
+.thumb:hover img {
+  opacity: 0.88;
+}
+
+.bubble .thumbs {
+  margin-top: 6px;
+}
+
+.bubble .thumb {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+/* The agent's images, lined up with its text. */
+.block > .thumbs {
+  padding: 2px 4px;
+}
+
+/* A call's images, lined up with its words after the icon. */
+.call-images {
+  padding: 2px 4px 4px 27px;
+}
+
+/* One image at full size over the window; a click closes it. */
+.image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(20, 16, 10, 0.72);
+  cursor: zoom-out;
+}
+
+.image-viewer img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--menu-shadow);
+}
+
 .composer textarea {
   display: block;
   width: 100%;
@@ -3041,7 +3109,8 @@ button,
 }
 
 /* The project picker drops in over a fading backdrop. */
-.palette-backdrop {
+.palette-backdrop,
+.image-viewer {
   animation: fade-in var(--fast) ease both;
 }
 

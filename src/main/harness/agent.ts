@@ -11,6 +11,7 @@ import { BROWSER_GUIDANCE } from '../browser-mcp'
 import { CHATS_GUIDANCE } from '../chats-mcp'
 import { listSkills } from '../skills'
 import { formatRaw, limitOutput } from '../tool-output'
+import { saveImages } from '../images'
 import {
   askUser,
   emitItem,
@@ -872,13 +873,19 @@ How to communicate:
     }
     this.emit(chatId, { ...item, status: 'in_progress' })
     const output = await runTool(tool, args, { cwd, chatId, signal })
+    // Images are shown as pictures, the text as output.
+    const images = saveImages(
+      chatId,
+      output.content.flatMap((p) => (p.type === 'image' ? [p] : []))
+    )
     const shown =
       output.display ??
-      output.content.map((p) => (p.type === 'text' ? p.text : `[${p.mimeType}]`)).join('\n')
+      output.content.flatMap((p) => (p.type === 'text' ? [p.text] : [])).join('\n')
     this.emit(chatId, {
       ...item,
       status: signal.aborted ? 'interrupted' : output.isError ? 'failed' : 'completed',
-      output: limitOutput(shown)
+      output: limitOutput(shown),
+      ...(images.length ? { images } : {})
     })
     return { callId: call.id, content: output.content, isError: output.isError === true }
   }

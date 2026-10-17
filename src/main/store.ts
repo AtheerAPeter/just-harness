@@ -21,6 +21,7 @@ import {
 } from '../shared/types'
 import { cleanStoredOutput } from './tool-output'
 import { chatPreview } from './preview'
+import { removeChatImages } from './images'
 
 const dataDir = join(app.getPath('userData'), 'data')
 const chatsDir = join(dataDir, 'chats')
@@ -243,6 +244,7 @@ export function removeChat(chatId: string): void {
   messages.delete(chatId)
   dirtyChats.delete(chatId)
   rmSync(join(chatsDir, `${chatId}.json`), { force: true })
+  removeChatImages(chatId)
   scheduleFlush()
 }
 
