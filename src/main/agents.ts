@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { homedir } from 'node:os'
-import { basename, extname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { statSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { app } from 'electron'
@@ -67,6 +67,7 @@ import { isHarnessAgent, type HarnessAgentId, type Provider } from './harness/pr
 import { commandCode } from './harness/commandcode'
 import { openCode, opencodeMajor } from './harness/opencode'
 import { cline } from './harness/cline'
+import opencodePlugin from '../../resources/opencode-plugin/server.js?asset&asarUnpack'
 
 /** Agents run as a CLI over ACP; the app's own harness agents are not. */
 type AcpAgent = Exclude<AgentId, HarnessAgentId>
@@ -164,6 +165,10 @@ async function loadSdk(): Promise<typeof acp> {
  * step, and a permission question shows the script instead of the call. Only
  * its config can turn Code Mode off for a server. Opencode 1 has no Code Mode,
  * and its config would refuse the field, so it gets them in session/new.
+ *
+ * Opencode 2 also loads the app's plugin, which refuses its tools' background
+ * mode: work started that way resumes the session where the app cannot see it
+ * (see resources/opencode-plugin), while run_in_background wakes the chat.
  */
 async function agentEnv(agent: AgentId): Promise<{ env: NodeJS.ProcessEnv; mcpInConfig: boolean }> {
   if (agent !== 'opencode') return { env: process.env, mcpInConfig: false }
@@ -194,6 +199,9 @@ async function agentEnv(agent: AgentId): Promise<{ env: NodeJS.ProcessEnv; mcpIn
       ])
     )
     config.mcp = { ...mcp, servers: { ...mcp.servers, ...servers } }
+    const plugins = (config.plugins ?? []) as unknown[]
+    // A plugin is loaded from its folder, the one with its package.json.
+    config.plugins = [...plugins, { package: dirname(opencodePlugin) }]
   }
   return {
     env: { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify(config) },
