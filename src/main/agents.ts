@@ -102,19 +102,31 @@ const CANCEL_TIMEOUT_MS = 10_000
 /**
  * A turn the agent sends nothing in, not even a retry notice or a permission
  * request, is silent because the provider or the process wedged. Streaming
- * back again is impossible until the turn ends, so the process is restarted:
- * the running turn ends with an error, and the chat reloads its session when
- * the next message is sent. A permission prompt pauses the count (the user
- * decides when the turn continues); every other message from the agent
- * restarts it.
+ * back again is impossible until the turn ends, so the turn is ended as Stop
+ * ends it, with an error; the process is restarted only if it does not end
+ * it, since that ends its other chats' turns too. A permission prompt pauses
+ * the count (the user decides when the turn continues); every other message
+ * from the agent restarts it.
  */
-const STALL_TIMEOUT_MS = stallTimeout()
+const STALL_TIMEOUT_MS = stallTimeout('JUST_HARNESS_STALL_TIMEOUT_MS', 5 * 60_000)
+
+/**
+ * While a tool call runs, the agent sends nothing until it ends (opencode
+ * reports no progress of a command or a subagent), so silence then is the
+ * tool's, and long work is no stall. A tool silent this long hangs (an MCP
+ * call that never returns): the turn is ended as for a stall, so a chat no
+ * one watches, like one another chat started, does not work forever unseen.
+ * Long commands are meant for run_in_background, and opencode stops its own
+ * shell commands after two minutes unless the model asks for longer.
+ */
+const TOOL_STALL_TIMEOUT_MS = stallTimeout('JUST_HARNESS_TOOL_STALL_TIMEOUT_MS', 30 * 60_000)
+
 const STALL_CHECK_MS = Math.min(Math.floor(STALL_TIMEOUT_MS / 3), 30_000)
 
-/** The stall limit, overridable for testing. */
-function stallTimeout(): number {
-  const override = Number.parseInt(process.env.JUST_HARNESS_STALL_TIMEOUT_MS ?? '', 10)
-  return Number.isFinite(override) && override > 1000 ? override : 5 * 60_000
+/** A stall limit, overridable for testing. */
+function stallTimeout(variable: string, fallback: number): number {
+  const override = Number.parseInt(process.env[variable] ?? '', 10)
+  return Number.isFinite(override) && override > 1000 ? override : fallback
 }
 
 /** How long opening a chat (starting the agent, loading the session) may take. */
@@ -410,6 +422,8 @@ class AgentProcess implements AgentBackend {
   private turns = new Map<string, symbol>()
   /** When each chat last got anything from its agent, for the stall watchdog. */
   private activity = new Map<string, number>()
+  /** Turns the stall watchdog is ending, per chat, with why (see stopIfStalled). */
+  private stalled = new Map<string, { turn: symbol; why: string }>()
   private activePrompts = 0
   private idleTimer?: NodeJS.Timeout
 
@@ -873,10 +887,15 @@ class AgentProcess implements AgentBackend {
       const watchdog = setInterval(() => this.stopIfStalled(chatId, turn), STALL_CHECK_MS)
       // A turn ends by the agent's response, its exit, or the stall watchdog;
       // the watchdog must not outlive any of them.
-      return await pending.finally(() => clearInterval(watchdog))
+      const response = await pending.finally(() => clearInterval(watchdog))
+      // The watchdog ended it: a failed turn, with why, rather than a stop.
+      const stalled = this.stalled.get(chatId)
+      if (stalled?.turn === turn) throw new Error(stalled.why)
+      return response
     } catch (error) {
       throw await this.explain(error)
     } finally {
+      if (this.stalled.get(chatId)?.turn === turn) this.stalled.delete(chatId)
       this.stopBeforeSend.delete(chatId)
       this.activity.delete(chatId)
       if (this.turns.get(chatId) === turn) this.turns.delete(chatId)
@@ -886,19 +905,28 @@ class AgentProcess implements AgentBackend {
   }
 
   /**
-   * A turn whose agent has sent nothing for ages is hanging: say so and
-   * restart the process. Killing the child closes the connection, which
-   * rejects the prompt request, which ends the turn with the reason.
+   * A turn whose agent has sent nothing for ages is hanging: end it alone with
+   * session/cancel, as Stop does, and have its prompt fail with why (see
+   * prompt). The process serves other chats, so it is restarted only when it
+   * does not end the turn either (see cancel).
    */
   private stopIfStalled(chatId: string, turn: symbol): void {
-    if (this.turns.get(chatId) !== turn) return
+    if (this.turns.get(chatId) !== turn || this.stalled.get(chatId)?.turn === turn) return
     // An unanswered permission request means the agent is waiting for the user.
     if ([...this.permissions.values()].some((p) => p.chatId === chatId)) return
     const last = this.activity.get(chatId)
-    if (last === undefined || Date.now() - last <= STALL_TIMEOUT_MS) return
-    this.stop(
-      `${this.agent} sent nothing for ${STALL_TIMEOUT_MS / 1000} seconds, so it was restarted. Send your message again to continue.`
-    )
+    if (last === undefined) return
+    // A running tool call is given longer (see TOOL_STALL_TIMEOUT_MS).
+    const tool = store
+      .getMessages(chatId)
+      .some((i) => i.kind === 'tool' && i.status === 'in_progress')
+    const limit = tool ? TOOL_STALL_TIMEOUT_MS : STALL_TIMEOUT_MS
+    if (Date.now() - last <= limit) return
+    const why = tool
+      ? `A tool call ran for ${formatDuration(limit)} without finishing, so ${this.agent}'s turn was stopped. Send your message again to continue.`
+      : `${this.agent} sent nothing for ${formatDuration(limit)}, so its turn was stopped. Send your message again to continue.`
+    this.stalled.set(chatId, { turn, why })
+    void this.cancel(chatId)
   }
 
   /** Note that the chat just got something from the agent (or for it), mid-turn. */
@@ -912,6 +940,9 @@ class AgentProcess implements AgentBackend {
    */
   async explain(error: unknown): Promise<unknown> {
     const run = this.lastRun
+    // Stopped on purpose: the agent may first answer its open requests with an
+    // error of its own (opencode: "Internal service failure"), but this is why they ended.
+    if (run?.exitReason) return new Error(run.exitReason)
     if (!run?.connection.signal.aborted) return error
     return withTimeout(
       run.exited.then((message) => new Error(message)),
@@ -964,7 +995,7 @@ class AgentProcess implements AgentBackend {
     setTimeout(() => {
       if (this.turns.get(chatId) !== turn) return
       this.stop(
-        `${this.agent} did not stop within ${CANCEL_TIMEOUT_MS / 1000} seconds, so it was restarted. Send your message again to continue.`
+        `${this.agent} did not stop a chat's turn within ${CANCEL_TIMEOUT_MS / 1000} seconds, so it was restarted, which ended every chat it was working in. Send your message again to continue.`
       )
     }, CANCEL_TIMEOUT_MS)
   }
