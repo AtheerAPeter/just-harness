@@ -119,14 +119,6 @@ export const ShieldIcon = (p: IconProps): React.JSX.Element => (
     <path d="m9 12 2 2 4-4" />
   </Icon>
 )
-export const SlidersIcon = (p: IconProps): React.JSX.Element => (
-  <Icon {...p}>
-    <path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1" />
-    <circle cx="15" cy="7" r="2" />
-    <circle cx="9" cy="12" r="2" />
-    <circle cx="17" cy="17" r="2" />
-  </Icon>
-)
 export const SidebarIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
     <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -156,9 +148,11 @@ export const LockIcon = (p: IconProps): React.JSX.Element => (
     <path d="M8 11V8a4 4 0 0 1 8 0v3" />
   </Icon>
 )
-export const PaperclipIcon = (p: IconProps): React.JSX.Element => (
+/** Two overlapping pages: copy. */
+export const CopyIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
-    <path d="m20 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8" />
+    <rect x="9" y="9" width="11" height="11" rx="2" />
+    <path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3" />
   </Icon>
 )
 export const SearchIcon = (p: IconProps): React.JSX.Element => (
@@ -185,10 +179,10 @@ export const FolderPlusIcon = (p: IconProps): React.JSX.Element => (
     <path d="M12 10.5v5M9.5 13h5" />
   </Icon>
 )
-/** The double chevron of a macOS pop-up button. */
-export const UpDownIcon = (p: IconProps): React.JSX.Element => (
+/** The chevron after a picker's value, as in ChatGPT's "Instant ⌄". */
+export const ChevronDownIcon = (p: IconProps): React.JSX.Element => (
   <Icon {...p}>
-    <path d="m8 9 4-4 4 4M8 15l4 4 4-4" />
+    <path d="m6 9 6 6 6-6" />
   </Icon>
 )
 export const CheckIcon = (p: IconProps): React.JSX.Element => (

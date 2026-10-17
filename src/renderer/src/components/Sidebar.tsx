@@ -3,7 +3,6 @@ import { ThemeToggle } from './ThemeToggle'
 import { Collapse } from './Collapse'
 import { ProjectTile } from './ProjectIcon'
 import { RowMenu } from './RowMenu'
-import { colorValue } from '../lib/project-colors'
 import { startedChats, type AppState, type Chat } from '../../../shared/types'
 import { readPref, writePref } from '../lib/prefs'
 import { waitingOn } from '../lib/background'
@@ -13,18 +12,13 @@ import {
   ComposeIcon,
   FolderPlusIcon,
   SearchIcon,
-  SlidersIcon
+  SidebarIcon
 } from './icons'
 
 /** Settled chats listed before "Show more", and how many each click adds. */
 const SETTLED_PAGE = 20
-/** The Settled list's height until the user drags it, and below which a drag closes it. */
-const SETTLED_HEIGHT = 320
-const SETTLED_MIN = 60
-/** Room kept for the top bar, the live chats and the footer while dragging the list up. */
-const SETTLED_ROOM = 180
 /** The sidebar's width until the user drags its edge, and how narrow or wide it may get. */
-const SIDEBAR_WIDTH = 244
+const SIDEBAR_WIDTH = 260
 const SIDEBAR_MIN = 200
 const SIDEBAR_MAX = 440
 
@@ -39,12 +33,14 @@ interface SidebarProps {
   onNewChat: () => void
   onShowSkills: () => void
   onShowSettings: () => void
+  onHide: () => void
 }
 
 /**
- * Chats that need the user or are working sit at the top; every other chat is
- * settled, in its own section at the bottom. Each chat shows its project's icon
- * and color, which is how chats of different projects are told apart.
+ * Laid out like ChatGPT's: actions on top, then one scrolling list of chats.
+ * Chats that need the user or are working come first; every other chat is
+ * settled, in its own section below them. Each chat shows its project's icon,
+ * which is how chats of different projects are told apart.
  */
 export function Sidebar({
   open,
@@ -54,7 +50,8 @@ export function Sidebar({
   onSelectChat,
   onNewChat,
   onShowSkills,
-  onShowSettings
+  onShowSettings,
+  onHide
 }: SidebarProps): React.JSX.Element {
   /** Lead chats whose chats the user opened; every lead starts closed. */
   const [openLeads, setOpenLeads] = useState<Set<string>>(new Set())
@@ -62,13 +59,6 @@ export function Sidebar({
   const [revealedChatId, setRevealedChatId] = useState<string>()
   const [settledOpen, setSettledOpen] = useState(() => readPref('settledOpen', true))
   const [settledShown, setSettledShown] = useState(SETTLED_PAGE)
-  const [settledHeight, setSettledHeight] = useState(() =>
-    readPref('settledHeight', SETTLED_HEIGHT)
-  )
-  /** The list's height while its header is being dragged. */
-  const [dragHeight, setDragHeight] = useState<number>()
-  /** Set when a drag ends, so the click that follows it does not also open or close the list. */
-  const dragged = useRef(false)
   const navRef = useRef<HTMLElement>(null)
   const [width, setWidth] = useState(() => readPref('sidebarWidth', SIDEBAR_WIDTH))
   const [resizing, setResizing] = useState(false)
@@ -77,7 +67,7 @@ export function Sidebar({
     document.documentElement.style.setProperty('--sidebar-width', `${width}px`)
   }, [width])
   useEffect(() => writePref('sidebarWidth', width), [width])
-  useRowMotion(navRef, dragHeight !== undefined || resizing)
+  useRowMotion(navRef, resizing)
   /** The chat whose title is being edited in place. */
   const [renaming, setRenaming] = useState<string>()
   /** The search text; undefined while the search field is closed. */
@@ -91,8 +81,6 @@ export function Sidebar({
     return window.api.update.onAvailable(setUpdate)
   }, [])
   useEffect(() => writePref('settledOpen', settledOpen), [settledOpen])
-  useEffect(() => writePref('settledHeight', settledHeight), [settledHeight])
-  const now = useNow()
 
   const projects = new Map(state.projects.map((p) => [p.id, p]))
   // Open the Settled section and the chat that leads a newly selected chat, so a new or picked
@@ -150,10 +138,9 @@ export function Sidebar({
     })
   }
 
-  /** One chat, led by its project's icon and color; live ones are also tinted in the color. */
-  function chatRow(chat: Chat, live: boolean): React.JSX.Element {
+  /** One chat, led by its project's icon. */
+  function chatRow(chat: Chat): React.JSX.Element {
     const project = projects.get(chat.projectId)
-    const color = live && project?.color ? colorValue(project.color) : undefined
     const led = q ? undefined : started.get(chat.id)
     const workingLed = led?.filter((c) => c.running).length ?? 0
     const isOpen = openLeads.has(chat.id)
@@ -161,8 +148,7 @@ export function Sidebar({
       <div
         key={chat.id}
         data-chat={chat.id}
-        className={`chat-row${led ? ' lead' : ''}${color ? ' colored' : ''}${view === 'chat' && chat.id === selectedChatId ? ' selected' : ''}`}
-        style={color ? ({ '--project-color': color } as React.CSSProperties) : undefined}
+        className={`chat-row${led ? ' lead' : ''}${view === 'chat' && chat.id === selectedChatId ? ' selected' : ''}`}
         title={[
           project?.name,
           chat.waiting
@@ -206,7 +192,7 @@ export function Sidebar({
               <ChevronIcon width={10} height={10} className="chevron" />
             </button>
           )}
-          <ChatStatus chat={chat} working={working(chat)} now={now} />
+          <ChatStatus chat={chat} working={working(chat)} />
           <RowMenu
             label="Chat options"
             items={[
@@ -226,47 +212,10 @@ export function Sidebar({
       <Fragment key={chat.id}>
         {row}
         <Collapse open={isOpen} className="chat-children">
-          {led.map((c) => chatRow(c, live))}
+          {led.map(chatRow)}
         </Collapse>
       </Fragment>
     )
-  }
-
-  /**
-   * Dragging the Settled header up or down resizes the list; dragged nearly
-   * shut, it closes. A click without a drag opens or closes it.
-   */
-  function dragSettled(event: React.PointerEvent<HTMLButtonElement>): void {
-    if (event.button !== 0) return
-    const head = event.currentTarget
-    const startY = event.clientY
-    const startHeight = settledOpen ? settledHeight : 0
-    const max = Math.max(SETTLED_MIN, (navRef.current?.clientHeight ?? 0) - SETTLED_ROOM)
-    let height: number | undefined
-    const onMove = (e: PointerEvent): void => {
-      const dy = startY - e.clientY
-      if (height === undefined && Math.abs(dy) < 4) return
-      height = Math.min(max, Math.max(0, startHeight + dy))
-      setDragHeight(height)
-    }
-    const onUp = (): void => {
-      head.removeEventListener('pointermove', onMove)
-      head.removeEventListener('pointerup', onUp)
-      head.removeEventListener('pointercancel', onUp)
-      if (height === undefined) return
-      dragged.current = true
-      setDragHeight(undefined)
-      if (height < SETTLED_MIN) {
-        setSettledOpen(false)
-      } else {
-        setSettledHeight(height)
-        setSettledOpen(true)
-      }
-    }
-    head.setPointerCapture(event.pointerId)
-    head.addEventListener('pointermove', onMove)
-    head.addEventListener('pointerup', onUp)
-    head.addEventListener('pointercancel', onUp)
   }
 
   /** Dragging the sidebar's right edge resizes it. */
@@ -299,7 +248,7 @@ export function Sidebar({
     if (selected && !visible.includes(selected)) visible.push(selected)
     return (
       <>
-        {visible.map((chat) => chatRow(chat, false))}
+        {visible.map(chatRow)}
         {settled.length > limit && (
           <div className="chat-more">
             <button onClick={() => setSettledShown(limit + SETTLED_PAGE)}>
@@ -325,29 +274,33 @@ export function Sidebar({
       />
       {/* The window buttons sit at its left; it drags the window. */}
       <div className="sidebar-top">
+        <button className="icon-btn" title="Hide sidebar (⌘B)" onClick={onHide}>
+          <SidebarIcon />
+        </button>
+      </div>
+      <div className="side-nav">
+        <button className="nav-row" title="New chat (⌘N)" onClick={onNewChat}>
+          <ComposeIcon />
+          New chat
+        </button>
         <button
-          className={`icon-btn${query !== undefined ? ' on' : ''}`}
-          title="Search chats"
+          className={`nav-row${query !== undefined ? ' on' : ''}`}
           onClick={() => setQuery((current) => (current === undefined ? '' : undefined))}
         >
           <SearchIcon />
+          Search chats
         </button>
-        <button
-          className={`icon-btn${view === 'skills' ? ' on' : ''}`}
-          title="Skills"
-          onClick={onShowSkills}
-        >
+        <button className={`nav-row${view === 'skills' ? ' on' : ''}`} onClick={onShowSkills}>
           <BookIcon />
+          Skills
         </button>
         <button
-          className="icon-btn"
+          className="nav-row"
           title="Open project folder (⌘O)"
           onClick={() => window.api.addProject()}
         >
           <FolderPlusIcon />
-        </button>
-        <button className="icon-btn" title="New chat (⌘N)" onClick={onNewChat}>
-          <ComposeIcon />
+          Open project
         </button>
       </div>
       {query !== undefined && (
@@ -368,18 +321,13 @@ export function Sidebar({
           />
         </label>
       )}
-      <div className="sidebar-section">
-        {state.projects.length === 0 && (
-          <button className="add-project" onClick={() => window.api.addProject()}>
-            <FolderPlusIcon /> Open a project folder
-          </button>
-        )}
+      <div className="sidebar-scroll">
         {waiting.length > 0 && (
           <>
             <div className="side-label waiting">
               Needs you <b>{waiting.length}</b>
             </div>
-            {waiting.map((chat) => chatRow(chat, true))}
+            {waiting.map(chatRow)}
           </>
         )}
         {running.length > 0 && (
@@ -387,59 +335,46 @@ export function Sidebar({
             <div className="side-label">
               Working <b>{running.length}</b>
             </div>
-            {running.map((chat) => chatRow(chat, true))}
+            {running.map(chatRow)}
+          </>
+        )}
+        {settled.length > 0 && (
+          <>
+            <button
+              className={`side-label side-toggle${settledShut ? '' : ' open'}`}
+              aria-expanded={!settledShut}
+              onClick={() => setSettledOpen((o) => !o)}
+            >
+              Settled <b>{settled.length}</b>
+              <ChevronIcon width={10} height={10} className="chevron" />
+            </button>
+            <Collapse open={!settledShut}>{settledList()}</Collapse>
           </>
         )}
         {q && chats.length === 0 && <div className="side-empty">No matching chats</div>}
       </div>
-      {settled.length > 0 && (
-        <div className="settled">
+      <div className="sidebar-footer">
+        {update && <UpdateButton version={update} />}
+        <div className="profile-row">
           <button
-            className={`settled-head${settledShut ? '' : ' open'}`}
-            aria-expanded={!settledShut}
-            title="Drag to resize, click to open or close"
-            onPointerDown={dragSettled}
-            onClick={() => {
-              if (dragged.current) dragged.current = false
-              else setSettledOpen((o) => !o)
-            }}
+            className={`profile${view === 'settings' ? ' on' : ''}`}
+            title="Settings (⌘,)"
+            onClick={onShowSettings}
           >
-            <span className="settled-grab" />
-            <span className="settled-line">
-              Settled · {settled.length}
-              <span className="spacer" />
-              <ChevronIcon width={10} height={10} className="chevron" />
+            <span className="avatar">JH</span>
+            <span className="profile-text">
+              <span className="profile-name">Just Harness</span>
+              {version && <span className="profile-sub">v{version}</span>}
             </span>
           </button>
-          <div
-            className={`settled-list${dragHeight !== undefined ? ' dragging' : ''}`}
-            style={{ height: dragHeight ?? (settledShut ? 0 : settledHeight) }}
-            inert={settledShut && dragHeight === undefined}
-          >
-            {settledList()}
-          </div>
+          <ThemeToggle />
         </div>
-      )}
-      <div className="sidebar-footer">
-        <button
-          className={`icon-btn${view === 'settings' ? ' on' : ''}`}
-          title="Settings (⌘,)"
-          onClick={onShowSettings}
-        >
-          <SlidersIcon />
-        </button>
-        <ThemeToggle />
-        {update ? (
-          <UpdateButton version={update} />
-        ) : (
-          version && <span className="app-version">v{version}</span>
-        )}
       </div>
     </nav>
   )
 }
 
-/** In place of the version once a newer release is out. Installing it quits and reopens the app. */
+/** Above the footer once a newer release is out. Installing it quits and reopens the app. */
 function UpdateButton({ version }: { version: string }): React.JSX.Element {
   const [installing, setInstalling] = useState(false)
   const [error, setError] = useState<string>()
@@ -572,51 +507,13 @@ function RenameField({
 }
 
 /**
- * Waiting for the user, working on a turn, waiting between turns on what will
- * wake it (commands, a timer, the chats it started), or else when the chat
- * last changed.
+ * Waiting for the user, working on a turn, or waiting between turns on what
+ * will wake it (commands, a timer, the chats it started). A settled chat shows
+ * only its title, as in ChatGPT.
  */
-function ChatStatus({
-  chat,
-  working,
-  now
-}: {
-  chat: Chat
-  working: boolean
-  now: number
-}): React.JSX.Element {
+function ChatStatus({ chat, working }: { chat: Chat; working: boolean }): React.JSX.Element | null {
   if (chat.waiting) return <span className="chat-status chat-dot waiting" />
   if (chat.running) return <span className="chat-status chat-dot running" />
   if (working) return <span className="chat-status chat-dot background" />
-  return <span className="chat-status chat-time">{relativeTime(chat.updatedAt, now)}</span>
-}
-
-/** The current time, updated every minute so relative times stay right. */
-function useNow(): number {
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 60_000)
-    return () => clearInterval(timer)
-  }, [])
-  return now
-}
-
-const DAY = 86_400_000
-
-/** "now", "5m", "3h" today, then "Yesterday", a weekday, or a date, like Mail. */
-function relativeTime(time: number, now: number): string {
-  const minutes = Math.floor((now - time) / 60_000)
-  if (minutes < 1) return 'now'
-  if (minutes < 60) return `${minutes}m`
-  const startOfToday = new Date(now).setHours(0, 0, 0, 0)
-  if (time >= startOfToday) return `${Math.floor(minutes / 60)}h`
-  if (time >= startOfToday - DAY) return 'Yesterday'
-  const date = new Date(time)
-  if (time >= startOfToday - 6 * DAY)
-    return date.toLocaleDateString(undefined, { weekday: 'short' })
-  return date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    ...(date.getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {})
-  })
+  return null
 }

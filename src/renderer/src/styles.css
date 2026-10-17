@@ -1,163 +1,170 @@
 /*
- * Paper: one sheet edge to edge, its regions divided by hairlines, with
- * slightly rounded corners (the --radius tokens). Ink-dark text, warm paper whites. Inter at medium weight, JetBrains Mono for paths,
- * commands and output. Yellow only marks small things: status dots, progress,
- * menu highlights. Every color and shadow is a token, so dark mode is the
- * same design with its own values.
+ * Laid out like ChatGPT: a sidebar of plain rows beside one centered chat
+ * column, the user's messages in blue pills on the right, the agent's replies
+ * as plain text, and a rounded composer docked under them. The system font at
+ * regular weight, the system monospace for paths, commands and output. Blue
+ * marks the user's messages, status dots, progress and the send button. Every
+ * color and shadow is a token, so dark mode is the same design with its own
+ * values.
  */
 
 :root {
-  /* macOS yellow. Text on it is dark; --accent-text is the shade readable as text. */
-  --accent: #ffc300;
-  --accent-text: #7d5a00;
-  --accent-soft: rgba(255, 195, 0, 0.18);
-  --accent-ring: rgba(255, 195, 0, 0.25);
+  /* Text on the accent is white; --accent-text is the shade readable as text. */
+  --accent: #2f6fed;
+  --accent-text: #1f56c9;
+  --accent-soft: rgba(47, 111, 237, 0.12);
+  --accent-ring: rgba(47, 111, 237, 0.25);
   /* The halo around a focused field. */
-  --focus-ring: rgba(45, 38, 25, 0.07);
-  --on-accent: #1d1b17;
+  --focus-ring: rgba(0, 0, 0, 0.06);
+  --on-accent: #ffffff;
 
-  --text: #1d1b17;
-  --text-soft: #4d4840;
-  --text-muted: #7a7368;
-  --border: rgba(45, 38, 25, 0.12);
-  --border-strong: rgba(45, 38, 25, 0.28);
-  --danger: #c93a32;
-  --ok: #2a8a4f;
-  --warn: #b56d12;
+  --text: #0d0d0d;
+  --text-soft: #5d5d5d;
+  --text-muted: #8f8f8f;
+  --placeholder: #8f8f8f;
+  --border: rgba(0, 0, 0, 0.1);
+  --border-strong: rgba(0, 0, 0, 0.2);
+  --danger: #d92d20;
+  --ok: #12814a;
+  --warn: #b54708;
 
-  /* Flat fills on paper: hover, tracks, chips. */
-  --fill: rgba(45, 38, 25, 0.05);
-  --fill-strong: rgba(45, 38, 25, 0.09);
-  --hover: rgba(45, 38, 25, 0.04);
+  /* Flat fills: hover, tracks, chips. */
+  --fill: rgba(0, 0, 0, 0.05);
+  --fill-strong: rgba(0, 0, 0, 0.08);
+  --hover: rgba(0, 0, 0, 0.04);
+  /* The open chat or view in the sidebar, and the highlighted row of a menu. */
+  --selected: rgba(0, 0, 0, 0.06);
+  --menu-hover: rgba(0, 0, 0, 0.05);
 
   /* Behind everything; also the window's color (index.ts). */
-  --canvas: #fdfbf6;
+  --canvas: #ffffff;
 
-  /* Sheets: sidebar and browser, and the chat. */
-  --panel: #f6f3ec;
-  --panel-main: #fdfbf6;
+  /* The sidebar and browser, and the chat. */
+  --panel: #f9f9f9;
+  --panel-main: #ffffff;
 
-  /* Raised: the selected chat, the on segment. */
-  --raised: #fffdf8;
-  --raised-shadow: 0 0 0 1px rgba(45, 38, 25, 0.13);
+  /* Raised: the on segment, the active browser tab. */
+  --raised: #ffffff;
+  --raised-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.05);
 
-  /* Cards: the new-skill form. */
-  --card: #fffdf8;
+  /* Cards: the edits card, the new-skill form, settings. */
+  --card: #ffffff;
   --card-edge: 0 0 0 1px var(--border);
-  /* Sunken: output, diffs, commands. */
-  --well: #f3efe6;
+  /* Sunken: output, diffs, code. */
+  --well: #f9f9f9;
   /* Opaque, for large menus and sticky titles that must hide what scrolls under them. */
-  --surface: #fffdf8;
+  --surface: #ffffff;
 
-  /* Solid: send, the primary button, done todos. */
-  --solid: #23211d;
-  --on-solid: #fdfbf6;
-  --solid-shadow: 0 1px 2px rgba(30, 25, 15, 0.3);
+  /* Solid: the primary button, done todos. */
+  --solid: #0d0d0d;
+  --on-solid: #ffffff;
+  --solid-shadow: none;
 
-  --add-bg: rgba(42, 138, 79, 0.1);
-  --add-text: #1d6a3b;
-  --del-bg: rgba(201, 58, 50, 0.09);
-  --del-text: #9e2c26;
-  --code-bg: rgba(45, 38, 25, 0.07);
+  --add-bg: rgba(18, 129, 74, 0.1);
+  --add-text: #137a3d;
+  --del-bg: rgba(217, 45, 32, 0.08);
+  --del-text: #b42318;
+  --code-bg: rgba(0, 0, 0, 0.06);
 
   /* Menus. */
-  --menu: #fffdf8;
-  --menu-shadow: 0 0 0 1px rgba(45, 38, 25, 0.15), 0 8px 24px -10px rgba(45, 38, 25, 0.28);
+  --menu: #ffffff;
+  --menu-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 12px 32px -8px rgba(0, 0, 0, 0.18);
 
-  --composer: #fffdf8;
-  --composer-edge: 0 0 0 1px rgba(45, 38, 25, 0.16), 0 1px 3px rgba(45, 38, 25, 0.06);
-  --strip: #f6f3ec;
+  --composer: #ffffff;
+  --composer-edge: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 8px 16px -6px rgba(0, 0, 0, 0.08);
+  --strip: #f9f9f9;
   --strip-edge: 0 0 0 1px var(--border);
-  --ask-bg: #fffdf8;
-  --ask-glow: 0 0 0 1px rgba(255, 195, 0, 0.7), 0 8px 24px -10px rgba(180, 120, 0, 0.3);
+  --ask-bg: #ffffff;
+  --ask-glow: 0 0 0 1px rgba(47, 111, 237, 0.5), 0 8px 24px -10px rgba(47, 111, 237, 0.3);
 
-  /* The user's messages: ink blocks. */
-  --bubble: #23211d;
-  --bubble-text: #f7f4ee;
-  --bubble-edge: 0 1px 2px rgba(30, 25, 15, 0.25);
+  /* The user's messages: blue pills. */
+  --bubble: #e2ebfd;
+  --bubble-text: #0d0d0d;
 
-  /* Corners: small chips and inputs, rows and buttons, and menus, cards and the composer. */
-  --radius-sm: 3px;
-  --radius: 5px;
-  --radius-lg: 8px;
+  /*
+   * Corners, ChatGPT's: chips and inline code, rows and buttons, menus and
+   * cards, the user's messages, and the composer.
+   */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --radius-bubble: 22px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
 
   /* Width of the chat column; the composer lines up with it. */
-  --chat-width: 880px;
+  --chat-width: 768px;
   /* The sidebar's width, which it also slides out by when hidden. */
-  --sidebar-width: 244px;
-  --sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --sidebar-width: 260px;
+  --sans: ui-sans-serif, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
   color-scheme: light;
 }
 
 /*
- * Dark is paper at night: warm charcoal sheets, not neon. Depth comes from
- * stepped greys and hairline edges; yellow stays a small flat mark.
+ * Dark is ChatGPT's at night: near-black panes, grey surfaces lifted off them,
+ * hairline edges, and the user's messages in navy.
  */
 @media (prefers-color-scheme: dark) {
   :root {
-    --accent: #ffd60a;
-    --accent-text: #f2cc0c;
-    --accent-soft: rgba(255, 214, 10, 0.1);
-    --accent-ring: rgba(255, 214, 10, 0.16);
-    --focus-ring: rgba(255, 248, 235, 0.06);
+    --accent: #3c66bf;
+    --accent-text: #8ab0ff;
+    --accent-soft: rgba(60, 102, 191, 0.2);
+    --accent-ring: rgba(60, 102, 191, 0.35);
+    --focus-ring: rgba(255, 255, 255, 0.08);
 
-    --text: #ebe7df;
-    --text-soft: #b5afa5;
-    --text-muted: #857f75;
-    --border: rgba(255, 248, 235, 0.08);
-    --border-strong: rgba(255, 248, 235, 0.18);
-    --danger: #ec7068;
-    --ok: #5cc285;
-    --warn: #dda048;
+    --text: #ededed;
+    --text-soft: #afafaf;
+    --text-muted: #8f8f8f;
+    --placeholder: #afafaf;
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.2);
+    --danger: #ff6b64;
+    --ok: #4cc38a;
+    --warn: #e7a14a;
 
-    --fill: rgba(255, 248, 235, 0.055);
-    --fill-strong: rgba(255, 248, 235, 0.1);
-    --hover: rgba(255, 248, 235, 0.04);
+    --fill: rgba(255, 255, 255, 0.06);
+    --fill-strong: rgba(255, 255, 255, 0.1);
+    --hover: rgba(255, 255, 255, 0.05);
+    --selected: rgba(255, 255, 255, 0.08);
+    --menu-hover: rgba(255, 255, 255, 0.07);
 
-    --canvas: #1b1a18;
+    --canvas: #000000;
 
-    --panel: #171614;
-    --panel-main: #1b1a18;
+    --panel: #0d0d0d;
+    --panel-main: #000000;
 
-    --raised: #262420;
-    --raised-shadow: 0 0 0 1px rgba(255, 248, 235, 0.08);
+    --raised: #2a2a2a;
+    --raised-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
 
-    --card: #1f1e1b;
+    --card: #171717;
     --card-edge: 0 0 0 1px var(--border);
-    --well: #151412;
-    --surface: #1f1e1b;
+    --well: #171717;
+    --surface: #2a2a2a;
 
-    --solid: #ebe7df;
-    --on-solid: #171614;
-    --solid-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --solid: #ffffff;
+    --on-solid: #0d0d0d;
+    --solid-shadow: none;
 
-    --add-bg: rgba(92, 194, 133, 0.1);
-    --add-text: #8fd8ac;
-    --del-bg: rgba(236, 112, 104, 0.1);
-    --del-text: #f0a8a2;
-    --code-bg: rgba(255, 248, 235, 0.07);
+    --add-bg: rgba(76, 195, 138, 0.12);
+    --add-text: #7fd8a9;
+    --del-bg: rgba(255, 107, 100, 0.12);
+    --del-text: #ffa29d;
+    --code-bg: rgba(255, 255, 255, 0.1);
 
-    --menu: #262420;
-    --menu-shadow: 0 0 0 1px rgba(255, 248, 235, 0.1), 0 12px 32px -10px rgba(0, 0, 0, 0.75);
+    --menu: #2a2a2a;
+    --menu-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 12px 32px -8px rgba(0, 0, 0, 0.8);
 
-    --composer: #201f1c;
-    --composer-edge: 0 0 0 1px rgba(255, 248, 235, 0.1), 0 1px 3px rgba(0, 0, 0, 0.5);
-    --strip: #1d1c19;
+    --composer: #1b1b1b;
+    --composer-edge: 0 0 0 1px #282828;
+    --strip: #171717;
     --strip-edge: 0 0 0 1px var(--border);
-    --ask-bg: #201f1c;
-    --ask-glow: 0 0 0 1px rgba(255, 214, 10, 0.32), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --ask-bg: #171717;
+    --ask-glow: 0 0 0 1px rgba(60, 102, 191, 0.6);
 
-    --bubble: #2c2a26;
-    --bubble-text: #eeeae3;
-    --bubble-edge: inset 0 0 0 1px rgba(255, 248, 235, 0.07);
+    --bubble: #223d72;
+    --bubble-text: #ffffff;
     color-scheme: dark;
-  }
-
-  /* No halos in dark: a lit dot reads as decoration here. */
-  .status-chip.waiting::before {
-    box-shadow: none;
-    border-radius: 50%;
   }
 }
 
@@ -175,10 +182,8 @@ body,
 body {
   background: var(--canvas);
   color: var(--text);
-  /* Medium weight throughout; titles and emphasis step up to 600. */
-  font: 500 13px/1.5 var(--sans);
-  /* Code fonts would turn => into arrows; code shows as typed. */
-  font-variant-ligatures: no-contextual;
+  /* Regular weight throughout; titles and emphasis step up to 500 or 600. */
+  font: 400 14px/1.5 var(--sans);
   -webkit-font-smoothing: antialiased;
   user-select: none;
   overflow: hidden;
@@ -210,7 +215,7 @@ code,
 pre,
 kbd {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 kbd {
@@ -304,19 +309,18 @@ kbd {
 }
 
 .topbar {
-  height: 36px;
+  height: 48px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 0 12px;
-  border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
 }
 
 /* With the sidebar hidden, the window buttons sit over the toolbar. */
 .sidebar-hidden .topbar {
-  padding-left: 72px;
+  padding-left: 80px;
 }
 
 .topbar button {
@@ -326,7 +330,9 @@ kbd {
 .topbar-title {
   flex: 0 1 auto;
   min-width: 0;
-  font-weight: 600;
+  padding: 0 6px;
+  font-size: 16px;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -334,7 +340,7 @@ kbd {
 
 .crumb {
   color: var(--text-muted);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .status-chip {
@@ -342,11 +348,11 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 24px;
-  padding: 0 10px;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: var(--radius-lg);
+  height: 28px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-pill);
 }
 
 .status-chip.waiting {
@@ -358,8 +364,8 @@ kbd {
   content: '';
   width: 6px;
   height: 6px;
+  border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 .status-chip.running {
@@ -380,7 +386,7 @@ kbd {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  padding: 0 8px 6px;
+  padding: 0 6px 6px;
   border-right: 1px solid var(--border);
 }
 
@@ -414,7 +420,7 @@ kbd {
 
 /* The window buttons sit at its left (trafficLightPosition in index.ts). */
 .sidebar-top {
-  height: 36px;
+  height: 48px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -431,9 +437,9 @@ kbd {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 26px;
-  margin-top: 4px;
+  gap: 10px;
+  height: 36px;
+  margin-bottom: 6px;
   padding: 0 10px;
   background: var(--fill);
   color: var(--text-muted);
@@ -457,115 +463,82 @@ kbd {
   color: var(--text-muted);
 }
 
-.sidebar-section {
-  flex: 1;
-  min-height: 80px;
-  overflow-y: auto;
-  margin: 0 -6px;
-  padding: 0 6px 10px;
+/* New chat, Search, Skills and Open project: ChatGPT's rows, each led by an icon. */
+.side-nav {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 6px;
 }
 
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  text-align: left;
+  border-radius: var(--radius);
+}
+
+.nav-row > svg {
+  flex-shrink: 0;
+}
+
+.nav-row:hover {
+  background: var(--hover);
+}
+
+.nav-row.on {
+  background: var(--selected);
+}
+
+/* Every chat, in one list under the actions. It scrolls without a scrollbar. */
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  margin: 0 -6px;
+  padding: 0 6px 12px;
+}
+
+/* A section's name, quiet as in ChatGPT, and how many chats it holds. */
 .side-label {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 14px 8px 5px;
+  width: 100%;
+  padding: 16px 10px 6px;
   color: var(--text-muted);
-  font-size: 11.5px;
-  font-weight: 600;
+  text-align: left;
 }
 
 .side-label b {
-  min-width: 17px;
-  height: 17px;
-  padding: 0 5px;
-  display: grid;
-  place-items: center;
-  background: var(--fill-strong);
-  color: var(--text-soft);
-  font-size: 10.5px;
-  font-weight: 600;
-  border-radius: var(--radius);
-}
-
-.side-label.waiting b {
-  background: var(--accent);
-  color: var(--on-accent);
-}
-
-/* Chats that stopped, at the bottom; its header resizes the list by dragging. */
-.settled {
-  flex-shrink: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  margin: 0 -6px;
-  padding: 0 6px;
-}
-
-/* A drawer handle over a quiet label; dragging it resizes the settled chats' list. */
-.settled-head {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  width: 100%;
-  padding: 6px 8px 4px;
-  cursor: row-resize;
-}
-
-.settled-grab {
-  align-self: center;
-  width: 32px;
-  height: 4px;
-  margin-bottom: 8px;
-  border-radius: 2px;
-  background: var(--border-strong);
-  transition:
-    background-color var(--fast) ease,
-    width var(--fast) var(--ease);
-}
-
-.settled-head:hover .settled-grab {
-  width: 40px;
-  background: var(--text-muted);
-}
-
-.settled-line {
-  display: flex;
-  align-items: center;
-  color: var(--text-muted);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
 
-.settled-head:hover .settled-line {
+.side-label.waiting b {
+  color: var(--accent-text);
+  font-weight: 500;
+}
+
+/* Settled's name opens and closes its list; the chevron shows on hover, or while closed. */
+.side-toggle:hover {
   color: var(--text-soft);
 }
 
-.settled-head .chevron {
+.side-toggle .chevron {
+  opacity: 0;
+}
+
+.side-toggle:is(:hover, :focus-visible, :not(.open)) .chevron {
+  opacity: 1;
+}
+
+.side-toggle.open .chevron {
   transform: rotate(90deg);
-}
-
-.settled-head.open .chevron {
-  transform: rotate(-90deg);
-}
-
-/* Shrinks below its height when the sidebar has no room for it. */
-.settled-list {
-  flex-shrink: 1;
-  min-height: 0;
-  overflow-y: auto;
-  margin: 0 -6px;
-  padding: 0 6px 6px;
-  transition: height var(--move) var(--ease);
-}
-
-.settled-list.dragging {
-  transition: none;
 }
 
 .side-empty {
@@ -577,42 +550,37 @@ kbd {
 .sidebar-footer {
   flex-shrink: 0;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 2px;
-  padding-top: 8px;
+  padding-top: 6px;
   border-top: 1px solid var(--border);
 }
 
-.app-version {
-  margin-left: auto;
-  padding-right: 4px;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
+/* A newer release, as a row above the footer like ChatGPT's "Upgrade plan". */
 .app-update {
-  margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 6px;
-  color: var(--text-soft);
-  font-size: 11px;
-  border-radius: var(--radius-sm);
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  text-align: left;
+  border-radius: var(--radius);
 }
 
 .app-update:hover:not(:disabled) {
-  color: var(--text);
   background: var(--hover);
 }
 
 .app-update:disabled {
-  cursor: default;
+  color: var(--text-soft);
 }
 
+/* Centered where the rows above have their icon. */
 .app-update .dot {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
+  margin: 0 4px;
+  flex-shrink: 0;
   border-radius: 50%;
   background: var(--accent);
 }
@@ -621,20 +589,61 @@ kbd {
   background: var(--danger);
 }
 
-.add-project {
+.profile-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  margin-top: 10px;
-  padding: 7px 8px;
-  color: var(--text-soft);
+  gap: 2px;
+}
+
+/* The app as ChatGPT shows its user: an avatar, the name and the version under it. Opens Settings. */
+.profile {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  text-align: left;
   border-radius: var(--radius);
 }
 
-.add-project:hover {
+.profile:hover {
   background: var(--hover);
-  color: var(--text);
+}
+
+.profile.on {
+  background: var(--selected);
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.profile-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.profile-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-sub {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 /* The project's icon on a small tile, tinted in the project's color when it has one. */
@@ -689,7 +698,7 @@ img.project-icon {
 }
 
 .style-grid button.on {
-  background: var(--accent-soft);
+  background: var(--selected);
   color: var(--text);
 }
 
@@ -712,7 +721,7 @@ img.project-icon {
 }
 
 .custom-color.on {
-  background: var(--accent-soft);
+  background: var(--selected);
 }
 
 .custom-color input {
@@ -744,10 +753,8 @@ img.project-icon {
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   column-gap: 8px;
-  row-gap: 1px;
-  min-height: 24px;
-  margin: 0;
-  padding: 2px 6px 2px 8px;
+  min-height: 36px;
+  padding: 0 4px 0 10px;
   border-radius: var(--radius);
 }
 
@@ -756,26 +763,7 @@ img.project-icon {
 }
 
 .chat-row.selected {
-  background: var(--raised);
-  box-shadow: var(--raised-shadow);
-}
-
-/* A live chat, faintly tinted in its project's color. */
-.chat-row.colored {
-  background: color-mix(in srgb, var(--project-color) 7%, transparent);
-}
-
-.chat-row.colored:hover {
-  background: color-mix(in srgb, var(--project-color) 11%, transparent);
-}
-
-.chat-row.colored.selected {
-  background: color-mix(in srgb, var(--project-color) 10%, var(--raised));
-}
-
-/* Live chats sit apart, so neighbouring tints do not run together. */
-.chat-row.colored + .chat-row.colored {
-  margin-top: 2px;
+  background: var(--selected);
 }
 
 .chat-dot {
@@ -786,7 +774,7 @@ img.project-icon {
 }
 
 .chat-row.lead .chat-title {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* How many of the chats it started are working, of all of them. */
@@ -828,7 +816,7 @@ img.project-icon {
 
 /* The chats a chat started, under it, joined to it by a line. */
 .chat-children {
-  margin-left: 15px;
+  margin-left: 18px;
   padding-left: 2px;
   border-left: 1px solid var(--border-strong);
 }
@@ -858,7 +846,7 @@ img.project-icon {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  height: 22px;
+  height: 28px;
 }
 
 .chat-title {
@@ -873,21 +861,24 @@ img.project-icon {
   flex-shrink: 0;
 }
 
-.chat-time {
-  color: var(--text-muted);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-}
-
-/* A row's ⋮ menu, next to the time. */
 .row-menu {
   display: inline-flex;
+}
+
+/* A chat's ⋮ menu shows on hover, on the open chat, and while its menu is open. */
+.chat-row .row-menu {
+  opacity: 0;
+}
+
+.chat-row:is(:hover, :focus-within, .selected) .row-menu,
+.chat-row .row-menu.open {
+  opacity: 1;
 }
 
 .menu {
   position: fixed;
   z-index: 20;
-  min-width: 170px;
+  min-width: 180px;
   padding: 6px;
   background: var(--menu);
   box-shadow: var(--menu-shadow);
@@ -897,7 +888,7 @@ img.project-icon {
 .menu button {
   display: block;
   width: 100%;
-  padding: 6px 10px;
+  padding: 8px 10px;
   text-align: left;
   border-radius: var(--radius);
 }
@@ -905,7 +896,7 @@ img.project-icon {
 .menu button:hover,
 .menu button:focus-visible {
   outline: none;
-  background: var(--accent-soft);
+  background: var(--menu-hover);
 }
 
 .menu button.danger {
@@ -915,7 +906,7 @@ img.project-icon {
 .rename-field {
   flex: 1;
   min-width: 0;
-  height: 22px;
+  height: 26px;
   padding: 0 6px;
   margin-left: -6px;
   border: 0;
@@ -928,12 +919,12 @@ img.project-icon {
 .chat-more {
   display: flex;
   gap: 12px;
-  padding: 3px 8px 4px 30px;
+  padding: 4px 10px 6px 36px;
 }
 
 .chat-more button {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .chat-more button:hover {
@@ -952,17 +943,23 @@ img.project-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
   color: var(--text-soft);
   border-radius: var(--radius);
 }
 
 .icon-btn.small {
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius);
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+}
+
+.icon-btn.round {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
 }
 
 .icon-btn:hover:not(:disabled) {
@@ -984,12 +981,12 @@ img.project-icon {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 22px;
-  padding: 0 7px;
+  height: 26px;
+  padding: 0 8px;
   flex-shrink: 0;
   color: var(--text-soft);
-  font-size: 11.5px;
-  border-radius: var(--radius);
+  font-size: 12.5px;
+  border-radius: var(--radius-pill);
 }
 
 .label-btn:hover:not(:disabled) {
@@ -1002,11 +999,11 @@ img.project-icon {
 }
 
 .btn {
-  height: 26px;
+  height: 32px;
   padding: 0 14px;
   background: var(--fill);
-  font-weight: 600;
-  border-radius: var(--radius-lg);
+  font-weight: 500;
+  border-radius: var(--radius-pill);
 }
 
 .btn:hover:not(:disabled) {
@@ -1039,7 +1036,7 @@ img.project-icon {
   display: flex;
   padding: 3px;
   background: var(--fill);
-  border-radius: var(--radius);
+  border-radius: var(--radius-pill);
 }
 
 .segmented button {
@@ -1048,10 +1045,10 @@ img.project-icon {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 22px;
+  height: 26px;
   color: var(--text-muted);
-  font-size: 12px;
-  border-radius: var(--radius);
+  font-size: 13px;
+  border-radius: var(--radius-pill);
 }
 
 .segmented button.on {
@@ -1079,8 +1076,8 @@ img.project-icon {
 .welcome h2 {
   margin: 8px 0 0;
   color: var(--text);
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: 500;
 }
 
 .welcome p {
@@ -1103,6 +1100,19 @@ img.project-icon {
   flex-direction: column;
 }
 
+/* An empty chat: its greeting and the composer together in the middle, as in ChatGPT. */
+.chat.empty {
+  justify-content: center;
+  padding-bottom: 12vh;
+}
+
+.chat.empty .chat-scroll {
+  flex: 0 0 auto;
+  overflow: visible;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
 .chat-scroll {
   flex: 1;
   overflow-x: hidden;
@@ -1115,34 +1125,33 @@ img.project-icon {
 .chat-items {
   max-width: calc(var(--chat-width) + 48px);
   margin: 0 auto;
-  padding: 12px 20px 16px;
+  padding: 16px 24px 32px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-  line-height: 1.55;
+  gap: 8px;
+  font-size: 16px;
+  line-height: 1.75;
   user-select: text;
 }
 
 .chat-empty {
-  padding: 16vh 0 0;
+  padding-bottom: 8px;
   text-align: center;
-  color: var(--text-muted);
 }
 
 .chat-empty h2 {
-  margin: 0 0 4px;
+  margin: 0;
   color: var(--text);
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 28px;
+  font-weight: 400;
   letter-spacing: -0.01em;
 }
 
-/* The user's message: a block on the right. */
+/* The user's message: a pill on the right, set apart from the turn before. */
 .user-msg {
   display: flex;
   justify-content: flex-end;
-  margin: 6px 0 0;
+  margin: 28px 0 4px;
 }
 
 .block:first-child > .user-msg {
@@ -1150,15 +1159,14 @@ img.project-icon {
 }
 
 .bubble {
-  max-width: 78%;
-  padding: 6px 10px;
+  max-width: 70%;
+  padding: 10px 16px;
   background: var(--bubble);
   color: var(--bubble-text);
-  box-shadow: var(--bubble-edge);
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-bubble);
 }
 
 /* A message another chat's agent sent: who it came from, above the text. */
@@ -1170,7 +1178,7 @@ img.project-icon {
 }
 
 .bubble .attachment {
-  background: rgba(255, 255, 255, 0.12);
+  background: color-mix(in srgb, currentColor 12%, transparent);
   color: inherit;
 }
 
@@ -1186,21 +1194,19 @@ img.project-icon {
 
 .thinking-body {
   color: var(--text-soft);
-  font-size: 13px;
 }
 
 /* A subagent's report, under its steps. */
 .agent-report {
   margin-top: 6px;
   color: var(--text-soft);
-  font-size: 13px;
 }
 
 .chat-error {
   padding: 10px 14px;
   background: var(--del-bg);
   color: var(--danger);
-  font-size: 13px;
+  font-size: 14px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   border-radius: var(--radius);
@@ -1210,7 +1216,7 @@ img.project-icon {
 .resolved {
   padding: 0 4px;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 14px;
 }
 
 .resolved-tool {
@@ -1223,8 +1229,7 @@ img.project-icon {
   align-items: baseline;
   gap: 8px;
   padding: 3px 4px;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
 }
 
 .working-time {
@@ -1349,15 +1354,19 @@ img.project-icon {
 
 /*
  * A turn's work, as in Codex: "Activity" while the agent works, then "Worked
- * for …" with a rule under it, folded above the answer once the turn is done.
+ * for …", folded above the answer once the turn is done. It reads smaller
+ * than the answer, like ChatGPT's "Thought for 12s".
  */
+.turn-work {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 .turn-work-head {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
-  padding: 2px 4px 4px;
-  border-bottom: 1px solid var(--border);
+  padding: 2px 4px;
   color: var(--text-muted);
   text-align: left;
 }
@@ -1382,11 +1391,24 @@ img.project-icon {
   padding-top: 6px;
 }
 
+/* Under a finished answer, as in ChatGPT: copy, its icon lined up with the text. */
+.answer-actions {
+  display: flex;
+  gap: 2px;
+  margin: -6px 0 0 -4px;
+}
+
+.answer-actions .icon-btn {
+  color: var(--text-muted);
+}
+
 /* The files a turn edited, as Codex's card under its answer. */
 .edits-card {
   margin-top: 2px;
-  background: var(--raised);
-  box-shadow: var(--raised-shadow);
+  background: var(--card);
+  box-shadow: var(--card-edge);
+  font-size: 14px;
+  line-height: 1.55;
   overflow: hidden;
   border-radius: var(--radius-lg);
 }
@@ -1470,7 +1492,7 @@ img.project-icon {
   display: inline-flex;
   gap: 5px;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 /* The chevron turns while the line is open. */
@@ -1533,7 +1555,7 @@ img.project-icon {
   box-shadow: inset 0 0 0 1px var(--border);
   color: var(--text-soft);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 400;
   line-height: 1.65;
   white-space: pre-wrap;
@@ -1576,7 +1598,7 @@ img.project-icon {
   display: grid;
   gap: 10px;
   margin-top: 4px;
-  padding: 14px 16px;
+  padding: 16px 18px;
   background: var(--ask-bg);
   box-shadow: var(--ask-glow);
   border-radius: var(--radius-lg);
@@ -1602,13 +1624,13 @@ img.project-icon {
 
 .ask-question {
   min-width: 0;
-  font-weight: 600;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
 .ask-tool {
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .ask-args {
@@ -1616,7 +1638,7 @@ img.project-icon {
   background: var(--well);
   box-shadow: inset 0 0 0 1px var(--border);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 400;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1659,20 +1681,39 @@ img.project-icon {
 .markdown ul,
 .markdown ol,
 .markdown pre {
-  margin: 0 0 10px;
-  border-radius: var(--radius);
+  margin: 0 0 14px;
 }
 
 .markdown ul,
 .markdown ol {
-  padding-left: 22px;
+  padding-left: 24px;
+}
+
+.markdown li + li {
+  margin-top: 4px;
 }
 
 .markdown h1,
 .markdown h2,
 .markdown h3 {
-  margin: 18px 0 8px;
-  font-size: 15px;
+  margin: 24px 0 10px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.markdown h1 {
+  font-size: 1.4em;
+}
+
+.markdown h2 {
+  font-size: 1.2em;
+}
+
+.markdown h3 {
+  font-size: 1.07em;
+}
+
+.markdown strong {
   font-weight: 600;
 }
 
@@ -1684,24 +1725,25 @@ img.project-icon {
 }
 
 .markdown code {
-  padding: 1px 5px;
+  padding: 2px 5px;
   background: var(--code-bg);
-  font-size: 12px;
+  font-size: 0.875em;
   border-radius: var(--radius-sm);
 }
 
 .markdown pre {
-  padding: 10px 12px;
+  padding: 14px 16px;
   background: var(--well);
   box-shadow: inset 0 0 0 1px var(--border);
   overflow-x: auto;
   line-height: 1.6;
+  border-radius: var(--radius-lg);
 }
 
 .markdown pre code {
   padding: 0;
   background: none;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 /* A wide table scrolls by itself instead of widening the chat. */
@@ -1710,14 +1752,18 @@ img.project-icon {
   max-width: 100%;
   overflow-x: auto;
   border-collapse: collapse;
-  margin: 0 0 10px;
-  font-size: 13px;
+  margin: 0 0 14px;
+  font-size: 0.875em;
+}
+
+.markdown th {
+  font-weight: 600;
 }
 
 .markdown th,
 .markdown td {
   border: 1px solid var(--border);
-  padding: 4px 8px;
+  padding: 6px 10px;
   /* Cells wrap normally; the table scrolls when it is still too wide. */
   overflow-wrap: normal;
   min-width: 6ch;
@@ -1775,7 +1821,7 @@ img.project-icon {
 }
 
 .todo-strip {
-  max-width: calc(var(--chat-width) - 28px);
+  max-width: calc(var(--chat-width) - 2 * var(--radius-xl));
   margin: 0 auto;
   background: var(--strip);
   box-shadow: var(--strip-edge);
@@ -1793,16 +1839,16 @@ img.project-icon {
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 28px;
-  padding: 0 14px;
+  height: 32px;
+  padding: 0 16px;
   color: var(--text-soft);
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
 }
 
 .todo-label {
   color: var(--text);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .todo-bars {
@@ -1837,7 +1883,7 @@ img.project-icon {
 
 /* The chat's background commands and timer, one row each, docked like the todos. */
 .background-strip {
-  max-width: calc(var(--chat-width) - 28px);
+  max-width: calc(var(--chat-width) - 2 * var(--radius-xl));
   margin: 0 auto;
   padding: 2px 0;
   background: var(--strip);
@@ -1855,10 +1901,10 @@ img.project-icon {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 28px;
-  padding: 0 6px 0 14px;
+  height: 32px;
+  padding: 0 8px 0 16px;
   color: var(--text-soft);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .background-row > svg {
@@ -1876,7 +1922,7 @@ img.project-icon {
 
 .background-what.mono {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
 }
 
 .background-time {
@@ -1885,30 +1931,67 @@ img.project-icon {
   font-variant-numeric: tabular-nums;
 }
 
-/* Composer: a capsule docked below the chat */
+/*
+ * Composer: ChatGPT's pill docked below the chat. The + button, the text and
+ * the pickers with send share one 52px row; once the text wraps it takes its
+ * own row above them (expanded). Attachments and waiting messages sit on top.
+ */
 
 .composer-wrap {
   flex-shrink: 0;
-  padding: 0 20px 10px;
+  padding: 0 24px 16px;
 }
 
 .composer {
   position: relative;
   container-type: inline-size;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'header header header'
+    'leading primary trailing';
+  align-items: center;
   max-width: var(--chat-width);
   margin: 0 auto;
-  padding: 4px 2px 0;
+  padding: 8px;
   background: var(--composer);
   box-shadow: var(--composer-edge);
   transition: box-shadow 0.2s;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
 }
 
-.composer:focus-within {
-  box-shadow:
-    0 0 0 1px var(--border-strong),
-    0 0 0 5px var(--focus-ring),
-    var(--composer-edge);
+.composer.expanded {
+  grid-template-areas:
+    'header header header'
+    'primary primary primary'
+    'leading . trailing';
+}
+
+.composer-header {
+  grid-area: header;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 8px 8px;
+}
+
+.composer-leading {
+  grid-area: leading;
+  display: flex;
+}
+
+/* The + is drawn in the text color, as in ChatGPT. */
+.composer-leading .icon-btn {
+  color: var(--text);
+}
+
+.composer-trailing {
+  grid-area: trailing;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  min-width: 0;
 }
 
 .composer.dragging {
@@ -1924,16 +2007,11 @@ img.project-icon {
   gap: 6px;
 }
 
-.attachments {
-  padding: 10px 14px 0;
-}
-
 /* The user's messages sent while the agent works, until they join the chat. */
 .waiting-messages {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 10px 16px 0;
 }
 
 .waiting-label {
@@ -1966,11 +2044,11 @@ img.project-icon {
   align-items: center;
   gap: 6px;
   max-width: 240px;
-  height: 26px;
-  padding: 0 8px;
+  height: 28px;
+  padding: 0 10px;
   background: var(--fill);
   color: var(--text-soft);
-  font-size: 12px;
+  font-size: 13px;
   border-radius: var(--radius);
 }
 
@@ -2030,8 +2108,8 @@ img.project-icon {
 }
 
 .bubble .thumb {
-  background: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 12%, transparent);
 }
 
 /* The agent's images, lined up with its text. */
@@ -2053,7 +2131,7 @@ img.project-icon {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(20, 16, 10, 0.72);
+  background: rgba(0, 0, 0, 0.8);
   cursor: zoom-out;
 }
 
@@ -2065,64 +2143,66 @@ img.project-icon {
   box-shadow: var(--menu-shadow);
 }
 
+/* One line tall on the composer's row; grows up to a limit (Composer.tsx) once expanded. */
 .composer textarea {
+  grid-area: primary;
   display: block;
   width: 100%;
-  min-height: 34px;
-  padding: 6px 10px 0;
+  min-height: 36px;
+  padding: 6px 8px;
   border: 0;
   outline: none;
   resize: none;
   background: transparent;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 16px;
+  line-height: 24px;
 }
 
 .composer textarea::placeholder {
-  color: var(--text-muted);
+  color: var(--placeholder);
 }
 
-/* One row: pickers truncate when narrow. */
-.composer-bar {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 2px;
-  padding: 0 4px 4px;
-  min-width: 0;
+.composer.expanded textarea {
+  padding-bottom: 8px;
 }
 
 .composer-hint {
   padding: 0 8px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .composer-error {
-  flex: 1 1 160px;
+  flex: 0 1 auto;
+  max-width: 260px;
   padding: 0 8px;
   min-width: 0;
   color: var(--danger);
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .send-button {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--solid);
-  color: var(--on-solid);
-  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: 50%;
 }
 
+.send-button:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+/* Blue even before there is something to send, as ChatGPT's button is; dimmed until then. */
 .send-button:disabled {
-  opacity: 0.3;
+  opacity: 0.5;
 }
 
 .permission-mode[data-mode='project'] .picker-label {
@@ -2164,7 +2244,7 @@ img.project-icon {
   }
 
   .picker:has(.picker-icon) .picker-button {
-    padding: 0 8px;
+    padding: 0 6px;
   }
 }
 
@@ -2174,7 +2254,7 @@ img.project-icon {
   }
 
   .model-picker .picker-button {
-    padding: 0 8px;
+    padding: 0 6px;
   }
 }
 
@@ -2199,32 +2279,32 @@ img.project-icon {
   align-items: baseline;
   gap: 8px;
   width: 100%;
-  padding: 6px 9px;
+  padding: 8px 10px;
   text-align: left;
   border-radius: var(--radius);
 }
 
 .slash-item.active,
 .picker-item.active {
-  background: var(--accent-soft);
+  background: var(--menu-hover);
 }
 
 .slash-name {
   flex-shrink: 0;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .slash-kind {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
 .slash-desc {
   min-width: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2236,19 +2316,25 @@ img.project-icon {
   position: relative;
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 240px;
+  max-width: 200px;
 }
 
+/* Compact, so the text keeps most of the composer's row. */
 .picker-button {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   max-width: 100%;
-  height: 24px;
-  padding: 0 10px;
+  height: 28px;
+  padding: 0 8px;
   color: var(--text-soft);
-  font-size: 12.5px;
-  border-radius: var(--radius-lg);
+  font-size: 13px;
+  border-radius: var(--radius-pill);
+}
+
+/* The focus ring hugs the pill instead of standing off it. */
+.picker-button:focus-visible {
+  outline-offset: 0;
 }
 
 .picker-button:hover:not(:disabled) {
@@ -2267,7 +2353,6 @@ img.project-icon {
 
 .picker-label {
   min-width: 0;
-  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2334,7 +2419,7 @@ img.project-icon {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 6px 9px;
+  padding: 8px 10px;
   text-align: left;
   border-radius: var(--radius);
 }
@@ -2347,7 +2432,7 @@ img.project-icon {
 }
 
 .picker-item.selected .picker-text > span:first-child {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .picker-item > svg {
@@ -2485,7 +2570,7 @@ img.project-icon {
 }
 
 .model-source-item.active {
-  background: var(--accent-soft);
+  background: var(--menu-hover);
   color: var(--text);
 }
 
@@ -2558,7 +2643,7 @@ img.project-icon {
 }
 
 .model-row.active {
-  background: var(--accent-soft);
+  background: var(--menu-hover);
 }
 
 .model-row > svg {
@@ -2610,7 +2695,7 @@ img.project-icon {
 
 /* Back, forward, reload, the address and the menu, under the tabs. */
 .browser-toolbar {
-  height: 32px;
+  height: 40px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -2627,15 +2712,15 @@ img.project-icon {
 
 .address input {
   width: 100%;
-  height: 24px;
-  padding: 0 12px;
+  height: 30px;
+  padding: 0 14px;
   border: 0;
   outline: none;
   background: var(--fill);
   box-shadow: inset 0 0 0 1px var(--border);
-  font-size: 12.5px;
+  font-size: 13px;
   text-align: center;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-pill);
 }
 
 .address input:focus {
@@ -2645,9 +2730,9 @@ img.project-icon {
     0 0 0 4px var(--focus-ring);
 }
 
-/* Tabs on top, as in Chrome, in the panels' shared 36px row; its gaps drag the window. */
+/* Tabs on top, as in Chrome, in the panels' shared 48px row; its gaps drag the window. */
 .browser-tabs {
-  height: 36px;
+  height: 48px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -2666,13 +2751,13 @@ img.project-icon {
   position: relative;
   flex: 0 1 180px;
   min-width: 72px;
-  height: 26px;
+  height: 32px;
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 0 4px 0 9px;
+  padding: 0 6px 0 10px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
   border-radius: var(--radius);
 }
 
@@ -2801,15 +2886,14 @@ img.project-icon {
 
 .skills-header h2 {
   margin: 0;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 500;
 }
 
 .section-label {
   padding: 8px 10px 4px;
   color: var(--text-muted);
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: 13px;
 }
 
 .skills-group {
@@ -2834,17 +2918,16 @@ img.project-icon {
 }
 
 .skill-row.selected {
-  background: var(--raised);
-  box-shadow: var(--raised-shadow);
+  background: var(--selected);
 }
 
 .skill-name {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .skill-desc {
   color: var(--text-soft);
-  font-size: 12px;
+  font-size: 13px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -3012,13 +3095,13 @@ img.project-icon {
 .settings-row input {
   flex: 1;
   min-width: 0;
-  height: 26px;
-  padding: 0 12px;
+  height: 32px;
+  padding: 0 14px;
   border: 0;
   outline: none;
   background: var(--well);
   box-shadow: inset 0 0 0 1px var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-pill);
 }
 
 .settings-row input:focus {
@@ -3086,10 +3169,6 @@ button,
 .style-grid button:active,
 .lead-toggle:active {
   transform: scale(0.94);
-}
-
-.settled-head:active {
-  transform: scale(0.99);
 }
 
 .chevron {
@@ -3292,7 +3371,7 @@ button,
   position: fixed;
   inset: 0;
   z-index: 30;
-  background: rgba(20, 16, 10, 0.28);
+  background: rgba(0, 0, 0, 0.35);
 }
 
 .palette {

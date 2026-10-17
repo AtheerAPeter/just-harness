@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useOverlay } from '../lib/overlays'
-import { CheckIcon, UpDownIcon } from './icons'
+import { CheckIcon, ChevronDownIcon } from './icons'
 
 export interface PickerValue {
   value: string
@@ -116,7 +116,7 @@ export function Picker({
         {/* The group stays on the button: the same model can come from a free and a paid provider. */}
         {current?.group && <span className="picker-group-name">{current.group}</span>}
         <span className="picker-label">{current?.name ?? placeholder ?? value}</span>
-        <UpDownIcon width={10} height={10} className="picker-chevron" />
+        <ChevronDownIcon width={12} height={12} className="picker-chevron" />
       </button>
       {open && (
         <div className="picker-menu" role="listbox" ref={menuRef}>

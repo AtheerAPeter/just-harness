@@ -6,7 +6,7 @@ import { SkillsView } from './components/SkillsView'
 import { SettingsView } from './components/SettingsView'
 import { BrowserPanel } from './components/BrowserPanel'
 import { ProjectPicker } from './components/ProjectPicker'
-import { ChatIcon, GlobeIcon, SidebarIcon } from './components/icons'
+import { ChatIcon, ComposeIcon, GlobeIcon, SidebarIcon } from './components/icons'
 import { readPref, writePref } from './lib/prefs'
 import { waitingOn } from './lib/background'
 
@@ -140,16 +140,25 @@ export default function App(): React.JSX.Element {
         onNewChat={() => setPicking(true)}
         onShowSkills={() => setView((v) => (v === 'skills' ? 'chat' : 'skills'))}
         onShowSettings={() => setView((v) => (v === 'settings' ? 'chat' : 'settings'))}
+        onHide={() => setSidebarOpen(false)}
       />
       <main className="main">
         <header className="topbar">
-          <button
-            className="icon-btn"
-            title={sidebarOpen ? 'Hide sidebar (⌘B)' : 'Show sidebar (⌘B)'}
-            onClick={() => setSidebarOpen((o) => !o)}
-          >
-            <SidebarIcon />
-          </button>
+          {/* With the sidebar hidden, its toggle and New chat move here, as in ChatGPT. */}
+          {!sidebarOpen && (
+            <>
+              <button
+                className="icon-btn"
+                title="Show sidebar (⌘B)"
+                onClick={() => setSidebarOpen(true)}
+              >
+                <SidebarIcon />
+              </button>
+              <button className="icon-btn" title="New chat (⌘N)" onClick={() => setPicking(true)}>
+                <ComposeIcon />
+              </button>
+            </>
+          )}
           <div className="topbar-title">
             {project && (view === 'skills' || (view === 'chat' && chat)) && (
               <span className="crumb">{project.name} / </span>

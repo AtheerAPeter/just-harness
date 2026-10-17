@@ -19,6 +19,7 @@ import {
   ChevronIcon,
   ClockIcon,
   CloseIcon,
+  CopyIcon,
   DiffIcon,
   FileIcon,
   GlobeIcon,
@@ -148,7 +149,8 @@ export function ChatView({
   }, [items, chat.running])
 
   return (
-    <div className="chat">
+    // An empty chat centers its greeting and the composer, as ChatGPT does.
+    <div className={`chat${loaded && items.length === 0 ? ' empty' : ''}`}>
       <div
         className="chat-scroll"
         ref={scrollRef}
@@ -158,10 +160,9 @@ export function ChatView({
         }}
       >
         <div className="chat-items">
-          {items.length === 0 && (
+          {loaded && items.length === 0 && (
             <div className="chat-empty">
               <h2>{chat.title === 'New chat' ? 'What should we build?' : chat.title}</h2>
-              <p>Pick an agent and model below. The agent works inside this project’s folder.</p>
             </div>
           )}
           {turns.map((turn, index) => (
@@ -291,6 +292,13 @@ function TurnView({
   const work = useMemo(() => toBlocks(turn.work), [turn.work])
   const answer = useMemo(() => toBlocks(turn.answer), [turn.answer])
   const edits = useMemo(() => editedFiles(turn.work, projectPath), [turn.work, projectPath])
+  const answerText = useMemo(
+    () =>
+      turn.answer
+        .flatMap((item) => (item.kind === 'text' && item.text ? [item.text] : []))
+        .join('\n\n'),
+    [turn.answer]
+  )
   return (
     <>
       {turn.user && (
@@ -327,7 +335,36 @@ function TurnView({
           <EditsCard files={edits} />
         </BlockFrame>
       )}
+      {!live && answerText && (
+        <BlockFrame id={`${turn.id}:actions`} loaded={loaded}>
+          <AnswerActions text={answerText} />
+        </BlockFrame>
+      )}
     </>
+  )
+}
+
+/** Under a finished answer, as in ChatGPT: copy its text as markdown. */
+function AnswerActions({ text }: { text: string }): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 1500)
+    return () => clearTimeout(timer)
+  }, [copied])
+  return (
+    <div className="answer-actions">
+      <button
+        className="icon-btn"
+        title={copied ? 'Copied' : 'Copy'}
+        onClick={async () => {
+          await navigator.clipboard.writeText(text)
+          setCopied(true)
+        }}
+      >
+        {copied ? <CheckIcon /> : <CopyIcon />}
+      </button>
+    </div>
   )
 }
 

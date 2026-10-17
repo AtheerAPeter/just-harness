@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   AGENTS,
   type AgentCommand,
@@ -17,8 +17,8 @@ import {
   CloseIcon,
   FileIcon,
   GaugeIcon,
-  PaperclipIcon,
   PencilIcon,
+  PlusIcon,
   SendIcon,
   ShieldIcon,
   StopIcon,
@@ -166,13 +166,24 @@ export function Composer({
     textareaRef.current?.focus()
   }, [chat.id])
 
+  /**
+   * Set once the text wraps: it then takes its own row above the buttons, as
+   * in ChatGPT, and keeps it until the composer is emptied.
+   */
+  const [expanded, setExpanded] = useState(false)
+
   // Grow with content up to a limit.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = textareaRef.current
     if (!el) return
     el.style.height = 'auto'
+    const style = getComputedStyle(el)
+    const oneLine =
+      parseFloat(style.lineHeight) + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+    const wraps = el.scrollHeight > oneLine + 1
+    setExpanded(el.value !== '' && (expanded || wraps))
     el.style.height = `${Math.min(el.scrollHeight, 240)}px`
-  }, [text])
+  }, [text, expanded])
 
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [dragging, setDragging] = useState(false)
@@ -245,7 +256,7 @@ export function Composer({
 
   return (
     <div
-      className={`composer${dragging ? ' dragging' : ''}`}
+      className={`composer${expanded ? ' expanded' : ''}${dragging ? ' dragging' : ''}`}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes('Files')) return
         e.preventDefault()
@@ -259,45 +270,55 @@ export function Composer({
         attachFiles(e.dataTransfer.files)
       }}
     >
-      {attachments.length > 0 && (
-        <div className="attachments">
-          {attachments.map((a, index) => (
-            <span className="attachment" key={`${a.path ?? a.name}-${index}`} title={a.path}>
-              <AttachmentPicture attachment={a} />
-              <span className="attachment-name">{a.name}</span>
-              <button
-                type="button"
-                title="Remove"
-                onClick={() => setAttachments((current) => current.filter((_, i) => i !== index))}
-              >
-                <CloseIcon width={11} height={11} />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      {chat.waitingMessages && (
-        <div className="waiting-messages">
-          <div className="waiting-label">Joins the turn at its next step</div>
-          {chat.waitingMessages.map((message) => (
-            <div className="waiting-message" key={message.id}>
-              <span className="waiting-text" title={message.text}>
-                {message.text}
-              </span>
-              <button type="button" className="label-btn" onClick={() => editWaiting(message.id)}>
-                <PencilIcon width={12} height={12} />
-                Edit
-              </button>
-              <button
-                type="button"
-                className="label-btn danger"
-                onClick={() => window.api.takeWaiting(chat.id, message.id)}
-              >
-                <TrashIcon width={12} height={12} />
-                Delete
-              </button>
+      {(attachments.length > 0 || chat.waitingMessages) && (
+        <div className="composer-header">
+          {attachments.length > 0 && (
+            <div className="attachments">
+              {attachments.map((a, index) => (
+                <span className="attachment" key={`${a.path ?? a.name}-${index}`} title={a.path}>
+                  <AttachmentPicture attachment={a} />
+                  <span className="attachment-name">{a.name}</span>
+                  <button
+                    type="button"
+                    title="Remove"
+                    onClick={() =>
+                      setAttachments((current) => current.filter((_, i) => i !== index))
+                    }
+                  >
+                    <CloseIcon width={11} height={11} />
+                  </button>
+                </span>
+              ))}
             </div>
-          ))}
+          )}
+          {chat.waitingMessages && (
+            <div className="waiting-messages">
+              <div className="waiting-label">Joins the turn at its next step</div>
+              {chat.waitingMessages.map((message) => (
+                <div className="waiting-message" key={message.id}>
+                  <span className="waiting-text" title={message.text}>
+                    {message.text}
+                  </span>
+                  <button
+                    type="button"
+                    className="label-btn"
+                    onClick={() => editWaiting(message.id)}
+                  >
+                    <PencilIcon width={12} height={12} />
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="label-btn danger"
+                    onClick={() => window.api.takeWaiting(chat.id, message.id)}
+                  >
+                    <TrashIcon width={12} height={12} />
+                    Delete
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {menuOpen && (
@@ -308,6 +329,16 @@ export function Composer({
           onChoose={choose}
         />
       )}
+      <div className="composer-leading">
+        <button
+          type="button"
+          className="icon-btn round"
+          title="Attach files"
+          onClick={async () => addAttachments(await window.api.pickFiles())}
+        >
+          <PlusIcon width={20} height={20} />
+        </button>
+      </div>
       <textarea
         ref={textareaRef}
         value={text}
@@ -357,15 +388,7 @@ export function Composer({
           }
         }}
       />
-      <div className="composer-bar">
-        <button
-          type="button"
-          className="icon-btn"
-          title="Attach files"
-          onClick={async () => addAttachments(await window.api.pickFiles())}
-        >
-          <PaperclipIcon width={15} height={15} />
-        </button>
+      <div className="composer-trailing">
         <ModelPicker
           agent={chat.agent}
           projectId={chat.projectId}
@@ -409,18 +432,17 @@ export function Composer({
             }}
           />
         </div>
-        <div className="spacer" />
         {chat.running && !canSend ? (
           <button
             className="send-button stop"
             title="Stop (Esc)"
             onClick={() => window.api.cancel(chat.id)}
           >
-            <StopIcon width={14} height={14} />
+            <StopIcon width={16} height={16} />
           </button>
         ) : (
           <button className="send-button" title="Send (Enter)" disabled={!canSend} onClick={submit}>
-            <SendIcon width={15} height={15} />
+            <SendIcon width={18} height={18} />
           </button>
         )}
       </div>

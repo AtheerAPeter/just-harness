@@ -9,7 +9,7 @@ import {
   type ModelSource
 } from '../../../../shared/types'
 import { useOverlay } from '../../lib/overlays'
-import { BackIcon, SearchIcon, UpDownIcon } from '../icons'
+import { BackIcon, ChevronDownIcon, SearchIcon } from '../icons'
 import { AgentLogo } from './AgentLogo'
 import {
   groupsOf,
@@ -243,7 +243,7 @@ export function ModelPicker({
         {/* The provider stays on the button: the same model can come from a free and a paid one. */}
         {current?.provider && <span className="picker-group-name">{current.provider}</span>}
         <span className="picker-label">{current?.name ?? label(agent)}</span>
-        <UpDownIcon width={10} height={10} className="picker-chevron" />
+        <ChevronDownIcon width={12} height={12} className="picker-chevron" />
       </button>
       {open && (
         <div className="picker-menu model-menu" role="listbox" ref={menuRef}>
