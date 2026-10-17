@@ -34,6 +34,8 @@ export interface Finished {
 export interface Running {
   command: string
   pid: number
+  /** When it started, in ms since the epoch, and how long it has run. */
+  started: number
   ms: number
   log: string
   /** Its timeout in seconds, if it has one. */
@@ -106,18 +108,21 @@ export async function startBackground(
         own.delete(pid)
         if (own.size === 0 && running.get(chatId) === own) running.delete(chatId)
         clearTimeout(job.timer)
-        void lastOutput(log).then((output) =>
-          resolve({
-            command,
-            pid,
-            code,
-            signal,
-            ...(job.stopping === 'timeout' ? { timedOut: timeout } : {}),
-            ms: Date.now() - started,
-            output,
-            log
-          })
-        )
+        // It ended either way, so a log that cannot be read must not keep the chat from hearing.
+        void lastOutput(log)
+          .catch((error: Error) => `[Its output could not be read: ${error.message}]`)
+          .then((output) =>
+            resolve({
+              command,
+              pid,
+              code,
+              signal,
+              ...(job.stopping === 'timeout' ? { timedOut: timeout } : {}),
+              ms: Date.now() - started,
+              output,
+              log
+            })
+          )
       })
     })
   }
@@ -180,6 +185,7 @@ function runningOf(job: Job): Running {
   return {
     command: job.command,
     pid: job.pid,
+    started: job.started,
     ms: Date.now() - job.started,
     log: job.log,
     ...(job.timeout !== undefined ? { timeout: job.timeout } : {})

@@ -93,6 +93,11 @@ const api = {
     id: string
   ): Promise<{ text: string; attachments: Attachment[] } | undefined> =>
     ipcRenderer.invoke('chat:takeWaiting', chatId, id),
+  /** Stop one of the chat's background commands; it does not wake the chat. */
+  stopCommand: (chatId: string, pid: number): Promise<void> =>
+    ipcRenderer.invoke('chat:stopCommand', chatId, pid),
+  /** Clear the chat's timer. */
+  clearTimer: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:clearTimer', chatId),
   /** Set the permission mode: both settings in one call, so they never apply half-changed. */
   setPermissions: (
     chatId: string,

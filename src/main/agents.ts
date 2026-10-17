@@ -1588,6 +1588,9 @@ export class AgentManager implements ChatsApi {
     from?: ChatSender,
     steers = false
   ): Promise<void> {
+    // Once the app quits, nothing starts a turn: a background command, a timer
+    // or a chat that ended would otherwise start an agent as the app stops them.
+    if (this.quitting) return
     this.recentChats = [...this.recentChats.filter((id) => id !== chatId), chatId]
     const chat = store.getChat(chatId)
     if (chat.running) {
@@ -1939,14 +1942,17 @@ export class AgentManager implements ChatsApi {
       if (option !== 'allow') throw new Error('Not started: the user did not allow the command.')
     }
     const cwd = store.getProject(chat.projectId).path
-    return background.startBackground(chat.id, command, cwd, timeout, (finished) =>
+    const running = await background.startBackground(chat.id, command, cwd, timeout, (finished) => {
+      this.showBackground(chat.id)
       this.wake(
         chat.id,
         finishedMessage(finished),
         { kind: 'command', command: finished.command },
         'A background command ended'
       )
-    )
+    })
+    this.showBackground(chat.id)
+    return running
   }
 
   listBackground(caller: string): { commands: Running[]; timer?: Timer } {
@@ -1963,7 +1969,34 @@ export class AgentManager implements ChatsApi {
   }
 
   stopBackground(caller: string, pid: number): Promise<Finished> {
-    return background.stopCommand(this.caller(caller).id, pid)
+    const { id } = this.caller(caller)
+    return background.stopCommand(id, pid).finally(() => this.showBackground(id))
+  }
+
+  /** The user stops one of the chat's background commands; as with stop_background, it wakes no one. */
+  async stopCommand(chatId: string, pid: number): Promise<void> {
+    // It may have ended just before the click.
+    if (!background.listBackground(chatId).some((c) => c.pid === pid)) return
+    await background.stopCommand(chatId, pid).finally(() => this.showBackground(chatId))
+  }
+
+  /**
+   * Show what the chat has going in the background (see Chat.background), so
+   * a chat waiting between turns to be woken does not look done.
+   */
+  private showBackground(chatId: string): void {
+    if (!store.getState().chats.some((c) => c.id === chatId)) return
+    const commands = background
+      .listBackground(chatId)
+      .map(({ pid, command, started }) => ({ pid, command, started }))
+    const timer = this.timers.get(chatId)
+    store.updateChat(chatId, {
+      background:
+        commands.length > 0 || timer
+          ? { commands, ...(timer ? { timer: { note: timer.note, at: timer.at } } : {}) }
+          : undefined
+    })
+    this.events.stateChanged()
   }
 
   // --- Timers (set_timer) ---------------------------------------------------
@@ -1978,6 +2011,7 @@ export class AgentManager implements ChatsApi {
     const ms = seconds * 1000
     const handle = setTimeout(() => {
       this.timers.delete(chat.id)
+      this.showBackground(chat.id)
       this.wake(
         chat.id,
         `The timer you set ${formatDuration(ms)} ago went off. Your note:\n\n${note}`,
@@ -1986,17 +2020,20 @@ export class AgentManager implements ChatsApi {
       )
     }, ms)
     this.timers.set(chat.id, { note, at: Date.now() + ms, handle })
+    this.showBackground(chat.id)
   }
 
   cancelTimer(caller: string): boolean {
     return this.clearTimer(this.caller(caller).id)
   }
 
-  private clearTimer(chatId: string): boolean {
+  /** Clear the chat's timer, for the chat or the user; false when it had none. */
+  clearTimer(chatId: string): boolean {
     const timer = this.timers.get(chatId)
     if (!timer) return false
     clearTimeout(timer.handle)
     this.timers.delete(chatId)
+    this.showBackground(chatId)
     return true
   }
 
@@ -2249,8 +2286,37 @@ export class AgentManager implements ChatsApi {
     }
   }
 
-  /** Stop everything; resolves once the MCP servers the harness started have stopped. */
+  /** Set once the app quits (see send). */
+  private quitting = false
+
+  /**
+   * Stop everything; resolves once the MCP servers the harness started have
+   * stopped. Background commands and timers stop too, and their chats say so,
+   * since nothing will wake them now.
+   */
   stopAll(): Promise<void> {
+    this.quitting = true
+    for (const timer of this.timers.values()) clearTimeout(timer.handle)
+    this.timers.clear()
+    for (const chat of store.getState().chats) {
+      const stopped = chat.background
+      if (!stopped) continue
+      const n = stopped.commands.length
+      const what = [
+        ...(n > 0 ? [n === 1 ? 'a background command' : `${n} background commands`] : []),
+        ...(stopped.timer ? ['a timer'] : [])
+      ].join(' and ')
+      const them = n + (stopped.timer ? 1 : 0) === 1 ? 'it' : 'them'
+      this.events.item(
+        chat.id,
+        store.upsertItem(chat.id, {
+          kind: 'notice',
+          id: crypto.randomUUID(),
+          text: `Just Harness quit while this chat had ${what} going. Quitting stopped ${them}, so nothing will wake this chat for ${them}.`
+        })
+      )
+      store.updateChat(chat.id, { background: undefined })
+    }
     for (const agentProcess of this.processes.values()) agentProcess.stop()
     for (const agent of this.harness.values()) agent.stop()
     stopLeftRunning()

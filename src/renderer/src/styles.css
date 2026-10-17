@@ -256,6 +256,12 @@ kbd {
   animation: spin 0.8s linear infinite;
 }
 
+/* Turning slowly, with a yellow arc: waiting on work in the background. */
+.spinner.background {
+  border-top-color: var(--accent);
+  animation-duration: 2.4s;
+}
+
 .spin {
   animation: spin 0.9s linear infinite;
 }
@@ -832,12 +838,19 @@ img.project-icon {
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
-.chat-dot.running {
+.chat-dot.running,
+.chat-dot.background {
   width: 10px;
   height: 10px;
   border: 1.6px solid var(--border-strong);
   border-top-color: var(--text);
   animation: spin 0.8s linear infinite;
+}
+
+/* Between turns, waiting on what will wake it, like the header's spinner. */
+.chat-dot.background {
+  border-top-color: var(--accent);
+  animation-duration: 2.4s;
 }
 
 .chat-line {
@@ -1820,6 +1833,56 @@ img.project-icon {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* The chat's background commands and timer, one row each, docked like the todos. */
+.background-strip {
+  max-width: calc(var(--chat-width) - 28px);
+  margin: 0 auto;
+  padding: 2px 0;
+  background: var(--strip);
+  box-shadow: var(--strip-edge);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+/* With the todos under it, the two read as one strip. */
+.background-strip + .todo-strip {
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.background-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 6px 0 14px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.background-row > svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.background-what {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.background-what.mono {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.background-time {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Composer: a capsule docked below the chat */
@@ -3119,6 +3182,7 @@ button,
 
 .status-chip,
 .todo-strip,
+.background-strip,
 .attachment {
   animation: appear var(--move) var(--ease) both;
 }

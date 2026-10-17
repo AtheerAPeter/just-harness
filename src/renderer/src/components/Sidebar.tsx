@@ -6,6 +6,7 @@ import { RowMenu } from './RowMenu'
 import { colorValue } from '../lib/project-colors'
 import { startedChats, type AppState, type Chat } from '../../../shared/types'
 import { readPref, writePref } from '../lib/prefs'
+import { waitingOn } from '../lib/background'
 import {
   BookIcon,
   ChevronIcon,
@@ -116,9 +117,12 @@ export function Sidebar({
   const nested = (chat: Chat): boolean =>
     !q && chat.startedBy != null && !!started.get(chat.startedBy)
   // A lead is working while any chat it started is, even between its own turns, so it does not
-  // jump between the lists each time a report starts and ends one of its turns.
+  // jump between the lists each time a report starts and ends one of its turns. So is a chat with
+  // commands or a timer in the background: each wakes it, so it is not done.
+  const startedWorking = (chat: Chat): number =>
+    started.get(chat.id)?.filter((c) => c.running).length ?? 0
   const working = (chat: Chat): boolean =>
-    chat.running || Boolean(started.get(chat.id)?.some((c) => c.running))
+    chat.running || Boolean(chat.background) || startedWorking(chat) > 0
   // Chats that need the user come first, then those still working. A waiting chat is also
   // running. Both lists show a chat even when it is also under the chat that leads it; but a
   // working chat whose lead is working too is shown under the lead only.
@@ -159,7 +163,12 @@ export function Sidebar({
         data-chat={chat.id}
         className={`chat-row${led ? ' lead' : ''}${color ? ' colored' : ''}${view === 'chat' && chat.id === selectedChatId ? ' selected' : ''}`}
         style={color ? ({ '--project-color': color } as React.CSSProperties) : undefined}
-        title={[project?.name, chat.waiting ? 'Waiting for approval' : chat.preview]
+        title={[
+          project?.name,
+          chat.waiting
+            ? 'Waiting for approval'
+            : (!chat.running && waitingOn(chat, startedWorking(chat))) || chat.preview
+        ]
           .filter(Boolean)
           .join(' · ')}
         onClick={() => onSelectChat(chat.id)}
@@ -562,7 +571,11 @@ function RenameField({
   )
 }
 
-/** Waiting for the user, working, or else when the chat last changed. */
+/**
+ * Waiting for the user, working on a turn, waiting between turns on what will
+ * wake it (commands, a timer, the chats it started), or else when the chat
+ * last changed.
+ */
 function ChatStatus({
   chat,
   working,
@@ -573,7 +586,8 @@ function ChatStatus({
   now: number
 }): React.JSX.Element {
   if (chat.waiting) return <span className="chat-status chat-dot waiting" />
-  if (working) return <span className="chat-status chat-dot running" />
+  if (chat.running) return <span className="chat-status chat-dot running" />
+  if (working) return <span className="chat-status chat-dot background" />
   return <span className="chat-status chat-time">{relativeTime(chat.updatedAt, now)}</span>
 }
 

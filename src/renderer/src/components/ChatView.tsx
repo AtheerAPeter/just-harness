@@ -5,6 +5,7 @@ import type {
   AgentOption,
   AgentStatus,
   Chat,
+  ChatBackground,
   ChatItem,
   Skill
 } from '../../../shared/types'
@@ -16,6 +17,8 @@ import {
   BookIcon,
   CheckIcon,
   ChevronIcon,
+  ClockIcon,
+  CloseIcon,
   DiffIcon,
   FileIcon,
   GlobeIcon,
@@ -23,6 +26,7 @@ import {
   PencilIcon,
   SearchIcon,
   ShieldIcon,
+  StopIcon,
   TerminalIcon,
   WrenchIcon
 } from './icons'
@@ -174,6 +178,7 @@ export function ChatView({
         </div>
       </div>
       <div className="composer-wrap">
+        {chat.background && <BackgroundStrip chatId={chat.id} background={chat.background} />}
         {plan?.entries.some((e) => e.status !== 'completed') && (
           <TodoStrip entries={plan.entries} />
         )}
@@ -1158,6 +1163,68 @@ function TodoStrip({ entries }: { entries: PlanEntry[] }): React.JSX.Element {
         </span>
         {next && <span className="todo-next">Next: {next.content}</span>}
       </button>
+    </div>
+  )
+}
+
+/**
+ * The chat's commands running in the background and its timer, one row each,
+ * with how long each has run or is left. Each wakes the chat when it ends or
+ * goes off; stopping one here does not.
+ */
+function BackgroundStrip({
+  chatId,
+  background
+}: {
+  chatId: string
+  background: ChatBackground
+}): React.JSX.Element {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  const { commands, timer } = background
+  return (
+    <div className="background-strip">
+      {commands.map((command) => (
+        <div className="background-row" key={command.pid}>
+          <TerminalIcon width={12} height={12} />
+          <span className="background-what mono" title={command.command}>
+            {command.command}
+          </span>
+          <span className="background-time">
+            {elapsed(Math.max(0, Math.floor((now - command.started) / 1000)))}
+          </span>
+          <button
+            type="button"
+            className="label-btn danger"
+            onClick={() => void window.api.stopCommand(chatId, command.pid)}
+          >
+            <StopIcon width={11} height={11} />
+            Stop
+          </button>
+        </div>
+      ))}
+      {timer && (
+        <div className="background-row">
+          <ClockIcon width={12} height={12} />
+          <span className="background-what" title={timer.note}>
+            {timer.note}
+          </span>
+          <span className="background-time">
+            in {elapsed(Math.max(0, Math.ceil((timer.at - now) / 1000)))}
+          </span>
+          <button
+            type="button"
+            className="label-btn danger"
+            onClick={() => void window.api.clearTimer(chatId)}
+          >
+            <CloseIcon width={11} height={11} />
+            Clear
+          </button>
+        </div>
+      )}
     </div>
   )
 }

@@ -284,6 +284,12 @@ function registerIpc(browser: BuiltinBrowser): void {
   ipcMain.handle('chat:takeWaiting', (_e, chatId: string, id: string) =>
     agents.takeWaiting(chatId, id)
   )
+  ipcMain.handle('chat:stopCommand', (_e, chatId: string, pid: number) =>
+    agents.stopCommand(chatId, pid)
+  )
+  ipcMain.handle('chat:clearTimer', (_e, chatId: string) => {
+    agents.clearTimer(chatId)
+  })
   ipcMain.handle('chat:setOption', (_e, chatId: string, optionId: string, value: string) =>
     agents.setOption(chatId, optionId, value)
   )

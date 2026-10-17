@@ -76,6 +76,12 @@ export interface Chat {
   waiting?: boolean
   /** The user's messages sent while the chat works, waiting to join its turn or follow it. */
   waitingMessages?: { id: string; text: string }[]
+  /**
+   * What the chat has going in the background, each of which wakes it when
+   * it ends or goes off (see chats-mcp.ts), so a chat between turns is not
+   * done. Only for this launch: quitting stops them.
+   */
+  background?: ChatBackground
   /** The first line of the chat's last message, shown under its title in the sidebar. */
   preview?: string
   /** Approve every permission request automatically (allow once). */
@@ -94,6 +100,14 @@ export interface Chat {
   startedBy?: string | null
   createdAt: number
   updatedAt: number
+}
+
+/** A chat's commands running with run_in_background, and its timer (see set_timer). */
+export interface ChatBackground {
+  /** Oldest first; `started` in ms since the epoch. */
+  commands: { pid: number; command: string; started: number }[]
+  /** `at`: when it goes off, in ms since the epoch. */
+  timer?: { note: string; at: number }
 }
 
 /**

@@ -8,6 +8,7 @@ import { BrowserPanel } from './components/BrowserPanel'
 import { ProjectPicker } from './components/ProjectPicker'
 import { ChatIcon, GlobeIcon, SidebarIcon } from './components/icons'
 import { readPref, writePref } from './lib/prefs'
+import { waitingOn } from './lib/background'
 
 export default function App(): React.JSX.Element {
   const [state, setState] = useState<AppState>({ projects: [], chats: [] })
@@ -56,6 +57,11 @@ export default function App(): React.JSX.Element {
   useEffect(() => writePref('browserWidth', browserWidth), [browserWidth])
 
   const chat = state.chats.find((c) => c.id === selectedChatId)
+  // Between turns, what will wake the chat, so it does not look done.
+  const waitingFor =
+    chat && !chat.running
+      ? waitingOn(chat, state.chats.filter((c) => c.startedBy === chat.id && c.running).length)
+      : undefined
   // The browser panel belongs to the chat: each chat opens and closes its own.
   const browserOpen = Boolean(chat?.browserOpen)
   const toggleBrowser = useCallback((chatId: string | undefined, open?: boolean) => {
@@ -168,6 +174,12 @@ export default function App(): React.JSX.Element {
             <span className="status-chip running">
               <span className="spinner" />
               Working
+            </span>
+          )}
+          {view === 'chat' && waitingFor && (
+            <span className="status-chip running" title="It is woken when they end">
+              <span className="spinner background" />
+              {waitingFor}
             </span>
           )}
           <span className="spacer" />

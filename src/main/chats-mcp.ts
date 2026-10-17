@@ -39,7 +39,8 @@ export const CHATS_GUIDANCE =
   'with why. So never wait or poll for it: end your turn, and you are woken. list_chats shows how ' +
   'each chat you started is doing, and send_message gets a stopped one going again. delete_chat ' +
   'removes a chat you started. run_in_background runs a long command (a download, a long build or ' +
-  'test run, a dev server) and wakes this chat with its result when it ends; list_background, ' +
+  'test run, a dev server) and wakes this chat with its result when it ends; run one that ends ' +
+  'within a couple of minutes with your own shell tool instead. list_background, ' +
   'read_background and stop_background check on it and stop it. set_timer wakes this chat later, ' +
   'to check on something nothing else tells you about.'
 
@@ -214,7 +215,7 @@ export async function buildChatsServer(chats: ChatsApi): Promise<McpServer> {
     'run_in_background',
     {
       description:
-        "Run a shell command in the project folder in the background, and be woken when it ends: a download, an install, a long build or test run, or a server that keeps running (a dev server, a watcher). Use it instead of your own shell's background mode or &: those cannot wake this chat, and cannot be checked on or stopped with these tools. It returns at once with the command's process ID. When the command ends, this chat gets a message with its exit code and the end of its output, as a new turn or at the next step of the current one. So for a command whose result you need, end your turn after starting it, without waiting or polling. read_background shows its output so far and stop_background stops it. Background commands stop when the app quits.",
+        "Run a shell command in the project folder in the background, and be woken when it ends: a download, an install, a long build or test run, or a server that keeps running (a dev server, a watcher). A command that ends within a couple of minutes is better run with your own shell tool, which waits for it and gives you its output in this turn. Use it instead of your own shell's background mode or &: those cannot wake this chat, and cannot be checked on or stopped with these tools. It returns at once with the command's process ID. When the command ends, this chat gets a message with its exit code and the end of its output, as a new turn or at the next step of the current one. So for a command whose result you need, end your turn after starting it, without waiting or polling. read_background shows its output so far and stop_background stops it. Background commands stop when the app quits.",
       inputSchema: {
         command: z.string().describe('The bash command to run'),
         timeout: z

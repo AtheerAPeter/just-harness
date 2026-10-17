@@ -97,6 +97,7 @@ for (const chat of state.chats) {
   chat.running = false
   chat.waiting = false
   delete chat.waitingMessages
+  delete chat.background
   // The browser panel starts closed; an agent or the header button opens it.
   chat.browserOpen = false
   // Chats from before sidebar previews, or before the chat that started a chat was recorded,
