@@ -38,7 +38,7 @@ Open Terminal and run:
 curl -fsSL https://raw.githubusercontent.com/AtheerAPeter/just-harness/main/install.sh | bash
 ```
 
-It downloads the latest release, installs Just Harness in Applications and opens it. Run it again any time to update. Installing this way skips macOS's "Apple could not verify…" prompt, because only browser downloads get flagged.
+It downloads the latest release, installs Just Harness in Applications and opens it. Run it again any time to update. The app also checks for a new release when it starts and every six hours, and shows **Update to v…** at the bottom of the sidebar. Clicking it runs the same script, which quits the app, installs the new version and opens it. Installing this way skips macOS's "Apple could not verify…" prompt, because only browser downloads get flagged.
 
 Or download the `.dmg` from [Releases](https://github.com/AtheerAPeter/just-harness/releases/latest) and drag Just Harness to Applications. The app isn't notarized by Apple, so the first launch from a browser download is blocked: click **Done**, then **System Settings → Privacy & Security → Open Anyway** (once).
 

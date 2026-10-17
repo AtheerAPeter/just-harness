@@ -82,8 +82,12 @@ export function Sidebar({
   /** The search text; undefined while the search field is closed. */
   const [query, setQuery] = useState<string>()
   const [version, setVersion] = useState<string>()
+  /** A newer release's version, once the app has found one. */
+  const [update, setUpdate] = useState<string | null>(null)
   useEffect(() => {
     window.api.appVersion().then(setVersion)
+    window.api.update.available().then(setUpdate)
+    return window.api.update.onAvailable(setUpdate)
   }, [])
   useEffect(() => writePref('settledOpen', settledOpen), [settledOpen])
   useEffect(() => writePref('settledHeight', settledHeight), [settledHeight])
@@ -416,9 +420,47 @@ export function Sidebar({
           <SlidersIcon />
         </button>
         <ThemeToggle />
-        {version && <span className="app-version">v{version}</span>}
+        {update ? (
+          <UpdateButton version={update} />
+        ) : (
+          version && <span className="app-version">v{version}</span>
+        )}
       </div>
     </nav>
+  )
+}
+
+/** In place of the version once a newer release is out. Installing it quits and reopens the app. */
+function UpdateButton({ version }: { version: string }): React.JSX.Element {
+  const [installing, setInstalling] = useState(false)
+  const [error, setError] = useState<string>()
+
+  async function install(): Promise<void> {
+    setInstalling(true)
+    setError(undefined)
+    try {
+      await window.api.update.install()
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+          : String(e)
+      )
+    } finally {
+      setInstalling(false)
+    }
+  }
+
+  return (
+    <button
+      className="app-update"
+      disabled={installing}
+      title={error ?? `Quit, install v${version} and open it again`}
+      onClick={install}
+    >
+      <span className={`dot${error ? ' failed' : ''}`} />
+      {installing ? 'Updating…' : error ? 'Update failed · Retry' : `Update to v${version}`}
+    </button>
   )
 }
 

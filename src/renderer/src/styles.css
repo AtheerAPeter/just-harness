@@ -584,6 +584,37 @@ kbd {
   font-size: 11px;
 }
 
+.app-update {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  color: var(--text-soft);
+  font-size: 11px;
+  border-radius: var(--radius-sm);
+}
+
+.app-update:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.app-update:disabled {
+  cursor: default;
+}
+
+.app-update .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.app-update .dot.failed {
+  background: var(--danger);
+}
+
 .add-project {
   display: flex;
   align-items: center;

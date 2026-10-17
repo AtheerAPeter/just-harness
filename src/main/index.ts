@@ -27,6 +27,7 @@ import * as skills from './skills'
 import { listProjectFiles } from './files'
 import { chooseProjectIcon, projectIcon } from './project-icon'
 import { handleImageRequests, registerImageScheme, thumbnail } from './images'
+import { availableUpdate, installUpdate, watchForUpdates } from './updates'
 
 let mainWindow: BrowserWindow
 let browser: BuiltinBrowser | undefined
@@ -175,6 +176,8 @@ function registerIpc(browser: BuiltinBrowser): void {
   ipcMain.handle('theme:set', (_e, theme: Theme) => setTheme(theme))
   ipcMain.handle('state:get', () => store.getState())
   ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.handle('update:available', () => availableUpdate())
+  ipcMain.handle('update:install', () => installUpdate())
   ipcMain.handle('exa:keyHint', () => exaKeyHint())
   ipcMain.handle('exa:setKey', (_e, key: string | null) => setExaKey(key))
 
@@ -358,6 +361,7 @@ app.whenReady().then(async () => {
   installMenu((command) => send('menu', command), nativeTheme.themeSource, setTheme)
   browser = createWindow()
   registerIpc(browser)
+  watchForUpdates((version) => send('update:available', version))
   const endpoint = await startBrowserMcp(
     browser,
     {

@@ -13,6 +13,10 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+# The app updates itself with the script users install it with (main/updates.ts).
+extraResources:
+  - from: install.sh
+    to: install.sh
 win:
   executableName: just-harness
 nsis:

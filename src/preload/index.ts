@@ -32,6 +32,13 @@ function on<Args extends unknown[]>(
 const api = {
   getState: (): Promise<AppState> => ipcRenderer.invoke('state:get'),
   appVersion: (): Promise<string> => ipcRenderer.invoke('app:version'),
+  update: {
+    /** A newer release's version, once the app has found one; null until then. */
+    available: (): Promise<string | null> => ipcRenderer.invoke('update:available'),
+    onAvailable: (listener: (version: string) => void) => on('update:available', listener),
+    /** Quit, install the newer release and open it; rejects with the reason when that fails. */
+    install: (): Promise<void> => ipcRenderer.invoke('update:install')
+  },
   onState: (listener: (state: AppState) => void) => on('state:changed', listener),
   onMenu: (listener: (command: MenuCommand) => void) => on('menu', listener),
   setTheme: (theme: Theme): Promise<void> => ipcRenderer.invoke('theme:set', theme),
