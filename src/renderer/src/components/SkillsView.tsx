@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AGENTS, type Project, type Skill, type SkillScope } from '../../../shared/types'
+import { errorMessage } from '../lib/errors'
 import { PlusIcon } from './icons'
 
 interface SkillsViewProps {
@@ -42,11 +43,7 @@ export function SkillsView({ project }: SkillsViewProps): React.JSX.Element {
     try {
       await action()
     } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
-          : String(e)
-      )
+      setError(errorMessage(e))
     }
   }
 

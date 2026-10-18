@@ -36,6 +36,8 @@ const api = {
     /** A newer release's version, once the app has found one; null until then. */
     available: (): Promise<string | null> => ipcRenderer.invoke('update:available'),
     onAvailable: (listener: (version: string) => void) => on('update:available', listener),
+    /** Ask GitHub now: the newer release's version, or null when this app is the latest. */
+    check: (): Promise<string | null> => ipcRenderer.invoke('update:check'),
     /** Quit, install the newer release and open it; rejects with the reason when that fails. */
     install: (): Promise<void> => ipcRenderer.invoke('update:install')
   },

@@ -27,12 +27,14 @@ import * as skills from './skills'
 import { listProjectFiles } from './files'
 import { chooseProjectIcon, projectIcon } from './project-icon'
 import { handleImageRequests, registerImageScheme, thumbnail } from './images'
-import { availableUpdate, installUpdate, watchForUpdates } from './updates'
+import { availableUpdate, checkForUpdates, installUpdate, watchForUpdates } from './updates'
 
 let mainWindow: BrowserWindow
 let browser: BuiltinBrowser | undefined
 /** Set once the app is quitting: closing the window then really closes it. */
 let quitting = false
+/** How long quitting waits for the agents and the browser to stop. */
+const QUIT_DEADLINE = 5000
 
 function send(channel: string, ...args: unknown[]): void {
   if (!mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
@@ -177,6 +179,7 @@ function registerIpc(browser: BuiltinBrowser): void {
   ipcMain.handle('state:get', () => store.getState())
   ipcMain.handle('app:version', () => app.getVersion())
   ipcMain.handle('update:available', () => availableUpdate())
+  ipcMain.handle('update:check', () => checkForUpdates())
   ipcMain.handle('update:install', () => installUpdate())
   ipcMain.handle('exa:keyHint', () => exaKeyHint())
   ipcMain.handle('exa:setKey', (_e, key: string | null) => setExaKey(key))
@@ -411,7 +414,21 @@ app.on('before-quit', (event) => {
     console.error('Could not save before quitting:', error)
   }
   browser?.closeAll()
-  Promise.allSettled([stopped, browser?.flush()]).finally(() => app.quit())
+  // Waited for up to a limit: one that never settles (an MCP server that never
+  // answers) would otherwise keep the app open, and the updater replaces it.
+  const waits = { agents: stopped, browser: browser?.flush() }
+  const unfinished = new Set(Object.keys(waits))
+  const settled = Object.entries(waits).map(([name, wait]) =>
+    Promise.resolve(wait)
+      .catch(() => undefined)
+      .finally(() => unfinished.delete(name))
+  )
+  const deadline = new Promise((resolve) => setTimeout(resolve, QUIT_DEADLINE))
+  Promise.race([Promise.all(settled), deadline]).then(() => {
+    if (unfinished.size > 0)
+      console.error(`Quit before these stopped: ${[...unfinished].join(', ')}`)
+    app.quit()
+  })
 })
 
 // Closing the window only hides it, so it closes for good only while quitting.

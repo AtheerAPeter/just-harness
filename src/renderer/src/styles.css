@@ -3192,6 +3192,10 @@ img.project-icon {
   border-radius: var(--radius-lg);
 }
 
+.settings-card + .settings-card {
+  margin-top: 12px;
+}
+
 .settings-card h3 {
   margin: 0;
   font-size: 14px;

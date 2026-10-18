@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { errorMessage } from '../lib/errors'
+import { useUpdateInstall } from '../lib/update'
 
 export function SettingsView(): React.JSX.Element {
   /** The saved key's last four characters; null when none is saved, undefined while loading. */
@@ -16,11 +18,7 @@ export function SettingsView(): React.JSX.Element {
       setHint(await window.api.exa.setKey(value))
       setKey('')
     } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
-          : String(e)
-      )
+      setError(errorMessage(e))
     }
   }
 
@@ -61,6 +59,70 @@ export function SettingsView(): React.JSX.Element {
         </form>
         {error && <div className="msg-error">{error}</div>}
       </section>
+      <UpdatesCard />
     </div>
+  )
+}
+
+/** The app's version and a check for a newer release, which it can install from here. */
+function UpdatesCard(): React.JSX.Element {
+  const [version, setVersion] = useState<string>()
+  /** The newer release found; null once a check finds none; undefined before any. */
+  const [newer, setNewer] = useState<string | null>()
+  const [checking, setChecking] = useState(false)
+  const [error, setError] = useState<string>()
+  const update = useUpdateInstall()
+
+  useEffect(() => {
+    window.api.appVersion().then(setVersion)
+    // The app checks on its own every few hours; a release it found shows at once.
+    window.api.update.available().then((found) => found && setNewer(found))
+    return window.api.update.onAvailable(setNewer)
+  }, [])
+
+  async function check(): Promise<void> {
+    setChecking(true)
+    setError(undefined)
+    try {
+      setNewer(await window.api.update.check())
+    } catch (e) {
+      setError(errorMessage(e))
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  return (
+    <section className="settings-card">
+      <h3>Updates</h3>
+      <p>
+        {newer
+          ? `Version ${newer} is out. Updating quits Just Harness, installs it and opens it again.`
+          : newer === null
+            ? `Version ${version} is the latest.`
+            : `This is version ${version ?? '…'}.`}
+      </p>
+      <div className="settings-row">
+        {newer && (
+          <button
+            type="button"
+            className="btn primary"
+            disabled={update.installing}
+            onClick={update.install}
+          >
+            {update.installing ? 'Updating…' : `Update to v${newer}`}
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn"
+          disabled={checking || update.installing}
+          onClick={check}
+        >
+          {checking ? 'Checking…' : 'Check for updates'}
+        </button>
+      </div>
+      {(error ?? update.error) && <div className="msg-error">{error ?? update.error}</div>}
+    </section>
   )
 }

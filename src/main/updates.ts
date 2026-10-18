@@ -16,6 +16,8 @@ const CHECK_EVERY = 6 * 60 * 60 * 1000
 
 /** The newer release's version, once one is found. */
 let latest: string | null = null
+/** Told of each newer version found, by the timer or by the user's check. */
+let notify: (version: string) => void = () => undefined
 
 export function availableUpdate(): string | null {
   return latest
@@ -23,18 +25,23 @@ export function availableUpdate(): string | null {
 
 /** Check now and every few hours; `onFound` gets each newer version found. Packaged builds only. */
 export function watchForUpdates(onFound: (version: string) => void): void {
+  notify = onFound
   if (!app.isPackaged) return
   const check = (): void => {
-    newerRelease()
-      .then((version) => {
-        if (!version || version === latest) return
-        latest = version
-        onFound(version)
-      })
-      .catch((error) => console.error('Could not check for updates:', error.message))
+    checkForUpdates().catch((error) => console.error('Could not check for updates:', error.message))
   }
   check()
   setInterval(check, CHECK_EVERY)
+}
+
+/** Check now: the newer release's version, or null when this app is the latest. */
+export async function checkForUpdates(): Promise<string | null> {
+  const version = await newerRelease()
+  if (version && version !== latest) {
+    latest = version
+    notify(version)
+  }
+  return version
 }
 
 /** The latest release's version when it is newer than this app; null otherwise. */

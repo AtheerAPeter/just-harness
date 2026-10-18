@@ -57,12 +57,17 @@ if [ ! -w "$target" ]; then
   mkdir -p "$target"
 fi
 
+# The app is quit first: replacing it while it runs leaves the old version
+# open, and `open` below would only bring that one forward.
 if pgrep -f "$APP/Contents/MacOS" >/dev/null 2>&1; then
+  step "Quitting Just Harness"
   osascript -e 'quit app "Just Harness"' >/dev/null 2>&1 || true
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
+  for _ in $(seq 30); do
     pgrep -f "$APP/Contents/MacOS" >/dev/null 2>&1 || break
     sleep 1
   done
+  pgrep -f "$APP/Contents/MacOS" >/dev/null 2>&1 &&
+    fail "Just Harness did not quit, so it was not updated. Quit it and try again."
 fi
 
 rm -rf "$target/$APP"

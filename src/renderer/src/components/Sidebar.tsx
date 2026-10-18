@@ -6,6 +6,7 @@ import { RowMenu } from './RowMenu'
 import { startedChats, type AppState, type Chat } from '../../../shared/types'
 import { readPref, writePref } from '../lib/prefs'
 import { waitingOn } from '../lib/background'
+import { useUpdateInstall } from '../lib/update'
 import {
   BookIcon,
   ChevronIcon,
@@ -376,24 +377,7 @@ export function Sidebar({
 
 /** Above the footer once a newer release is out. Installing it quits and reopens the app. */
 function UpdateButton({ version }: { version: string }): React.JSX.Element {
-  const [installing, setInstalling] = useState(false)
-  const [error, setError] = useState<string>()
-
-  async function install(): Promise<void> {
-    setInstalling(true)
-    setError(undefined)
-    try {
-      await window.api.update.install()
-    } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
-          : String(e)
-      )
-    } finally {
-      setInstalling(false)
-    }
-  }
+  const { installing, error, install } = useUpdateInstall()
 
   return (
     <button
