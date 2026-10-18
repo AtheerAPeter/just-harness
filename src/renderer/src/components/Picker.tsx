@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useOverlay } from '../lib/overlays'
+import { menuPlacement, placementProps, type MenuPlacement } from '../lib/menuPlacement'
 import { CheckIcon, ChevronDownIcon } from './icons'
 
 export interface PickerValue {
@@ -32,6 +33,7 @@ export function Picker({
   icon
 }: PickerProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
+  const [placement, setPlacement] = useState<MenuPlacement>()
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -63,6 +65,7 @@ export function Picker({
 
   function toggle(): void {
     if (!open) {
+      if (rootRef.current) setPlacement(menuPlacement(rootRef.current))
       setQuery('')
       setActive(
         Math.max(
@@ -119,7 +122,12 @@ export function Picker({
         <ChevronDownIcon width={12} height={12} className="picker-chevron" />
       </button>
       {open && (
-        <div className="picker-menu" role="listbox" ref={menuRef}>
+        <div
+          className="picker-menu"
+          role="listbox"
+          ref={menuRef}
+          {...(placement && placementProps(placement))}
+        >
           {searchable && (
             <input
               className="picker-search"

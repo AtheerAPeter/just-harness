@@ -9,6 +9,7 @@ import {
   type ModelSource
 } from '../../../../shared/types'
 import { useOverlay } from '../../lib/overlays'
+import { menuPlacement, placementProps, type MenuPlacement } from '../../lib/menuPlacement'
 import { BackIcon, ChevronDownIcon, SearchIcon } from '../icons'
 import { AgentLogo } from './AgentLogo'
 import {
@@ -50,6 +51,7 @@ export function ModelPicker({
   onChange
 }: ModelPickerProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
+  const [placement, setPlacement] = useState<MenuPlacement>()
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const [shownKey, setShownKey] = useState<string>()
@@ -145,6 +147,7 @@ export function ModelPicker({
       setOpen(false)
       return
     }
+    if (rootRef.current) setPlacement(menuPlacement(rootRef.current))
     setQuery('')
     setShownKey(currentKey)
     setChoosingSource(false)
@@ -246,7 +249,12 @@ export function ModelPicker({
         <ChevronDownIcon width={12} height={12} className="picker-chevron" />
       </button>
       {open && (
-        <div className="picker-menu model-menu" role="listbox" ref={menuRef}>
+        <div
+          className="picker-menu model-menu"
+          role="listbox"
+          ref={menuRef}
+          {...(placement && placementProps(placement))}
+        >
           <label className="model-search">
             <SearchIcon width={15} height={15} />
             <input

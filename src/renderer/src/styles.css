@@ -1933,8 +1933,9 @@ img.project-icon {
 
 /*
  * Composer: ChatGPT's pill docked below the chat. The + button, the text and
- * the pickers with send share one 52px row; once the text wraps it takes its
- * own row above them (expanded). Attachments and waiting messages sit on top.
+ * send share one 52px row; once the text wraps it takes its own row above them
+ * (expanded). Attachments and waiting messages sit on top, and the chat's
+ * settings (model, effort, permissions) in their own row underneath.
  */
 
 .composer-wrap {
@@ -1944,7 +1945,6 @@ img.project-icon {
 
 .composer {
   position: relative;
-  container-type: inline-size;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas:
@@ -1992,6 +1992,16 @@ img.project-icon {
   justify-content: flex-end;
   gap: 2px;
   min-width: 0;
+}
+
+.composer-settings {
+  container-type: inline-size;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: var(--chat-width);
+  margin: 0 auto;
+  padding: 6px 8px 0;
 }
 
 .composer.dragging {
@@ -2226,15 +2236,15 @@ img.project-icon {
 }
 
 /*
- * A narrow composer keeps every picker on one row by showing icons: effort and
- * permissions first, then the model, which keeps its agent logo. Each
- * button's tooltip names the current value.
+ * A narrow settings row keeps every picker on one line by showing icons:
+ * effort and permissions first, then the model, which keeps its agent logo.
+ * Each button's tooltip names the current value.
  */
 .picker-icon {
   display: none;
 }
 
-@container (max-width: 560px) {
+@container (max-width: 440px) {
   .picker:has(.picker-icon) .picker-icon {
     display: inline-flex;
   }
@@ -2248,7 +2258,7 @@ img.project-icon {
   }
 }
 
-@container (max-width: 400px) {
+@container (max-width: 320px) {
   .model-picker :is(.picker-label, .picker-group-name, .picker-chevron) {
     display: none;
   }
@@ -2372,6 +2382,8 @@ img.project-icon {
   left: 0;
   z-index: 10;
   width: 320px;
+  /* The room on its side of the button (lib/menuPlacement.ts). */
+  max-height: var(--menu-room, none);
   display: flex;
   flex-direction: column;
   background: var(--menu);
@@ -2407,6 +2419,7 @@ img.project-icon {
 
 .picker-list {
   max-height: 320px;
+  min-height: 0;
   overflow-y: auto;
   padding: 6px;
   outline: none;
@@ -2473,7 +2486,7 @@ img.project-icon {
 .model-menu {
   width: min(380px, calc(100vw - 32px));
   /* One height for both views, so going back and forth does not resize it. */
-  height: min(460px, calc(100vh - 160px));
+  height: min(460px, var(--menu-room, 460px));
   /* Opaque, so sticky titles hide the rows under them. */
   background: var(--surface);
   border-radius: var(--radius-lg);
@@ -3270,6 +3283,13 @@ button,
 .slash-menu {
   transform-origin: bottom left;
   animation: pop-up var(--fast) var(--ease) both;
+}
+
+.picker-menu[data-side='below'] {
+  top: calc(100% + 10px);
+  bottom: auto;
+  transform-origin: top left;
+  animation-name: pop-down;
 }
 
 .menu {

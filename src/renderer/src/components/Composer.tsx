@@ -40,7 +40,7 @@ interface ComposerProps {
 }
 
 /**
- * Options shown in the composer next to the model picker (which also covers
+ * Options shown under the composer next to the model picker (which also covers
  * cline's provider). Anything else the agent offers is ignored, including mode:
  * chats always run in build mode.
  */
@@ -281,140 +281,163 @@ export function Composer({
   const error = status?.error ?? optionsError
 
   return (
-    <div
-      className={`composer${expanded ? ' expanded' : ''}${dragging ? ' dragging' : ''}`}
-      onDragOver={(e) => {
-        if (!e.dataTransfer.types.includes('Files')) return
-        e.preventDefault()
-        setDragging(true)
-      }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={(e) => {
-        if (!e.dataTransfer.files.length) return
-        e.preventDefault()
-        setDragging(false)
-        attachFiles(e.dataTransfer.files)
-      }}
-    >
-      {(attachments.length > 0 || chat.waitingMessages) && (
-        <div className="composer-header">
-          {attachments.length > 0 && (
-            <div className="attachments">
-              {attachments.map((a, index) => (
-                <span className="attachment" key={`${a.path ?? a.name}-${index}`} title={a.path}>
-                  <AttachmentPicture attachment={a} />
-                  <span className="attachment-name">{a.name}</span>
-                  <button
-                    type="button"
-                    title="Remove"
-                    onClick={() =>
-                      setAttachments((current) => current.filter((_, i) => i !== index))
-                    }
-                  >
-                    <CloseIcon width={11} height={11} />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-          {chat.waitingMessages && (
-            <div className="waiting-messages">
-              <div className="waiting-label">Joins the turn at its next step</div>
-              {chat.waitingMessages.map((message) => (
-                <div className="waiting-message" key={message.id}>
-                  <span className="waiting-text" title={message.text}>
-                    {message.text}
+    <>
+      <div
+        className={`composer${expanded ? ' expanded' : ''}${dragging ? ' dragging' : ''}`}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes('Files')) return
+          e.preventDefault()
+          setDragging(true)
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          if (!e.dataTransfer.files.length) return
+          e.preventDefault()
+          setDragging(false)
+          attachFiles(e.dataTransfer.files)
+        }}
+      >
+        {(attachments.length > 0 || chat.waitingMessages) && (
+          <div className="composer-header">
+            {attachments.length > 0 && (
+              <div className="attachments">
+                {attachments.map((a, index) => (
+                  <span className="attachment" key={`${a.path ?? a.name}-${index}`} title={a.path}>
+                    <AttachmentPicture attachment={a} />
+                    <span className="attachment-name">{a.name}</span>
+                    <button
+                      type="button"
+                      title="Remove"
+                      onClick={() =>
+                        setAttachments((current) => current.filter((_, i) => i !== index))
+                      }
+                    >
+                      <CloseIcon width={11} height={11} />
+                    </button>
                   </span>
-                  <button
-                    type="button"
-                    className="label-btn"
-                    onClick={() => editWaiting(message.id)}
-                  >
-                    <PencilIcon width={12} height={12} />
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="label-btn danger"
-                    onClick={() => window.api.takeWaiting(chat.id, message.id)}
-                  >
-                    <TrashIcon width={12} height={12} />
-                    Delete
-                  </button>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
+            {chat.waitingMessages && (
+              <div className="waiting-messages">
+                <div className="waiting-label">Joins the turn at its next step</div>
+                {chat.waitingMessages.map((message) => (
+                  <div className="waiting-message" key={message.id}>
+                    <span className="waiting-text" title={message.text}>
+                      {message.text}
+                    </span>
+                    <button
+                      type="button"
+                      className="label-btn"
+                      onClick={() => editWaiting(message.id)}
+                    >
+                      <PencilIcon width={12} height={12} />
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="label-btn danger"
+                      onClick={() => window.api.takeWaiting(chat.id, message.id)}
+                    >
+                      <TrashIcon width={12} height={12} />
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {menuOpen && (
+          <CompletionMenu
+            items={menuItems}
+            active={menuActive}
+            onHover={setMenuActive}
+            onChoose={choose}
+          />
+        )}
+        <div className="composer-leading">
+          <button
+            type="button"
+            className="icon-btn round"
+            title="Attach files"
+            onClick={async () => addAttachments(await window.api.pickFiles())}
+          >
+            <PlusIcon width={20} height={20} />
+          </button>
+        </div>
+        <textarea
+          ref={textareaRef}
+          value={text}
+          rows={1}
+          placeholder={
+            chat.waiting
+              ? 'Waiting for your answer above'
+              : chat.running
+                ? 'Working… send a message to steer it'
+                : `Ask ${AGENTS.find((a) => a.id === chat.agent)?.label}…`
+          }
+          onChange={(e) => {
+            setText(e.target.value)
+            setCaret(e.target.selectionStart)
+            setMenuActive(0)
+          }}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+          onPaste={(e) => {
+            // Files and images on the clipboard become attachments; text pastes normally.
+            if (e.clipboardData.files.length === 0) return
+            e.preventDefault()
+            attachFiles(e.clipboardData.files)
+          }}
+          onKeyDown={(e) => {
+            if (menuOpen && menuItems.length > 0) {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault()
+                const step = e.key === 'ArrowDown' ? 1 : -1
+                setMenuActive((i) => (i + step + menuItems.length) % menuItems.length)
+                return
+              }
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault()
+                choose(menuItems[Math.min(menuActive, menuItems.length - 1)])
+                return
+              }
+            }
+            if (menuOpen && e.key === 'Escape') {
+              // Handled: closing the menu must not also stop the agent.
+              e.preventDefault()
+              setMenuDismissed(`${caret}:${text}`)
+              return
+            }
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              submit()
+            }
+          }}
+        />
+        <div className="composer-trailing">
+          {chat.running && !canSend ? (
+            <button
+              className="send-button stop"
+              title="Stop (Esc)"
+              onClick={() => window.api.cancel(chat.id)}
+            >
+              <StopIcon width={16} height={16} />
+            </button>
+          ) : (
+            <button
+              className="send-button"
+              title="Send (Enter)"
+              disabled={!canSend}
+              onClick={submit}
+            >
+              <SendIcon width={18} height={18} />
+            </button>
           )}
         </div>
-      )}
-      {menuOpen && (
-        <CompletionMenu
-          items={menuItems}
-          active={menuActive}
-          onHover={setMenuActive}
-          onChoose={choose}
-        />
-      )}
-      <div className="composer-leading">
-        <button
-          type="button"
-          className="icon-btn round"
-          title="Attach files"
-          onClick={async () => addAttachments(await window.api.pickFiles())}
-        >
-          <PlusIcon width={20} height={20} />
-        </button>
       </div>
-      <textarea
-        ref={textareaRef}
-        value={text}
-        rows={1}
-        placeholder={
-          chat.waiting
-            ? 'Waiting for your answer above'
-            : chat.running
-              ? 'Working… send a message to steer it'
-              : `Ask ${AGENTS.find((a) => a.id === chat.agent)?.label}…`
-        }
-        onChange={(e) => {
-          setText(e.target.value)
-          setCaret(e.target.selectionStart)
-          setMenuActive(0)
-        }}
-        onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-        onPaste={(e) => {
-          // Files and images on the clipboard become attachments; text pastes normally.
-          if (e.clipboardData.files.length === 0) return
-          e.preventDefault()
-          attachFiles(e.clipboardData.files)
-        }}
-        onKeyDown={(e) => {
-          if (menuOpen && menuItems.length > 0) {
-            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-              e.preventDefault()
-              const step = e.key === 'ArrowDown' ? 1 : -1
-              setMenuActive((i) => (i + step + menuItems.length) % menuItems.length)
-              return
-            }
-            if (e.key === 'Enter' || e.key === 'Tab') {
-              e.preventDefault()
-              choose(menuItems[Math.min(menuActive, menuItems.length - 1)])
-              return
-            }
-          }
-          if (menuOpen && e.key === 'Escape') {
-            // Handled: closing the menu must not also stop the agent.
-            e.preventDefault()
-            setMenuDismissed(`${caret}:${text}`)
-            return
-          }
-          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-            e.preventDefault()
-            submit()
-          }
-        }}
-      />
-      <div className="composer-trailing">
+      {/* The chat's settings, in their own row under the composer. */}
+      <div className="composer-settings">
         <ModelPicker
           agent={chat.agent}
           projectId={chat.projectId}
@@ -423,7 +446,6 @@ export function Composer({
           agentFixed={chat.running}
           onChange={pickModel}
         />
-        {!options && !error && <span className="composer-hint">Starting agent…</span>}
         {shown.map((option) => (
           <Picker
             key={option.id}
@@ -434,11 +456,6 @@ export function Composer({
             onChange={(v) => onOptionChange(option.id, v)}
           />
         ))}
-        {error && (
-          <span className="composer-error" title={error}>
-            {error}
-          </span>
-        )}
         <div className="permission-mode" data-mode={permissionMode(chat)}>
           <Picker
             title="Permissions"
@@ -458,21 +475,14 @@ export function Composer({
             }}
           />
         </div>
-        {chat.running && !canSend ? (
-          <button
-            className="send-button stop"
-            title="Stop (Esc)"
-            onClick={() => window.api.cancel(chat.id)}
-          >
-            <StopIcon width={16} height={16} />
-          </button>
-        ) : (
-          <button className="send-button" title="Send (Enter)" disabled={!canSend} onClick={submit}>
-            <SendIcon width={18} height={18} />
-          </button>
+        {!options && !error && <span className="composer-hint">Starting agent…</span>}
+        {error && (
+          <span className="composer-error" title={error}>
+            {error}
+          </span>
         )}
       </div>
-    </div>
+    </>
   )
 }
 
