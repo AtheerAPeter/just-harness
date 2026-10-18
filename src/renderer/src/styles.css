@@ -2324,9 +2324,13 @@ img.project-icon {
 
 .picker {
   position: relative;
-  flex: 0 1 auto;
+  flex-shrink: 0;
+}
+
+/* The model's full name shows; when the row is squeezed, it gives way first. */
+.model-picker {
+  flex-shrink: 1;
   min-width: 0;
-  max-width: 200px;
 }
 
 /* Compact, so the text keeps most of the composer's row. */
