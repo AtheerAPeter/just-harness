@@ -15,8 +15,9 @@ import type {
 } from './types'
 
 /**
- * The two wire formats the harness speaks, with the official SDKs: Anthropic
- * Messages and OpenAI Chat Completions. Providers say where to send them.
+ * The wire formats the harness speaks, with the official SDKs: Anthropic
+ * Messages, OpenAI Chat Completions and OpenAI Responses. Providers say where
+ * to send them.
  */
 
 /** A model as a provider serves it. */
@@ -33,9 +34,10 @@ export interface Model {
 export interface Endpoint {
   /** For the Anthropic SDK, which appends /v1/messages. */
   messagesURL?: string
-  /** For the OpenAI SDK, which appends /chat/completions. */
+  /** For the OpenAI SDK, which appends /chat/completions or /responses. */
   chatURL: string
-  key: string
+  /** Unset for a provider that takes none, such as a local server. */
+  key?: string
   headers?: Record<string, string>
   /** Headers for this chat's requests only, such as a session id. */
   chatHeaders?: Record<string, string>
@@ -70,9 +72,9 @@ const CHAT_MAX_TOKENS = 32_768
  */
 const ADAPTIVE_THINKING = /(opus[-.](4[-.][678]|5)|sonnet[-.](4[-.]6|5)|fable[-.]5|mythos[-.]5)/
 
-/** The effort levels a model takes; the first entry of chat models means "the provider's default". */
+/** The effort levels a model takes; the first entry of OpenAI-format models means "the provider's default". */
 export function effortLevels(model: Model): Effort[] {
-  if (model.api === 'chat') return ['default', 'low', 'medium', 'high']
+  if (model.api !== 'messages') return ['default', 'low', 'medium', 'high']
   if (!ADAPTIVE_THINKING.test(model.id)) return []
   // xhigh arrived with Opus 4.7.
   return /4[-.]6/.test(model.id)
@@ -102,7 +104,9 @@ export async function streamReply(
     try {
       return model.api === 'messages'
         ? await streamMessages(endpoint, model, request, handlers, signal)
-        : await streamChat(endpoint, model, request, handlers, signal)
+        : model.api === 'responses'
+          ? await streamResponses(endpoint, model, request, handlers, signal)
+          : await streamChat(endpoint, model, request, handlers, signal)
     } catch (error) {
       if (signal.aborted) throw error
       const wait = received || attempt >= MAX_RETRIES ? undefined : await retryDelay(error, attempt)
@@ -174,6 +178,14 @@ export const CONTEXT_FULL_MESSAGE =
 /** Clients by URL, key and headers: one per provider and sign-in. */
 const clients = new Map<string, Anthropic | OpenAI>()
 
+/**
+ * Both SDKs insist on a key, and without one the Anthropic SDK looks for the
+ * user's own Anthropic credentials. A provider that takes no key is given this
+ * stand-in, and the header that would carry it is left out (the SDKs' way to
+ * omit their auth header), so nothing is sent in its place.
+ */
+const NO_KEY = 'none'
+
 async function anthropicClient(endpoint: Endpoint): Promise<Anthropic> {
   if (!endpoint.messagesURL) throw new Error(`${endpoint.name} has no Messages route.`)
   const id = JSON.stringify(['messages', endpoint.messagesURL, endpoint.key, endpoint.headers])
@@ -181,9 +193,9 @@ async function anthropicClient(endpoint: Endpoint): Promise<Anthropic> {
   if (!client) {
     const { default: Client } = await import('@anthropic-ai/sdk')
     client = new Client({
-      apiKey: endpoint.key,
+      apiKey: endpoint.key ?? NO_KEY,
       baseURL: endpoint.messagesURL,
-      defaultHeaders: endpoint.headers,
+      defaultHeaders: endpoint.key ? endpoint.headers : { 'X-Api-Key': null, ...endpoint.headers },
       maxRetries: 0
     })
     clients.set(id, client)
@@ -197,14 +209,55 @@ async function openaiClient(endpoint: Endpoint): Promise<OpenAI> {
   if (!client) {
     const { default: Client } = await import('openai')
     client = new Client({
-      apiKey: endpoint.key,
+      apiKey: endpoint.key ?? NO_KEY,
       baseURL: endpoint.chatURL,
-      defaultHeaders: endpoint.headers,
+      defaultHeaders: endpoint.key
+        ? endpoint.headers
+        : { Authorization: null, ...endpoint.headers },
       maxRetries: 0
     })
     clients.set(id, client)
   }
   return client
+}
+
+/** How long listing an endpoint's models may take. */
+const LIST_TIMEOUT_MS = 15_000
+
+/**
+ * The models an endpoint lists on its /models, in the format it speaks: every
+ * page of Anthropic's, or the OpenAI-style list. Named as the list names them
+ * (OpenAI's has ids only; gateways such as OpenRouter add a name).
+ */
+export async function listModels(
+  endpoint: Endpoint,
+  api: Api
+): Promise<{ id: string; name: string }[]> {
+  const models: { id: string; name: string }[] = []
+  try {
+    if (api === 'messages') {
+      const client = await anthropicClient(endpoint)
+      const pages = client.models.list({ limit: 1000 }, { timeout: LIST_TIMEOUT_MS })
+      // Compatible servers may leave the name out.
+      for await (const model of pages) {
+        models.push({ id: model.id, name: model.display_name || model.id })
+      }
+    } else {
+      const client = await openaiClient(endpoint)
+      for await (const model of client.models.list({ timeout: LIST_TIMEOUT_MS })) {
+        const name = (model as { name?: unknown }).name
+        models.push({ id: model.id, name: typeof name === 'string' && name ? name : model.id })
+      }
+    }
+  } catch (error) {
+    // A connection error says only "Connection error.": say who could not be reached.
+    if (typeof (error as { status?: unknown }).status !== 'number') {
+      const url = api === 'messages' ? endpoint.messagesURL : endpoint.chatURL
+      throw new Error(`Could not reach ${endpoint.name} at ${url}: ${(error as Error).message}`)
+    }
+    throw readableError(endpoint, error)
+  }
+  return models
 }
 
 /** Tool arguments as an object; arguments that are not a JSON object become {}. */
@@ -626,6 +679,189 @@ function toChatMessages(
     }
   }
   return messages
+}
+
+// --- Responses (OpenAI's newer route) ----------------------------------------
+
+/**
+ * Sent with `store: false`, so nothing is kept on the provider's side and every
+ * request carries the whole conversation, as on the other routes. A reply is
+ * replayed as the output items it came as; its reasoning then has to come back
+ * with the encrypted content the provider sent (asked for with `include`).
+ */
+async function streamResponses(
+  endpoint: Endpoint,
+  model: Model,
+  request: Request,
+  on: StreamHandlers,
+  signal: AbortSignal
+): Promise<Reply> {
+  const client = await openaiClient(endpoint)
+  const effort = request.effort === 'default' ? undefined : request.effort
+  const stream = await client.responses.create(
+    {
+      model: request.model,
+      instructions: request.system,
+      input: toResponsesInput(request, model.vision),
+      max_output_tokens: Math.min(CHAT_MAX_TOKENS, model.maxOutput ?? CHAT_MAX_TOKENS),
+      store: false,
+      stream: true,
+      ...(request.tools.length > 0
+        ? {
+            tools: request.tools.map((tool) => ({
+              type: 'function' as const,
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.parameters,
+              strict: false
+            }))
+          }
+        : {}),
+      ...(effort
+        ? {
+            reasoning: { effort: effort as OpenAI.ReasoningEffort, summary: 'auto' as const },
+            include: ['reasoning.encrypted_content' as const]
+          }
+        : {})
+    },
+    { signal, headers: endpoint.chatHeaders }
+  )
+
+  let response: OpenAI.Responses.Response | undefined
+  for await (const event of stream) {
+    on.activity()
+    switch (event.type) {
+      case 'response.output_text.delta':
+        on.text(event.delta)
+        break
+      // Summaries for OpenAI's models, the reasoning itself for open models served this way.
+      case 'response.reasoning_summary_text.delta':
+      case 'response.reasoning_text.delta':
+        on.thinking(event.delta)
+        break
+      case 'response.reasoning_summary_part.added':
+        if (event.summary_index > 0) on.thinking('\n\n')
+        break
+      case 'response.completed':
+      case 'response.incomplete':
+        response = event.response
+        break
+      case 'response.failed':
+        throw new Error(
+          `${endpoint.name} could not finish the reply: ${event.response.error?.message ?? 'it gave no reason.'}`
+        )
+      case 'error':
+        throw new Error(`${endpoint.name} answered: ${event.message}`)
+    }
+  }
+  if (!response) throw new Error(`${endpoint.name} ended the reply before it was finished.`)
+  const usage = response.usage
+  if (usage) {
+    console.log(
+      `[harness] ${request.model}: ${usage.input_tokens} in, ${usage.input_tokens_details?.cached_tokens ?? 0} cache read, ${usage.output_tokens} out`
+    )
+  }
+
+  let text = ''
+  let refused = false
+  const toolCalls: ToolCall[] = []
+  for (const item of response.output) {
+    if (item.type === 'message') {
+      for (const part of item.content) {
+        if (part.type === 'output_text') text += part.text
+        else {
+          text += part.refusal
+          refused = true
+        }
+      }
+    } else if (item.type === 'function_call') {
+      toolCalls.push({ id: item.call_id, name: item.name, arguments: item.arguments })
+    }
+  }
+  const reason = response.incomplete_details?.reason
+  const stop: Stop =
+    reason === 'max_output_tokens'
+      ? 'max_tokens'
+      : reason === 'content_filter' || refused
+        ? 'refusal'
+        : toolCalls.length > 0
+          ? 'tool_use'
+          : 'end'
+  return {
+    turn: {
+      role: 'assistant',
+      model: request.model,
+      api: 'responses',
+      text,
+      toolCalls,
+      native: response.output,
+      // Input tokens include the cached ones.
+      ...(usage ? { contextTokens: usage.input_tokens + usage.output_tokens } : {})
+    },
+    stop
+  }
+}
+
+/**
+ * A reply replays as its output items when the same model continues and its
+ * reasoning can be sent back: reasoning returned without encrypted content
+ * (the provider's default effort, which `include` is not sent with) cannot be,
+ * and the calls that came with it are tied to it. Other replies are rebuilt
+ * from their text and calls.
+ */
+function responsesReplay(turn: AssistantTurn, model: string): OpenAI.Responses.ResponseInputItem[] {
+  if (replays(turn, model, 'responses')) {
+    const items = turn.native as OpenAI.Responses.ResponseOutputItem[]
+    if (items.every((item) => item.type !== 'reasoning' || item.encrypted_content)) {
+      return items as OpenAI.Responses.ResponseInputItem[]
+    }
+  }
+  return [
+    ...(turn.text ? [{ role: 'assistant' as const, content: turn.text }] : []),
+    ...turn.toolCalls.map((call) => ({
+      type: 'function_call' as const,
+      call_id: call.id,
+      name: call.name,
+      arguments: call.arguments
+    }))
+  ]
+}
+
+function responsesContent(
+  parts: Part[],
+  vision: boolean
+): OpenAI.Responses.ResponseInputMessageContentList {
+  return parts.map((part) =>
+    part.type === 'text'
+      ? { type: 'input_text', text: part.text }
+      : vision
+        ? {
+            type: 'input_image',
+            image_url: `data:${part.mimeType};base64,${part.data}`,
+            detail: 'auto'
+          }
+        : { type: 'input_text', text: NO_VISION }
+  )
+}
+
+function toResponsesInput(request: Request, vision: boolean): OpenAI.Responses.ResponseInput {
+  const input: OpenAI.Responses.ResponseInput = []
+  for (const turn of request.turns) {
+    if (turn.role === 'user') {
+      input.push({ role: 'user', content: responsesContent(turn.content, vision) })
+    } else if (turn.role === 'assistant') {
+      input.push(...responsesReplay(turn, request.model))
+    } else {
+      for (const result of turn.results) {
+        // Text alone as a string, which every server takes; images in a list with it.
+        const output = result.content.some((p) => p.type === 'image')
+          ? responsesContent(result.content, vision)
+          : result.content.map((p) => (p.type === 'text' ? p.text : '')).join('\n')
+        input.push({ type: 'function_call_output', call_id: result.callId, output })
+      }
+    }
+  }
+  return input
 }
 
 /**

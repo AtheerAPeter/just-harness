@@ -9,6 +9,8 @@ export interface Source {
   id: string
   name: string
   models: Model[]
+  /** Why it lists no models right now. */
+  error?: string
 }
 
 export interface Provider {
@@ -17,6 +19,12 @@ export interface Provider {
   name: string
   /** What to do when it is not signed in. */
   signIn: string
+  /** Why it cannot be used when signedIn() is false, if not "<name> is not signed in. <signIn>". */
+  notReady?: string
+  /** What a source is called in the chat's options; "Plan" when unset. */
+  sourceLabel?: string
+  /** Name the source in the picker even when there is only one (the user's own providers). */
+  alwaysNameSources?: boolean
   signedIn(): Promise<boolean>
   /** The sources this sign-in can use, each with the models it serves now. */
   sources(): Promise<Source[]>

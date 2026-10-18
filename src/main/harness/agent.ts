@@ -163,9 +163,13 @@ export class HarnessAgent {
 
   /** Load the chat's session, or start one; returns its id, which is the chat id. */
   async ensureSession(chatId: string): Promise<string> {
-    if (!this.sessions.has(chatId)) this.sessions.set(chatId, await this.openSession(chatId))
+    await this.loadSession(chatId)
     if (!this.options.has(chatId)) await this.setOptions(chatId)
     return chatId
+  }
+
+  private async loadSession(chatId: string): Promise<void> {
+    if (!this.sessions.has(chatId)) this.sessions.set(chatId, await this.openSession(chatId))
   }
 
   private async openSession(chatId: string): Promise<Session> {
@@ -287,7 +291,12 @@ How to communicate:
     return []
   }
 
-  /** Every source's models, for the model picker; a source is a picker setting when there are several. */
+  /** Whether sources are a choice in the chat's options: when there are several, or always for some providers. */
+  private namesSources(sources: Source[]): boolean {
+    return sources.length > 1 || this.provider.alwaysNameSources === true
+  }
+
+  /** Every source's models, for the model picker; a source is a picker setting when named. */
   async listModels(): Promise<ModelSource[]> {
     const sources = await this.provider.sources()
     const preferred = await this.provider.preferred()
@@ -296,14 +305,30 @@ How to communicate:
         ? preferred!.model
         : (source.models[0]?.id ?? '')
       const option = modelOption(source.models, current)
-      return sources.length > 1
-        ? { setting: { optionId: 'source', value: source.id, name: source.name }, option }
-        : { option }
+      const error = source.error ? { error: source.error } : {}
+      return this.namesSources(sources)
+        ? { setting: { optionId: 'source', value: source.id, name: source.name }, option, ...error }
+        : { option, ...error }
     })
   }
 
+  /** Settle every open chat's options again, after the provider's sources changed. */
+  async refreshOptions(): Promise<void> {
+    await Promise.all(
+      [...this.options.keys()].map((chatId) =>
+        this.setOptions(chatId).catch((error: Error) => {
+          // Nothing to offer (the last provider removed): asked again when the chat is used.
+          this.options.delete(chatId)
+          this.events.options(chatId, [])
+          console.error(`[harness] ${this.provider.name} options:`, error.message)
+        })
+      )
+    )
+  }
+
   async applyOption(chatId: string, optionId: string, value: string): Promise<void> {
-    await this.ensureSession(chatId)
+    // Not its options first: those of a source that fails to list would keep it from switching.
+    await this.loadSession(chatId)
     const settings = { ...store.getChat(chatId).settings, [optionId]: value }
     // Another source has other models; another model may lack the chosen effort.
     if (optionId === 'source') delete settings.model
@@ -317,8 +342,12 @@ How to communicate:
    * provider lists now. A new chat starts where the provider's own CLI is set.
    */
   private async choice(chatId: string): Promise<Choice> {
-    const settings = store.getChat(chatId).settings
     const sources = await this.provider.sources()
+    let settings: Record<string, string | undefined> = store.getChat(chatId).settings
+    // The chat's source is gone (signed out, removed): its model is that source's, not another's.
+    if (settings.source && !sources.some((s) => s.id === settings.source)) {
+      settings = { ...settings, source: undefined, model: undefined }
+    }
     const preferred = settings.model ? undefined : await this.provider.preferred()
     const source =
       sources.find((s) => s.id === (settings.source ?? preferred?.source)) ??
@@ -326,11 +355,12 @@ How to communicate:
       sources.find((s) => s.models.length > 0)
     if (!source)
       throw new Error(`${this.provider.name} lists no models right now. Try again in a moment.`)
+    if (source.error && source.models.length === 0) throw new Error(source.error)
     const id = settings.model ?? preferred?.model
     const model =
       source.models.find((m) => m.id === id) ??
       // A model the provider stopped listing still works for chats already on it.
-      (settings.model ? fallbackModel(settings.model) : source.models[0])
+      (settings.model ? fallbackModel(settings.model, source) : source.models[0])
     if (!model)
       throw new Error(`${this.provider.name} lists no models right now. Try again in a moment.`)
     const levels = effortLevels(model)
@@ -344,10 +374,10 @@ How to communicate:
     const { source, model, effort } = await this.choice(chatId)
     const sources = await this.provider.sources()
     const options: AgentOption[] = []
-    if (sources.length > 1) {
+    if (this.namesSources(sources)) {
       options.push({
         id: 'source',
-        name: 'Plan',
+        name: this.provider.sourceLabel ?? 'Plan',
         category: 'model',
         currentValue: source.id,
         values: sources.map((s) => ({ value: s.id, name: s.name }))
@@ -1109,8 +1139,11 @@ function makerOf(id: string): string | undefined {
 }
 
 /** A model no longer listed: Claude ids answer on Messages, the rest on Chat Completions. */
-function fallbackModel(id: string): Model {
-  return { id, name: id, api: id.startsWith('claude-') ? 'messages' : 'chat', vision: false }
+/** A model its source no longer lists, on the route the source's other models take. */
+function fallbackModel(id: string, source: Source): Model {
+  const routes = new Set(source.models.map((m) => m.api))
+  const api = routes.size === 1 ? [...routes][0] : id.startsWith('claude-') ? 'messages' : 'chat'
+  return { id, name: id, api, vision: false }
 }
 
 const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)

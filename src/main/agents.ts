@@ -67,13 +67,14 @@ import { isHarnessAgent, type HarnessAgentId, type Provider } from './harness/pr
 import { commandCode } from './harness/commandcode'
 import { openCode, opencodeMajor } from './harness/opencode'
 import { cline } from './harness/cline'
+import { custom } from './harness/custom'
 import opencodePlugin from '../../resources/opencode-plugin/server.js?asset&asarUnpack'
 
 /** Agents run as a CLI over ACP; the app's own harness agents are not. */
 type AcpAgent = Exclude<AgentId, HarnessAgentId>
 
 /** The provider APIs the app's own harness runs on. */
-const PROVIDERS: Provider[] = [commandCode, openCode, cline]
+const PROVIDERS: Provider[] = [commandCode, openCode, cline, custom]
 
 const COMMANDS: Record<AcpAgent, { command: string; args: string[] }> = {
   opencode: { command: 'opencode', args: ['acp'] },
@@ -139,14 +140,11 @@ const KILL_GRACE_MS = 2_000
 const STDERR_KEPT = 4096
 const STDERR_SHOWN_LINES = 12
 
-/** The command that signs each agent in, for its "authentication required" error. */
-const LOGIN_COMMANDS: Record<AgentId, string> = {
+/** The command that signs each CLI in, for its "authentication required" error. */
+const LOGIN_COMMANDS: Record<AcpAgent, string> = {
   opencode: 'opencode auth login',
   cline: 'cline auth',
-  commandcode: 'cmd login',
-  'commandcode-api': 'cmd login',
-  'opencode-api': 'opencode auth login',
-  'cline-api': 'cline auth'
+  commandcode: 'cmd login'
 }
 
 /**
@@ -300,7 +298,8 @@ const NO_COMPACTION: Partial<Record<AgentId, string>> = {
     'Cline compacts the conversation on its own when its context fills up. It has no command to do it now.',
   'commandcode-api': HARNESS_NO_COMPACTION,
   'opencode-api': HARNESS_NO_COMPACTION,
-  'cline-api': HARNESS_NO_COMPACTION
+  'cline-api': HARNESS_NO_COMPACTION,
+  'custom-api': HARNESS_NO_COMPACTION
 }
 
 /** Pasted images have no file; save them so a path can be given to the agent. */
@@ -1231,7 +1230,7 @@ function errorMessage(error: unknown, agent: AgentId): string {
   if (sdk && error instanceof sdk.RequestError) {
     // Opencode reports a provider that refuses the request (not signed in, a
     // model the plan or country does not include) as this error, without the reason.
-    if (error.code === AUTH_REQUIRED) {
+    if (error.code === AUTH_REQUIRED && !isHarnessAgent(agent)) {
       return `The provider refused access. If ${agent} is not signed in, run \`${LOGIN_COMMANDS[agent]}\` in a terminal; otherwise try another model.`
     }
     // Agents put their own text after JSON-RPC's generic "Internal error: ".
@@ -1399,6 +1398,11 @@ export class AgentManager implements ChatsApi {
     return agentProcess
   }
 
+  /** The providers added in Settings changed: their open chats offer what is there now. */
+  customProvidersChanged(): Promise<void> {
+    return this.harness.get('custom-api')!.refreshOptions()
+  }
+
   /** Whether the CLI is installed, and its version. */
   status(agent: AgentId): Promise<AgentStatus> {
     // The harness needs only the provider's sign-in; it is checked each time, so signing in shows at once.
@@ -1410,7 +1414,7 @@ export class AgentManager implements ChatsApi {
           : {
               agent,
               available: false,
-              error: `${provider.name} is not signed in. ${provider.signIn}`
+              error: provider.notReady ?? `${provider.name} is not signed in. ${provider.signIn}`
             }
       )
     }

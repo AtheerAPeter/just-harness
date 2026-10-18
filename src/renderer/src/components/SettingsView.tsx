@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react'
 import { errorMessage } from '../lib/errors'
 import { useUpdateInstall } from '../lib/update'
+import { ProvidersCard } from './ProvidersCard'
 
-export function SettingsView(): React.JSX.Element {
+/** `onProvidersChange`: a provider was added, changed or removed. */
+export function SettingsView({
+  onProvidersChange
+}: {
+  onProvidersChange: () => void
+}): React.JSX.Element {
   /** The saved key's last four characters; null when none is saved, undefined while loading. */
   const [hint, setHint] = useState<string | null>()
   const [key, setKey] = useState('')
@@ -25,12 +31,14 @@ export function SettingsView(): React.JSX.Element {
   return (
     <div className="settings">
       <h2>Settings</h2>
+      <ProvidersCard onChange={onProvidersChange} />
       <section className="settings-card">
         <h3>Web search</h3>
         <p>
-          OpenCode API, Cline API and Command Code API chats search the web with Exa, as opencode
-          does. Searches work without a key on Exa&apos;s free, rate-limited tier. With a key from{' '}
-          <code>dashboard.exa.ai</code>, they use your Exa account.
+          Chats on the app&apos;s own agent (Custom providers, OpenCode API, Cline API and Command
+          Code API) search the web with Exa, as opencode does. Searches work without a key on
+          Exa&apos;s free, rate-limited tier. With a key from <code>dashboard.exa.ai</code>, they
+          use your Exa account.
         </p>
         <form
           className="settings-row"

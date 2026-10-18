@@ -25,13 +25,14 @@ export default function App(): React.JSX.Element {
   /** Whether the user is picking the project of a new chat. */
   const [picking, setPicking] = useState(false)
   const [statuses, setStatuses] = useState<Partial<Record<AgentId, AgentStatus>>>({})
+  const readStatus = (id: AgentId): void => {
+    window.api.agentStatus(id).then((status) => setStatuses((c) => ({ ...c, [id]: status })))
+  }
 
   useEffect(() => {
     window.api.getState().then(setState)
     const offState = window.api.onState(setState)
-    for (const { id } of AGENTS) {
-      window.api.agentStatus(id).then((status) => setStatuses((c) => ({ ...c, [id]: status })))
-    }
+    for (const { id } of AGENTS) readStatus(id)
     return offState
   }, [])
 
@@ -204,7 +205,7 @@ export default function App(): React.JSX.Element {
         {view === 'skills' ? (
           <SkillsView key={project?.id} project={project} />
         ) : view === 'settings' ? (
-          <SettingsView />
+          <SettingsView onProvidersChange={() => readStatus('custom-api')} />
         ) : chat && project ? (
           <ChatView
             key={`${chat.id}:${chat.agent}`}

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   AGENTS,
+  modelOptions,
   type AgentCommand,
   type AgentId,
   type AgentOption,
@@ -263,6 +264,12 @@ export function Composer({
    * chats always run in build mode.
    */
   const effort = options?.find((o) => o.category === 'thought_level')
+  /** Who the message goes to: the agent, or for the custom providers the chat's provider. */
+  const source = modelOptions(options ?? []).source
+  const addressee =
+    (chat.agent === 'custom-api' &&
+      source?.values.find((v) => v.value === source.currentValue)?.name) ||
+    AGENTS.find((a) => a.id === chat.agent)?.label
 
   /** Apply a model picked in the model picker, with its provider when it has one. */
   async function pickModel(agent: AgentId, settings: [string, string][]): Promise<void> {
@@ -371,7 +378,7 @@ export function Composer({
               ? 'Waiting for your answer above'
               : chat.running
                 ? 'Working… send a message to steer it'
-                : `Ask ${AGENTS.find((a) => a.id === chat.agent)?.label}…`
+                : `Ask ${addressee}…`
           }
           onChange={(e) => {
             setText(e.target.value)

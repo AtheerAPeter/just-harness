@@ -1,5 +1,11 @@
 export type AgentId =
-  'opencode' | 'cline' | 'commandcode' | 'commandcode-api' | 'opencode-api' | 'cline-api'
+  | 'opencode'
+  | 'cline'
+  | 'commandcode'
+  | 'commandcode-api'
+  | 'opencode-api'
+  | 'cline-api'
+  | 'custom-api'
 
 export const AGENTS: { id: AgentId; label: string }[] = [
   { id: 'opencode', label: 'OpenCode' },
@@ -7,15 +13,108 @@ export const AGENTS: { id: AgentId; label: string }[] = [
   { id: 'commandcode', label: 'Command Code' },
   { id: 'commandcode-api', label: 'Command Code API' },
   { id: 'opencode-api', label: 'OpenCode API' },
-  { id: 'cline-api', label: 'Cline API' }
+  { id: 'cline-api', label: 'Cline API' },
+  { id: 'custom-api', label: 'Custom providers' }
 ]
 
-/** The agents the app runs itself, one per provider API. */
-export const HARNESS_AGENTS = ['commandcode-api', 'opencode-api', 'cline-api'] as const
+/** The agents the app runs itself, one per provider API; custom-api runs the providers added in Settings. */
+export const HARNESS_AGENTS = [
+  'commandcode-api',
+  'opencode-api',
+  'cline-api',
+  'custom-api'
+] as const
 export type HarnessAgentId = (typeof HARNESS_AGENTS)[number]
 
 export function isHarnessAgent(agent: string): agent is HarnessAgentId {
   return (HARNESS_AGENTS as readonly string[]).includes(agent)
+}
+
+/**
+ * The wire format a custom provider speaks: OpenAI Chat Completions, OpenAI
+ * Responses, or Anthropic Messages.
+ */
+export type ProviderApi = 'chat' | 'responses' | 'messages'
+
+/** A provider the user added in Settings, as the window sees it: never its key. */
+export interface CustomProvider {
+  id: string
+  name: string
+  api: ProviderApi
+  /** Where the API lives, e.g. https://api.openai.com/v1. */
+  baseURL: string
+  /** Sent with every request, after the key, so they can replace its header. */
+  headers: Record<string, string>
+  /** The model ids to offer; empty lists the ones the provider's /models returns. */
+  models: string[]
+  /** The saved key's last four characters; null when it has none. */
+  keyHint: string | null
+}
+
+/**
+ * A provider to save. `apiKey` undefined keeps the saved key, null removes it.
+ * Without an id, it is added.
+ */
+export interface CustomProviderInput {
+  id?: string
+  name: string
+  api: ProviderApi
+  baseURL: string
+  headers: Record<string, string>
+  models: string[]
+  apiKey?: string | null
+}
+
+/**
+ * Well-known providers, to fill in the form with. `catalog` is the provider's
+ * id on models.dev, where its models' output limits and image input are read
+ * (for any provider at the same address).
+ */
+export const PROVIDER_PRESETS: {
+  name: string
+  api: ProviderApi
+  baseURL: string
+  catalog?: string
+  /** Local servers take no key. */
+  keyless?: boolean
+}[] = [
+  { name: 'OpenAI', api: 'responses', baseURL: 'https://api.openai.com/v1', catalog: 'openai' },
+  {
+    name: 'Anthropic',
+    api: 'messages',
+    baseURL: 'https://api.anthropic.com/v1',
+    catalog: 'anthropic'
+  },
+  {
+    name: 'OpenRouter',
+    api: 'chat',
+    baseURL: 'https://openrouter.ai/api/v1',
+    catalog: 'openrouter'
+  },
+  {
+    name: 'Google Gemini',
+    api: 'chat',
+    baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    catalog: 'google'
+  },
+  { name: 'DeepSeek', api: 'chat', baseURL: 'https://api.deepseek.com', catalog: 'deepseek' },
+  { name: 'xAI', api: 'chat', baseURL: 'https://api.x.ai/v1', catalog: 'xai' },
+  { name: 'Groq', api: 'chat', baseURL: 'https://api.groq.com/openai/v1', catalog: 'groq' },
+  { name: 'Mistral', api: 'chat', baseURL: 'https://api.mistral.ai/v1', catalog: 'mistral' },
+  { name: 'Ollama', api: 'chat', baseURL: 'http://localhost:11434/v1', keyless: true },
+  {
+    name: 'LM Studio',
+    api: 'chat',
+    baseURL: 'http://localhost:1234/v1',
+    catalog: 'lmstudio',
+    keyless: true
+  }
+]
+
+/** What a provider serves now: how many models, or why they could not be listed. */
+export interface CustomProviderCheck {
+  models?: number
+  error?: string
 }
 
 export const PROJECT_COLORS = [
@@ -193,6 +292,8 @@ export interface ModelSource {
   setting?: { optionId: string; value: string; name: string }
   /** The model option, as the agent reports it with that setting. */
   option: AgentOption
+  /** Why the list is empty, when it could not be read. */
+  error?: string
 }
 
 /** The models an agent offers, for picking one before a chat uses that agent. */

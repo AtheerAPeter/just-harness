@@ -9,6 +9,7 @@ import type {
   AgentOption,
   Chat,
   ChatItem,
+  CustomProviderInput,
   Project,
   Rect,
   SkillScope,
@@ -21,6 +22,12 @@ import { chatsMcpEndpoint, SERVER_NAME as BROWSER_SERVER, startBrowserMcp } from
 import { SERVER_NAME as CHATS_SERVER } from './chats-mcp'
 import { registerWithCline } from './cline-mcp'
 import { exaKeyHint, setExaKey } from './exa-key'
+import {
+  checkCustomProvider,
+  customProviders,
+  removeCustomProvider,
+  saveCustomProvider
+} from './harness/custom'
 import { installMenu } from './menu'
 import { loadShellPath } from './shell-env'
 import * as skills from './skills'
@@ -183,6 +190,17 @@ function registerIpc(browser: BuiltinBrowser): void {
   ipcMain.handle('update:install', () => installUpdate())
   ipcMain.handle('exa:keyHint', () => exaKeyHint())
   ipcMain.handle('exa:setKey', (_e, key: string | null) => setExaKey(key))
+  ipcMain.handle('providers:list', () => customProviders())
+  ipcMain.handle('providers:save', async (_e, input: CustomProviderInput) => {
+    const saved = saveCustomProvider(input)
+    await agents.customProvidersChanged()
+    return saved
+  })
+  ipcMain.handle('providers:remove', async (_e, id: string) => {
+    removeCustomProvider(id)
+    await agents.customProvidersChanged()
+  })
+  ipcMain.handle('providers:check', (_e, id: string) => checkCustomProvider(id))
 
   ipcMain.handle('project:add', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {

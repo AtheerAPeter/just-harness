@@ -4,8 +4,8 @@
  * provider's prompt cache always matches the prefix.
  */
 
-/** Which Command Code route serves a model. */
-export type Api = 'messages' | 'chat'
+/** Which route serves a model: Anthropic Messages, OpenAI Chat Completions or OpenAI Responses. */
+export type Api = 'messages' | 'chat' | 'responses'
 
 export type Part =
   { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }

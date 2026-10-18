@@ -67,7 +67,9 @@ export function ModelPicker({
   const live = modelOptions(options ?? [])
   const label = (id: AgentId): string => AGENTS.find((a) => a.id === id)?.label ?? id
   const disabledReason = (id: AgentId): string | undefined => {
-    if (statuses[id]?.available === false) return `${label(id)} is not installed`
+    if (statuses[id]?.available === false) {
+      return statuses[id]?.error ?? `${label(id)} is not installed`
+    }
     if (agentFixed && id !== agent) return 'Stop the chat to switch agents'
     return undefined
   }

@@ -11,6 +11,9 @@ import type {
   BrowserState,
   Chat,
   ChatItem,
+  CustomProvider,
+  CustomProviderCheck,
+  CustomProviderInput,
   Project,
   Rect,
   Skill,
@@ -50,6 +53,17 @@ const api = {
     keyHint: (): Promise<string | null> => ipcRenderer.invoke('exa:keyHint'),
     /** Save a key, or remove the saved one (null); returns the new hint. */
     setKey: (key: string | null): Promise<string | null> => ipcRenderer.invoke('exa:setKey', key)
+  },
+
+  /** The providers added in Settings, which the Custom providers agent runs on. */
+  providers: {
+    list: (): Promise<CustomProvider[]> => ipcRenderer.invoke('providers:list'),
+    /** Add a provider, or change one (with its id); rejects with what is wrong with it. */
+    save: (input: CustomProviderInput): Promise<CustomProvider> =>
+      ipcRenderer.invoke('providers:save', input),
+    remove: (id: string): Promise<void> => ipcRenderer.invoke('providers:remove', id),
+    /** List the provider's models now: how many, or why it could not. */
+    check: (id: string): Promise<CustomProviderCheck> => ipcRenderer.invoke('providers:check', id)
   },
 
   addProject: (): Promise<Project | null> => ipcRenderer.invoke('project:add'),

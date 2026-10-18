@@ -3237,6 +3237,103 @@ img.project-icon {
     0 0 0 4px var(--focus-ring);
 }
 
+/* Providers: one row per provider, and the form that adds or changes one. */
+
+.provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.provider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 6px 8px 12px;
+  background: var(--well);
+  border-radius: var(--radius);
+}
+
+.provider-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.provider-row-name {
+  font-weight: 500;
+}
+
+.provider-row-detail {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-row-detail.error {
+  color: var(--danger);
+  white-space: normal;
+}
+
+.provider-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--well);
+  border-radius: var(--radius);
+}
+
+.provider-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.provider-field > span {
+  color: var(--text-soft);
+  font-size: 12.5px;
+}
+
+.provider-field > input,
+.provider-field > textarea,
+.provider-field .settings-row input {
+  min-width: 0;
+  padding: 7px 12px;
+  border: 0;
+  outline: none;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--border);
+  font: inherit;
+  border-radius: var(--radius);
+}
+
+.provider-field .settings-row input {
+  height: auto;
+}
+
+.provider-field > textarea {
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.provider-field > input:focus,
+.provider-field > textarea:focus,
+.provider-field .settings-row input:focus {
+  box-shadow:
+    inset 0 0 0 1px var(--border-strong),
+    0 0 0 4px var(--focus-ring);
+}
+
+.provider-form .picker {
+  align-self: flex-start;
+}
+
 /*
  * Motion. One curve for everything that moves: fast at the start, settling
  * gently (the curve iOS uses for sheets). Things that open animate their real
