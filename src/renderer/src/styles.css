@@ -2468,6 +2468,112 @@ img.project-icon {
 }
 
 /*
+ * Thinking effort: ChatGPT's slider (EffortPicker.tsx). The level's name over
+ * a track that fills up to the thumb, with a dot per level. The thumb's center
+ * travels from half a thumb in at the start to half a thumb in at the end;
+ * the fill and the dots are placed the same way. The fill's rounded end sits
+ * under the thumb, which is taller than the track and so covers it.
+ */
+.effort-menu {
+  width: 300px;
+  gap: 12px;
+  padding: 16px 14px;
+}
+
+.effort-name {
+  text-align: center;
+  font-size: 17px;
+}
+
+.effort-slider {
+  --thumb: 32px;
+  --track: 26px;
+  position: relative;
+  height: var(--thumb);
+}
+
+.effort-slider::before,
+.effort-fill {
+  content: '';
+  position: absolute;
+  top: calc((var(--thumb) - var(--track)) / 2);
+  left: 0;
+  height: var(--track);
+  border-radius: var(--radius-pill);
+}
+
+.effort-slider::before {
+  right: 0;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.effort-fill {
+  width: calc(var(--thumb) + (100% - var(--thumb)) * var(--effort));
+  background: var(--accent);
+  transition: width var(--move) var(--ease);
+}
+
+.effort-stop {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--thumb) / 2 + (100% - var(--thumb)) * var(--at));
+  width: 6px;
+  height: 6px;
+  background: color-mix(in srgb, var(--text) 35%, transparent);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  transition: background var(--move) var(--ease);
+}
+
+.effort-stop.passed {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.effort-thumb {
+  position: absolute;
+  top: 0;
+  left: calc((100% - var(--thumb)) * var(--effort));
+  width: var(--thumb);
+  height: var(--thumb);
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  border-radius: 50%;
+  transition:
+    left var(--move) var(--ease),
+    box-shadow var(--fast) ease;
+}
+
+/* While dragged, the fill and thumb follow the pointer; they glide only to a stop. */
+.effort-slider.dragging :is(.effort-fill, .effort-thumb) {
+  transition: none;
+}
+
+.effort-slider:has(input:focus-visible) .effort-thumb {
+  box-shadow:
+    0 0 0 3px var(--accent-ring),
+    0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+/* The input takes the pointer and keys; its thumb, the size of the drawn one, maps the pointer the same way. */
+.effort-slider input {
+  -webkit-appearance: none;
+  appearance: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.effort-slider input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: var(--thumb);
+  height: var(--thumb);
+}
+
+/*
  * Agent and model picker: one column showing either the models of where they
  * come from (an agent, or one of its providers), or the list of those.
  */

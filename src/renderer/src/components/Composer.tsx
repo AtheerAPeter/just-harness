@@ -10,13 +10,13 @@ import {
   type Attachment
 } from '../../../shared/types'
 import { Picker } from './Picker'
+import { EffortPicker } from './EffortPicker'
 import { ModelPicker } from './model-picker/ModelPicker'
 import { CompletionMenu, type CompletionItem } from './CompletionMenu'
 import { writePref } from '../lib/prefs'
 import {
   CloseIcon,
   FileIcon,
-  GaugeIcon,
   PencilIcon,
   PlusIcon,
   SendIcon,
@@ -38,13 +38,6 @@ interface ComposerProps {
   onAgentChange: (agent: AgentId, settings: Record<string, string>) => void
   onOptionChange: (optionId: string, value: string) => Promise<void>
 }
-
-/**
- * Options shown under the composer next to the model picker (which also covers
- * cline's provider). Anything else the agent offers is ignored, including mode:
- * chats always run in build mode.
- */
-const SHOWN_CATEGORIES = ['thought_level']
 
 /** How much the agent may do without asking, per chat. */
 const PERMISSION_MODES = [
@@ -264,9 +257,12 @@ export function Composer({
     })
   }
 
-  const shown = SHOWN_CATEGORIES.flatMap((category) =>
-    (options ?? []).filter((o) => o.category === category)
-  )
+  /**
+   * The one option shown besides the model picker (which also covers cline's
+   * provider). Anything else the agent offers is ignored, including mode:
+   * chats always run in build mode.
+   */
+  const effort = options?.find((o) => o.category === 'thought_level')
 
   /** Apply a model picked in the model picker, with its provider when it has one. */
   async function pickModel(agent: AgentId, settings: [string, string][]): Promise<void> {
@@ -446,16 +442,7 @@ export function Composer({
           agentFixed={chat.running}
           onChange={pickModel}
         />
-        {shown.map((option) => (
-          <Picker
-            key={option.id}
-            title={option.name}
-            icon={<GaugeIcon width={15} height={15} />}
-            value={option.currentValue}
-            values={option.values}
-            onChange={(v) => onOptionChange(option.id, v)}
-          />
-        ))}
+        {effort && <EffortPicker option={effort} onChange={(v) => onOptionChange(effort.id, v)} />}
         <div className="permission-mode" data-mode={permissionMode(chat)}>
           <Picker
             title="Permissions"
