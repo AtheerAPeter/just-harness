@@ -118,9 +118,9 @@ for (const chat of state.chats) {
   }
 }
 
-// A chat left without a message is of no use; those left from earlier launches go.
+// A chat left without a message or a draft is of no use; those left from earlier launches go.
 const emptyChats = state.chats.filter((chat) => {
-  if (chat.preview) return false
+  if (chat.preview || chat.draft) return false
   const read = readJson<ChatItem[]>(join(chatsDir, `${chat.id}.json`), [])
   return 'value' in read && read.value.length === 0
 })

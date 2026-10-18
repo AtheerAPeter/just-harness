@@ -71,7 +71,10 @@ const api = {
     permissions: Pick<Chat, 'bypassPermissions' | 'projectOnly'> = {}
   ): Promise<Chat> => ipcRenderer.invoke('chat:create', projectId, agent, settings, permissions),
   deleteChat: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:delete', chatId),
-  /** Leaving a chat: deletes it if nothing was sent in it. */
+  /** Keep what is typed in a chat's composer; empty text clears it. */
+  setDraft: (chatId: string, text: string): Promise<void> =>
+    ipcRenderer.invoke('chat:draft', chatId, text),
+  /** Leaving a chat: deletes it if nothing was sent or typed in it. */
   leaveChat: (chatId: string): Promise<void> => ipcRenderer.invoke('chat:leave', chatId),
   renameChat: (chatId: string, title: string): Promise<void> =>
     ipcRenderer.invoke('chat:rename', chatId, title),

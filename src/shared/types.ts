@@ -84,6 +84,8 @@ export interface Chat {
   background?: ChatBackground
   /** The first line of the chat's last message, shown under its title in the sidebar. */
   preview?: string
+  /** What the user typed in the composer and has not sent yet. */
+  draft?: string
   /** Approve every permission request automatically (allow once). */
   bypassPermissions?: boolean
   /** Refuse any tool request that touches a path outside the project folder. */

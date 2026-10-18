@@ -243,9 +243,17 @@ function registerIpc(browser: BuiltinBrowser): void {
   // A chat the user leaves before sending anything is of no use, so it goes.
   ipcMain.handle('chat:leave', async (_e, chatId: string) => {
     const chat = store.getState().chats.find((c) => c.id === chatId)
-    if (!chat || chat.running || store.getMessages(chatId).length > 0) return
+    if (!chat || chat.running || chat.draft || store.getMessages(chatId).length > 0) return
     await agents.deleteChat(chatId)
     browser.closeChat(chatId)
+  })
+
+  // The composer saves its draft before it is left (Composer.tsx), so a chat
+  // with only a draft is kept by chat:leave above.
+  ipcMain.handle('chat:draft', (_e, chatId: string, text: string) => {
+    if (!store.getState().chats.some((c) => c.id === chatId)) return
+    store.updateChat(chatId, { draft: text || undefined })
+    send('state:changed', store.getState())
   })
 
   ipcMain.handle('chat:rename', (_e, chatId: string, title: string) => {

@@ -82,8 +82,9 @@ export function Composer({
   onAgentChange,
   onOptionChange
 }: ComposerProps): React.JSX.Element {
-  const [text, setText] = useState('')
-  const [caret, setCaret] = useState(0)
+  // ChatView is keyed by chat, so each chat's composer starts from its saved draft.
+  const [text, setText] = useState(chat.draft ?? '')
+  const [caret, setCaret] = useState(text.length)
   const [menuActive, setMenuActive] = useState(0)
   /** Set when the user closes the menu with Escape, for the text and caret at that moment. */
   const [menuDismissed, setMenuDismissed] = useState<string>()
@@ -163,8 +164,33 @@ export function Composer({
   }
 
   useEffect(() => {
-    textareaRef.current?.focus()
+    const el = textareaRef.current
+    el?.focus()
+    // After a restored draft, to go on typing.
+    el?.setSelectionRange(el.value.length, el.value.length)
   }, [chat.id])
+
+  // The draft is saved shortly after typing stops, and at once when the chat is
+  // left. That save goes out before App asks to delete the chat left if empty
+  // (unmount effects run before App's effect), so a chat with a draft stays.
+  const chatId = chat.id
+  const savedDraft = useRef(text)
+  const typedText = useRef(text)
+  useEffect(() => {
+    typedText.current = text
+    if (text === savedDraft.current) return
+    const timer = setTimeout(() => {
+      savedDraft.current = text
+      window.api.setDraft(chatId, text)
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [chatId, text])
+  useEffect(
+    () => () => {
+      if (typedText.current !== savedDraft.current) window.api.setDraft(chatId, typedText.current)
+    },
+    [chatId]
+  )
 
   /**
    * Set once the text wraps: it then takes its own row above the buttons, as
